@@ -8,46 +8,18 @@
 
 import logging
 import multiprocessing
-from itertools import combinations
+from collections import defaultdict
 
-from hscommon.util import extract, iterconsume
 from hscommon.trans import tr
 from hscommon.jobprogress import job
 
 from core.engine import Match
-from core.pe.block import avgdiff, DifferentBlockCountError, NoBlocksError
+from core.pe.block import NoBlocksError
+from core.pe.bktree import BKTree
 from core.pe.cache_sqlite import SqliteCache
-
-# OPTIMIZATION NOTES:
-# The bottleneck of the matching phase is CPU, which is why we use multiprocessing. However, another
-# bottleneck that shows up when a lot of pictures are involved is Disk IO's because blocks
-# constantly have to be read from disks by subprocesses. This problem is especially big on CPUs
-# with a lot of cores. Therefore, we must minimize Disk IOs. The best way to achieve that is to
-# separate the files to scan in "chunks" and it's by chunk that blocks are read in memory and
-# compared to each other. Each file in a chunk has to be compared to each other, of course, but also
-# to files in other chunks. So chunkifying doesn't save us any actual comparison, but the advantage
-# is that instead of reading blocks from disk number_of_files**2 times, we read it
-# number_of_files*number_of_chunks times.
-# Determining the right chunk size is tricky, because if it's too big, too many blocks will be in
-# memory at the same time and we might end up with memory trashing, which is awfully slow. So,
-# because our *real* bottleneck is CPU, the chunk size must simply be enough so that the CPU isn't
-# starved by Disk IOs.
 
 MIN_ITERATIONS = 3
 BLOCK_COUNT_PER_SIDE = 15
-DEFAULT_CHUNK_SIZE = 1000
-MIN_CHUNK_SIZE = 100
-
-# Enough so that we're sure that the main thread will not wait after a result.get() call
-# cpucount+1 should be enough to be sure that the spawned process will not wait after the results
-# collection made by the main process.
-try:
-    RESULTS_QUEUE_LIMIT = multiprocessing.cpu_count() + 1
-except Exception:
-    # I had an IOError on app launch once. It seems to be a freak occurrence. In any case, we want
-    # the app to launch, so let's just put an arbitrary value.
-    logging.warning("Had problems to determine cpu count on launch.")
-    RESULTS_QUEUE_LIMIT = 8
 
 
 def get_cache(cache_path, readonly=False):
@@ -102,161 +74,134 @@ def prepare_pictures(pictures, cache_path, with_dimensions, match_rotated, j=job
     return prepared
 
 
-def get_chunks(pictures):
-    min_chunk_count = multiprocessing.cpu_count() * 2  # have enough chunks to feed all subprocesses
-    chunk_count = len(pictures) // DEFAULT_CHUNK_SIZE
-    chunk_count = max(min_chunk_count, chunk_count)
-    chunk_size = (len(pictures) // chunk_count) + 1
-    chunk_size = max(MIN_CHUNK_SIZE, chunk_size)
-    logging.info(
-        "Creating %d chunks with a chunk size of %d for %d pictures",
-        chunk_count,
-        chunk_size,
-        len(pictures),
-    )
-    chunks = [pictures[i : i + chunk_size] for i in range(0, len(pictures), chunk_size)]
-    return chunks
-
-
 def get_match(first, second, percentage):
     if percentage < 0:
         percentage = 0
     return Match(first, second, percentage)
 
 
-def async_compare(ref_ids, other_ids, dbname, threshold, picinfo, match_rotated=False):
-    # The list of ids in ref_ids have to be compared to the list of ids in other_ids. other_ids
-    # can be None. In this case, ref_ids has to be compared with itself
-    # picinfo is a dictionary {pic_id: (dimensions, is_ref)}
-    cache = get_cache(dbname, readonly=True)
-    limit = 100 - threshold
-    ref_pairs = list(cache.get_multiple(ref_ids))  # (rowid, [b, b2, ..., b8])
-    if other_ids is not None:
-        other_pairs = list(cache.get_multiple(other_ids))
-        comparisons_to_do = [(r, o) for r in ref_pairs for o in other_pairs]
-    else:
-        comparisons_to_do = list(combinations(ref_pairs, 2))
-    results = []
-    for (ref_id, ref_blocks), (other_id, other_blocks) in comparisons_to_do:
-        ref_dimensions, ref_is_ref = picinfo[ref_id]
-        other_dimensions, other_is_ref = picinfo[other_id]
-        if ref_is_ref and other_is_ref:
-            continue
-        if ref_dimensions != other_dimensions:
-            if match_rotated:
-                rotated_ref_dimensions = (ref_dimensions[1], ref_dimensions[0])
-                if rotated_ref_dimensions != other_dimensions:
-                    continue
-            else:
-                continue
-
-        orientation_range = 1
-        if match_rotated:
-            orientation_range = 8
-
-        for orientation_ref in range(orientation_range):
-            try:
-                diff = avgdiff(ref_blocks[orientation_ref], other_blocks[0], limit, MIN_ITERATIONS)
-                percentage = 100 - diff
-            except (DifferentBlockCountError, NoBlocksError):
-                percentage = 0
-            if percentage >= threshold:
-                results.append((ref_id, other_id, percentage))
-                break
-
-    cache.close()
-    return results
-
-
 def getmatches(pictures, cache_path, threshold, match_scaled=False, match_rotated=False, j=job.nulljob):
-    def get_picinfo(p):
-        if match_scaled:
-            return ((None, None), p.is_ref)
-        else:
-            return (p.dimensions, p.is_ref)
+    """Return a list of Match objects for pictures whose block signatures are
+    similar enough to meet *threshold* (0–100).
 
-    def collect_results(collect_all=False):
-        # collect results and wait until the queue is small enough to accomodate a new results.
-        nonlocal async_results, matches, comparison_count, comparisons_to_do
-        limit = 0 if collect_all else RESULTS_QUEUE_LIMIT
-        while len(async_results) > limit:
-            ready, working = extract(lambda r: r.ready(), async_results)
-            for result in ready:
-                matches += result.get()
-                async_results.remove(result)
-                comparison_count += 1
-        # About the NOQA below: I think there's a bug in pyflakes. To investigate...
-        progress_msg = tr("Performed %d/%d chunk matches") % (
-            comparison_count,
-            len(comparisons_to_do),
-        )  # NOQA
-        j.set_progress(comparison_count, progress_msg)
+    Uses a BK-tree index to prune the O(n²) comparison space to O(n log n)
+    average case.  All block-to-block distances are computed with the C-level
+    ``avgdiff`` function (limit=769 so early termination is never triggered and
+    the true metric distance is always returned).
 
+    match_scaled : if True, skip dimension checks (scaled duplicates allowed).
+    match_rotated : if True, compare each picture's 8 rotated block sets
+                    against every other picture's orientation-0 blocks.
+    """
     j = j.start_subjob([3, 7])
     pictures = prepare_pictures(pictures, cache_path, not match_scaled, match_rotated, j=j)
-    j = j.start_subjob([9, 1], tr("Preparing for matching"))
+
+    j = j.start_subjob([2, 8], tr("Loading picture blocks"))
+
+    # --- Load all block signatures from the SQLite cache ---
     cache = get_cache(cache_path)
-    id2picture = {}
+    pic_to_blocks = {}  # picture -> [blocks_0, ..., blocks_7]
     for picture in pictures:
         try:
             picture.cache_id = cache.get_id(picture.unicode_path)
-            id2picture[picture.cache_id] = picture
-        except ValueError:
+            pic_to_blocks[picture] = cache[picture.cache_id]
+        except (ValueError, KeyError):
             pass
     cache.close()
-    pictures = [p for p in pictures if hasattr(p, "cache_id")]
-    pool = multiprocessing.Pool()
-    async_results = []
-    matches = []
-    chunks = get_chunks(pictures)
-    # We add a None element at the end of the chunk list because each chunk has to be compared
-    # with itself. Thus, each chunk will show up as a ref_chunk having other_chunk set to None once.
-    comparisons_to_do = list(combinations(chunks + [None], 2))
-    comparison_count = 0
-    j.start_job(len(comparisons_to_do))
-    try:
-        for ref_chunk, other_chunk in comparisons_to_do:
-            picinfo = {p.cache_id: get_picinfo(p) for p in ref_chunk}
-            ref_ids = [p.cache_id for p in ref_chunk]
-            if other_chunk is not None:
-                other_ids = [p.cache_id for p in other_chunk]
-                picinfo.update({p.cache_id: get_picinfo(p) for p in other_chunk})
+
+    pictures = [p for p in pictures if p in pic_to_blocks]
+    id2picture = {p.cache_id: p for p in pictures}
+
+    if len(pictures) < 2:
+        return []
+
+    # --- Group pictures by (normalised) dimensions ---
+    # Building separate BK-trees per dimension group means we never waste
+    # avgdiff calls comparing pictures that can't possibly match.
+    # When match_rotated is True, a (W×H) photo can match a (H×W) photo, so
+    # we normalise both to (min, max) so they land in the same group.
+    def dim_key(p):
+        if match_scaled:
+            return None  # single global group
+        w, h = p.dimensions
+        return (min(w, h), max(w, h)) if match_rotated else (w, h)
+
+    dim_groups: dict = defaultdict(list)
+    for p in pictures:
+        dim_groups[dim_key(p)].append(p)
+
+    limit = 100 - threshold
+    orientation_range = 8 if match_rotated else 1
+
+    # pair_best maps (min_cache_id, max_cache_id) -> best percentage so far.
+    # This deduplicates pairs found via multiple query orientations.
+    pair_best: dict[tuple, int] = {}
+
+    j.start_job(len(pictures), tr("Matching pictures"))
+
+    for group in dim_groups.values():
+        if len(group) < 2:
+            j.add_progress(len(group))
+            continue
+
+        # Build BK-tree from the orientation-0 blocks of every picture in
+        # this dimension group.
+        tree: BKTree | None = None
+        for p in group:
+            blocks_0 = pic_to_blocks[p][0]
+            if not blocks_0:
+                continue  # no blocks for orientation 0; skip this picture
+            if tree is None:
+                tree = BKTree(p.cache_id, blocks_0)
             else:
-                other_ids = None
-            args = (ref_ids, other_ids, cache_path, threshold, picinfo, match_rotated)
-            async_results.append(pool.apply_async(async_compare, args))
-            collect_results()
-        collect_results(collect_all=True)
-    except MemoryError:
-        # Rare, but possible, even in 64bit situations (ref #264). What do we do now? We free us
-        # some wiggle room, log about the incident, and stop matching right here. We then process
-        # the matches we have. The rest of the process doesn't allocate much and we should be
-        # alright.
-        del (
-            comparisons_to_do,
-            chunks,
-            pictures,
-        )  # some wiggle room for the next statements
-        logging.warning("Ran out of memory when scanning! We had %d matches.", len(matches))
-        del matches[-len(matches) // 3 :]  # some wiggle room to ensure we don't run out of memory again.
-    pool.close()
+                tree.insert(p.cache_id, blocks_0)
+
+        if tree is None:
+            j.add_progress(len(group))
+            continue
+
+        # Query the tree with each picture using each of its orientations.
+        # This replicates the semantics of the old async_compare loop:
+        #   avgdiff(ref.blocks[orientation], other.blocks[0], ...)
+        # i.e. we compare the query's rotated view against everyone else's
+        # canonical (orientation-0) view that is stored in the tree.
+        for p in group:
+            for orientation in range(orientation_range):
+                query_blocks = pic_to_blocks[p][orientation]
+                if not query_blocks:
+                    continue
+                try:
+                    candidates = tree.find(query_blocks, limit)
+                except Exception as exc:
+                    logging.warning("BKTree.find failed for %s orient %d: %s",
+                                    p.unicode_path, orientation, exc)
+                    continue
+                for cand_id, distance in candidates:
+                    if cand_id == p.cache_id:
+                        continue  # skip self
+                    candidate = id2picture.get(cand_id)
+                    if candidate is None:
+                        continue
+                    if p.is_ref and candidate.is_ref:
+                        continue  # never match two reference files
+                    key = (min(p.cache_id, cand_id), max(p.cache_id, cand_id))
+                    pct = 100 - distance
+                    if pct == 100 and p.digest != candidate.digest:
+                        # Block signatures collide but files differ: cap at 99 %
+                        pct = 99
+                    if pct >= threshold and pct > pair_best.get(key, 0):
+                        pair_best[key] = pct
+            j.add_progress()
+
+    # --- Build Match objects from the deduplicated pair_best table ---
     result = []
-    myiter = j.iter_with_progress(
-        iterconsume(matches, reverse=False),
-        tr("Verified %d/%d matches"),
-        every=10,
-        count=len(matches),
-    )
-    for ref_id, other_id, percentage in myiter:
-        ref = id2picture[ref_id]
-        other = id2picture[other_id]
-        if percentage == 100 and ref.digest != other.digest:
-            percentage = 99
-        if percentage >= threshold:
-            ref.dimensions  # pre-read dimensions for display in results
-            other.dimensions
-            result.append(get_match(ref, other, percentage))
-    pool.join()
+    for (id1, id2), pct in pair_best.items():
+        ref = id2picture[id1]
+        other = id2picture[id2]
+        ref.dimensions    # pre-read for display in results table
+        other.dimensions
+        result.append(get_match(ref, other, pct))
+
     return result
 
 
