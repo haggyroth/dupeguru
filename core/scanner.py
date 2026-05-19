@@ -5,15 +5,20 @@
 # http://www.gnu.org/licenses/gpl-3.0.html
 
 import logging
+import os
 import re
 import os.path as op
-from collections import namedtuple
+from collections import namedtuple, defaultdict
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 from hscommon.jobprogress import job
 from hscommon.util import dedupe, rem_file_ext, get_file_ext
 from hscommon.trans import tr
 
 from core import engine
+from core.hash_cache import hashcachedb, hash_file_worker
+
+_BATCH_SIZE = 500  # rows written to hashcachedb per transaction
 
 # It's quite ugly to have scan types from all editions all put in the same class, but because there's
 # there will be some nasty bugs popping up (ScanType is used in core when in should exclusively be
@@ -76,6 +81,73 @@ class Scanner:
     def __init__(self):
         self.discarded_file_count = 0
 
+    def _hash_files_parallel(self, candidates, j):
+        """Pre-populate File.digest for content-scan candidates using the hash cache
+        and a ProcessPoolExecutor for cache misses.
+
+        candidates: list of File objects that share a size with at least one other file.
+        Modifies each file's .digest in-place and writes new hashes to hashcachedb.
+        j must already have had start_job() called by the caller.
+        """
+        total = len(candidates)
+        cache_misses = []
+
+        for i, f in enumerate(candidates):
+            if i % _BATCH_SIZE == 0:
+                j.set_progress(i, tr("Checking hash cache %d/%d") % (i, total))
+            try:
+                stat = f.path.stat()
+                size, mtime_ns = stat.st_size, stat.st_mtime_ns
+            except OSError:
+                continue
+            cached = hashcachedb.get(f.path, size, mtime_ns)
+            if cached is not None:
+                f.digest = f.digest_partial = f.digest_samples = cached
+            else:
+                cache_misses.append((f, size, mtime_ns))
+
+        if not cache_misses:
+            j.set_progress(total)
+            return
+
+        new_rows: list = []
+        workers = max(1, (os.cpu_count() or 1) - 1) if self.parallel_scan else 1
+        miss_total = len(cache_misses)
+        half = total // 2
+
+        try:
+            with ProcessPoolExecutor(max_workers=workers) as pool:
+                future_to_meta = {
+                    pool.submit(hash_file_worker, str(f.path)): (f, sz, mt)
+                    for f, sz, mt in cache_misses
+                }
+                done = 0
+                for future in as_completed(future_to_meta):
+                    f, sz, mt = future_to_meta[future]
+                    result = future.result()
+                    if result is not None:
+                        _, digest = result
+                        f.digest = f.digest_partial = f.digest_samples = digest
+                        new_rows.append((f.path, sz, mt, digest))
+                    done += 1
+                    if done % _BATCH_SIZE == 0:
+                        hashcachedb.set_batch(new_rows)
+                        new_rows = []
+                        j.set_progress(half + done * half // miss_total,
+                                       tr("Hashing files %d/%d") % (done, miss_total))
+        except Exception as exc:
+            logging.warning("Parallel hashing failed (%s), falling back to sequential", exc)
+            for done, (f, sz, mt) in enumerate(cache_misses, 1):
+                result = hash_file_worker(str(f.path))
+                if result is not None:
+                    _, digest = result
+                    f.digest = f.digest_partial = f.digest_samples = digest
+                    new_rows.append((f.path, sz, mt, digest))
+
+        if new_rows:
+            hashcachedb.set_batch(new_rows)
+        j.set_progress(total)
+
     def _getmatches(self, files, j):
         if (
             self.size_threshold
@@ -92,6 +164,15 @@ class Scanner:
             if self.large_size_threshold:
                 files = [f for f in files if f.size <= self.large_size_threshold]
         if self.scan_type in {ScanType.CONTENTS, ScanType.FOLDERS}:
+            if hashcachedb.conn is not None:
+                # Size-first pre-filter: only hash files that share a size with a partner.
+                size_groups: dict = defaultdict(list)
+                for f in files:
+                    size_groups[f.size].append(f)
+                candidates = [f for grp in size_groups.values() if len(grp) > 1 for f in grp]
+                if candidates:
+                    j.start_job(len(candidates), tr("Checking hash cache"))
+                    self._hash_files_parallel(candidates, j)
             return engine.getmatches_by_contents(files, bigsize=self.big_file_size_threshold, j=j)
         else:
             j = j.start_subjob([2, 8])
@@ -207,6 +288,7 @@ class Scanner:
     match_similar_words = False
     min_match_percentage = 80
     mix_file_kind = True
+    parallel_scan = (os.cpu_count() or 1) > 1
     scan_type = ScanType.FILENAME
     scanned_tags = {"artist", "title"}
     size_threshold = 0

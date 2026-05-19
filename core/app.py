@@ -140,6 +140,8 @@ class DupeGuru(Broadcaster):
         self.exclude_list = ExcludeList()
         hash_cache_file = op.join(self.appdata, "hash_cache.db")
         fs.filesdb.connect(hash_cache_file)
+        from core.hash_cache import hashcachedb
+        hashcachedb.connect(op.join(self.appdata, "hash_cache2.db"))
         self.directories = directories.Directories(self.exclude_list)
         self.results = results.Results(self)
         self.ignore_list = IgnoreList()
@@ -296,6 +298,8 @@ class DupeGuru(Broadcaster):
         if jobid == JobType.SCAN:
             self._results_changed()
             fs.filesdb.commit()
+            from core.hash_cache import hashcachedb
+            hashcachedb.commit()
             if not self.results.groups:
                 self.view.show_message(tr("No duplicates found."))
             else:
@@ -765,6 +769,8 @@ class DupeGuru(Broadcaster):
 
     def close(self):
         fs.filesdb.close()
+        from core.hash_cache import hashcachedb
+        hashcachedb.close()
 
     def save_as(self, filename):
         """Save results in ``filename``.
