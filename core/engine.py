@@ -290,29 +290,37 @@ def getmatches_by_contents(files, bigsize=0, j=job.nulljob):
     for f in files:
         size2files[f.size].add(f)
     del files
-    possible_matches = [files for files in size2files.values() if len(files) > 1]
+
+    # Keep only buckets with ≥2 files; del size2files frees singleton File references immediately
+    candidate_groups = {sz: grp for sz, grp in size2files.items() if len(grp) > 1}
     del size2files
+
     result = []
-    j.start_job(len(possible_matches), PROGRESS_MESSAGE % (0, 0))
+    j.start_job(len(candidate_groups), PROGRESS_MESSAGE % (0, 0))
     group_count = 0
-    for group in possible_matches:
-        for first, second in itertools.combinations(group, 2):
-            if first.is_ref and second.is_ref:
-                continue  # Don't spend time comparing two ref pics together.
-            if first.size == 0 and second.size == 0:
-                # skip hashing for zero length files
-                result.append(Match(first, second, 100))
-                continue
-            # if digests are the same (and not None) then files match
-            if first.digest_partial is not None and first.digest_partial == second.digest_partial:
-                if bigsize > 0 and first.size > bigsize:
-                    if first.digest_samples is not None and first.digest_samples == second.digest_samples:
-                        result.append(Match(first, second, 100))
-                else:
-                    if first.digest is not None and first.digest == second.digest:
-                        result.append(Match(first, second, 100))
-        group_count += 1
-        j.add_progress(desc=PROGRESS_MESSAGE % (len(result), group_count))
+    try:
+        for size in list(candidate_groups):
+            group = candidate_groups.pop(size)  # pop releases the bucket after this iteration
+            for first, second in itertools.combinations(group, 2):
+                if first.is_ref and second.is_ref:
+                    continue  # Don't spend time comparing two ref pics together.
+                if first.size == 0 and second.size == 0:
+                    # skip hashing for zero length files
+                    result.append(Match(first, second, 100))
+                    continue
+                # if digests are the same (and not None) then files match
+                if first.digest_partial is not None and first.digest_partial == second.digest_partial:
+                    if bigsize > 0 and first.size > bigsize:
+                        if first.digest_samples is not None and first.digest_samples == second.digest_samples:
+                            result.append(Match(first, second, 100))
+                    else:
+                        if first.digest is not None and first.digest == second.digest:
+                            result.append(Match(first, second, 100))
+            group_count += 1
+            j.add_progress(desc=PROGRESS_MESSAGE % (len(result), group_count))
+    except MemoryError:
+        del candidate_groups
+        logging.warning("Memory Overflow. Matches: %d. Groups processed: %d" % (len(result), group_count))
     return result
 
 
