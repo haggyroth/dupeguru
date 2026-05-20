@@ -149,6 +149,30 @@ class FilesDB:
             conn.execute(self.drop_table_query)
             conn.execute(self.create_table_query)
 
+    def purge_missing(self) -> int:
+        """Remove entries whose paths no longer exist on disk. Returns count of purged rows."""
+        with self.lock, self.conn as conn:
+            cur = conn.execute("SELECT path FROM files")
+            to_delete = [row[0] for row in cur if not os.path.exists(row[0])]
+        if not to_delete:
+            return 0
+        with self.lock, self.conn as conn:
+            conn.executemany("DELETE FROM files WHERE path=?", [(p,) for p in to_delete])
+        logging.info("FilesDB: purged %d stale entries", len(to_delete))
+        return len(to_delete)
+
+    def purge_old_entries(self, days: int = 90) -> int:
+        """Remove entries not updated within ``days`` days. Returns count of purged rows."""
+        with self.lock, self.conn as conn:
+            cur = conn.execute(
+                "DELETE FROM files WHERE entry_dt < datetime('now', ?)",
+                (f"-{days} days",),
+            )
+            count = cur.rowcount
+        if count:
+            logging.info("FilesDB: purged %d entries older than %d days", count, days)
+        return count
+
     def get(self, path: Path, key: str) -> Union[bytes, None]:
         stat = path.stat()
         size = stat.st_size

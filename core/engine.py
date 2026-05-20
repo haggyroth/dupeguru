@@ -9,7 +9,10 @@
 import difflib
 import itertools
 import logging
+import os
+import sqlite3
 import string
+import tempfile
 from collections import defaultdict, namedtuple
 from unicodedata import normalize
 
@@ -250,7 +253,23 @@ def getmatches(
     if no_field_order:
         match_flags.append(NO_FIELD_ORDER)
     j.start_job(len(word_dict), PROGRESS_MESSAGE % (0, 0))
-    compared = defaultdict(set)
+
+    # Disk-backed seen-pairs table replaces the former O(n²)-RAM `compared` dict.
+    # Pairs are stored bidirectionally so one query per ref suffices. The temp file
+    # is cleaned up in the finally block regardless of how we exit.
+    _fd, _pairs_path = tempfile.mkstemp(suffix="_seen_pairs.db")
+    os.close(_fd)
+    _pairs_conn = sqlite3.connect(_pairs_path)
+    _pairs_conn.execute("PRAGMA journal_mode=OFF")
+    _pairs_conn.execute("PRAGMA synchronous=OFF")
+    _pairs_conn.execute("PRAGMA cache_size=-65536")  # 64 MB page cache
+    _pairs_conn.execute(
+        "CREATE TABLE seen (file TEXT, partner TEXT, PRIMARY KEY(file,partner)) WITHOUT ROWID"
+    )
+
+    # Older SQLite versions cap bind variables at 999; leave one slot for the file param.
+    _CHUNK = 998
+
     result = []
     try:
         word_count = 0
@@ -259,23 +278,57 @@ def getmatches(
             items = word_dict.popitem()[1]
             while items:
                 ref = items.pop()
-                compared_already = compared[ref]
-                to_compare = items - compared_already
-                compared_already |= to_compare
-                for other in to_compare:
-                    m = get_match(ref, other, match_flags)
-                    if m.percentage >= min_match_percentage:
-                        result.append(m)
-                        if len(result) >= LIMIT:
-                            return result
+                if not items:
+                    break
+                ref_path = str(ref.path)
+                path_to_obj = {str(o.path): o for o in items}
+                other_paths = list(path_to_obj)
+
+                # Find which partners have already been seen for this ref (chunked).
+                seen_paths: set[str] = set()
+                for i in range(0, len(other_paths), _CHUNK):
+                    chunk = other_paths[i : i + _CHUNK]
+                    ph = ",".join("?" * len(chunk))
+                    seen_paths.update(
+                        row[0]
+                        for row in _pairs_conn.execute(
+                            f"SELECT partner FROM seen WHERE file=? AND partner IN ({ph})",
+                            [ref_path, *chunk],
+                        )
+                    )
+
+                to_compare = [o for p, o in path_to_obj.items() if p not in seen_paths]
+                if to_compare:
+                    # Record both directions so the next ref can find the pair with one query.
+                    insert_rows = []
+                    for o in to_compare:
+                        p = str(o.path)
+                        insert_rows.append((ref_path, p))
+                        insert_rows.append((p, ref_path))
+                    _pairs_conn.executemany("INSERT OR IGNORE INTO seen VALUES(?,?)", insert_rows)
+
+                    for other in to_compare:
+                        m = get_match(ref, other, match_flags)
+                        if m.percentage >= min_match_percentage:
+                            result.append(m)
+                            if len(result) >= LIMIT:
+                                return result
             word_count += 1
             j.add_progress(desc=PROGRESS_MESSAGE % (len(result), word_count))
     except MemoryError:
         # This is the place where the memory usage is at its peak during the scan.
         # Just continue the process with an incomplete list of matches.
-        del compared  # This should give us enough room to call logging.
         logging.warning("Memory Overflow. Matches: %d. Word dict: %d" % (len(result), len(word_dict)))
         return result
+    finally:
+        try:
+            _pairs_conn.close()
+        except Exception:
+            pass
+        try:
+            os.unlink(_pairs_path)
+        except OSError:
+            pass
     return result
 
 

@@ -9,6 +9,7 @@ import pytest
 from hscommon.jobprogress import job
 
 from core import fs
+from core.engine import getmatches, getwords
 from core.scanner import Scanner, ScanType
 
 
@@ -129,3 +130,165 @@ class TestContentGrouping:
         _contents_scanner().get_dupe_groups([f1, f2], j=job.Job(1, on_progress))
 
         assert len(calls) >= 1
+
+
+class TestFilesDBPurgeMissing:
+    def test_purge_removes_deleted_paths(self, tmp_path):
+        f = tmp_path / "gone.bin"
+        f.write_bytes(b"x" * 100)
+        file_obj = fs.File(f)
+        _ = file_obj.digest  # populate cache
+        f.unlink()
+        purged = fs.filesdb.purge_missing()
+        assert purged == 1
+        # DB should now be empty
+        with fs.filesdb.conn as conn:
+            rows = conn.execute("SELECT path FROM files").fetchall()
+        assert rows == []
+
+    def test_purge_keeps_existing_paths(self, tmp_path):
+        f = tmp_path / "keep.bin"
+        f.write_bytes(b"y" * 100)
+        file_obj = fs.File(f)
+        _ = file_obj.digest
+        purged = fs.filesdb.purge_missing()
+        assert purged == 0
+        with fs.filesdb.conn as conn:
+            rows = conn.execute("SELECT path FROM files").fetchall()
+        assert len(rows) == 1
+
+    def test_purge_mixed(self, tmp_path):
+        keep = tmp_path / "keep.bin"
+        keep.write_bytes(b"a" * 100)
+        gone = tmp_path / "gone.bin"
+        gone.write_bytes(b"b" * 100)
+        _ = fs.File(keep).digest
+        _ = fs.File(gone).digest
+        gone.unlink()
+        purged = fs.filesdb.purge_missing()
+        assert purged == 1
+        with fs.filesdb.conn as conn:
+            rows = conn.execute("SELECT path FROM files").fetchall()
+        assert len(rows) == 1
+        assert rows[0][0] == str(keep)
+
+    def test_purge_empty_db(self):
+        purged = fs.filesdb.purge_missing()
+        assert purged == 0
+
+
+class TestFilesDBPurgeOldEntries:
+    def _put(self, tmp_path, name, content=b"x" * 100):
+        p = tmp_path / name
+        p.write_bytes(content)
+        f = fs.File(p)
+        _ = f.digest
+        return p
+
+    def test_purge_old_removes_aged_entries(self, tmp_path):
+        self._put(tmp_path, "old.bin")
+        # Back-date the entry_dt so it looks 100 days old.
+        with fs.filesdb.conn as conn:
+            conn.execute("UPDATE files SET entry_dt = datetime('now', '-100 days')")
+        purged = fs.filesdb.purge_old_entries(days=90)
+        assert purged == 1
+        with fs.filesdb.conn as conn:
+            rows = conn.execute("SELECT path FROM files").fetchall()
+        assert rows == []
+
+    def test_purge_old_keeps_recent_entries(self, tmp_path):
+        self._put(tmp_path, "recent.bin")
+        purged = fs.filesdb.purge_old_entries(days=90)
+        assert purged == 0
+        with fs.filesdb.conn as conn:
+            rows = conn.execute("SELECT path FROM files").fetchall()
+        assert len(rows) == 1
+
+    def test_purge_old_mixed(self, tmp_path):
+        self._put(tmp_path, "keep.bin")
+        old_path = self._put(tmp_path, "stale.bin", b"y" * 100)
+        with fs.filesdb.conn as conn:
+            conn.execute(
+                "UPDATE files SET entry_dt = datetime('now', '-100 days') WHERE path=?",
+                (str(old_path),),
+            )
+        purged = fs.filesdb.purge_old_entries(days=90)
+        assert purged == 1
+        with fs.filesdb.conn as conn:
+            rows = conn.execute("SELECT path FROM files").fetchall()
+        assert len(rows) == 1
+        assert "keep" in rows[0][0]
+
+    def test_purge_old_respects_days_parameter(self, tmp_path):
+        self._put(tmp_path, "entry.bin")
+        with fs.filesdb.conn as conn:
+            conn.execute("UPDATE files SET entry_dt = datetime('now', '-10 days')")
+        assert fs.filesdb.purge_old_entries(days=30) == 0
+        assert fs.filesdb.purge_old_entries(days=5) == 1
+
+    def test_purge_old_empty_db(self):
+        assert fs.filesdb.purge_old_entries() == 0
+
+
+def _named_file(tmp_path, name):
+    p = tmp_path / name
+    p.write_bytes(b"x")
+    f = fs.File(p)
+    f.words = getwords(name)
+    return f
+
+
+class TestGetMatchesSQLitePairs:
+    def test_basic_match_found(self, tmp_path):
+        a = _named_file(tmp_path, "foo bar.txt")
+        b = _named_file(tmp_path, "foo bar copy.txt")
+        matches = getmatches([a, b], min_match_percentage=0)
+        assert len(matches) >= 1
+
+    def test_no_match_for_unrelated_names(self, tmp_path):
+        # Words are set explicitly to avoid shared extension tokens.
+        a = _named_file(tmp_path, "alpha.txt")
+        a.words = ["alpha"]
+        b = _named_file(tmp_path, "beta.txt")
+        b.words = ["beta"]
+        matches = getmatches([a, b], min_match_percentage=50)
+        assert matches == []
+
+    def test_no_duplicate_pairs_for_multi_word_overlap(self, tmp_path):
+        # "foo bar" and "foo bar copy" share both "foo" and "bar".
+        # Each pair must be compared at most once despite appearing in two word groups.
+        a = _named_file(tmp_path, "foo bar.txt")
+        b = _named_file(tmp_path, "foo bar copy.txt")
+        matches = getmatches([a, b], min_match_percentage=0)
+        pair_keys = [
+            (min(str(m.first.path), str(m.second.path)), max(str(m.first.path), str(m.second.path)))
+            for m in matches
+        ]
+        assert len(pair_keys) == len(set(pair_keys)), "Same pair compared more than once"
+
+    def test_third_unrelated_file_not_matched(self, tmp_path):
+        a = _named_file(tmp_path, "foo bar.txt")
+        b = _named_file(tmp_path, "foo bar copy.txt")
+        c = _named_file(tmp_path, "completely different.txt")
+        matches = getmatches([a, b, c], min_match_percentage=50)
+        involved = {str(m.first.path) for m in matches} | {str(m.second.path) for m in matches}
+        assert str(c.path) not in involved
+
+    def test_many_files_sharing_one_word_no_duplicate_pairs(self, tmp_path):
+        # 20 files all sharing the word "episode"; each pair must appear at most once.
+        files = [_named_file(tmp_path, f"episode {i}.txt") for i in range(20)]
+        matches = getmatches(files, min_match_percentage=0)
+        pair_keys = [
+            (min(str(m.first.path), str(m.second.path)), max(str(m.first.path), str(m.second.path)))
+            for m in matches
+        ]
+        assert len(pair_keys) == len(set(pair_keys))
+
+    def test_temp_db_cleaned_up_after_call(self, tmp_path):
+        import glob, tempfile
+        before = set(glob.glob(tempfile.gettempdir() + "/*_seen_pairs.db"))
+        a = _named_file(tmp_path, "foo.txt")
+        b = _named_file(tmp_path, "foo copy.txt")
+        getmatches([a, b], min_match_percentage=0)
+        after = set(glob.glob(tempfile.gettempdir() + "/*_seen_pairs.db"))
+        assert after == before, "Temp seen-pairs DB was not cleaned up"
