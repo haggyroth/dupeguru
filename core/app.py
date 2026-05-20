@@ -799,6 +799,8 @@ class DupeGuru(Broadcaster):
         """
         scanner = self.SCANNER_CLASS()
         fs.filesdb.ignore_mtime = self.options["rehash_ignore_mtime"] is True
+        fs.filesdb.purge_missing()
+        fs.filesdb.purge_old_entries()
         if not self.directories.has_any_file():
             self.view.show_message(tr("The selected directories contain no scannable file."))
             return
