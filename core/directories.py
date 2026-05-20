@@ -62,9 +62,16 @@ class Directories:
         self._exclude_list = exclude_list
 
     def __contains__(self, path):
+        norm = os.path.normcase(str(path))
         for p in self._dirs:
-            if path == p or p in path.parents:
+            if norm == os.path.normcase(str(p)):
                 return True
+            # Check whether p is an ancestor of path.
+            try:
+                Path(path).relative_to(p)
+                return True
+            except ValueError:
+                pass
         return False
 
     def __delitem__(self, key):

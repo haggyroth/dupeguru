@@ -6,10 +6,13 @@
 
 import cProfile
 import datetime
+import errno
 import os
 import os.path as op
 import logging
+import shlex
 import subprocess
+import sys
 import re
 import shutil
 from pathlib import Path
@@ -248,8 +251,21 @@ class DupeGuru(Broadcaster):
         if link_deleted:
             group = self.results.get_group_of_duplicate(dupe)
             ref = group.ref
-            linkfunc = os.link if use_hardlinks else os.symlink
-            linkfunc(str(ref.path), str_path)
+            if use_hardlinks:
+                os.link(str(ref.path), str_path)
+            else:
+                try:
+                    os.symlink(str(ref.path), str_path)
+                except OSError as e:
+                    if sys.platform == "win32" and e.errno in (errno.EPERM, errno.EACCES):
+                        msg = tr(
+                            "Could not create a symbolic link at '{}'. On Windows, symbolic links "
+                            "require either Developer Mode or the SeCreateSymbolicLinkPrivilege. "
+                            "Consider using hardlinks instead."
+                        ).format(str_path)
+                        self.view.show_message(msg)
+                    else:
+                        raise
         self.clean_empty_dirs(dupe.path.parent)
 
     def _create_file(self, path):
@@ -547,25 +563,27 @@ class DupeGuru(Broadcaster):
             return
         dupes = self.selected_dupes
         refs = [self.results.get_group_of_duplicate(dupe).ref for dupe in dupes]
+        # Parse the template once into tokens so substitution happens per-token,
+        # not on the full shell string — prevents filenames with metacharacters
+        # (semicolons, ampersands, quotes, etc.) from being interpreted by a shell.
+        try:
+            cmd_tokens = shlex.split(cmd, posix=(sys.platform != "win32"))
+        except ValueError as e:
+            logging.warning("Could not parse CustomCommand %r: %s", cmd, e)
+            self.view.show_message(tr("Custom command could not be parsed: {}").format(e))
+            return
         for dupe, ref in zip(dupes, refs):
-            dupe_cmd = cmd.replace("%d", str(dupe.path))
-            dupe_cmd = dupe_cmd.replace("%r", str(ref.path))
-            match = re.match(r'"([^"]+)"(.*)', dupe_cmd)
-            if match is not None:
-                # This code here is because subprocess. Popen doesn't seem to accept, under Windows,
-                # executable paths with spaces in it, *even* when they're enclosed in "". So this is
-                # a workaround to make the damn thing work.
-                exepath, args = match.groups()
-                path, exename = op.split(exepath)
-                p = subprocess.Popen(
-                    exename + args, shell=True, cwd=path, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
-                )
-                output = p.stdout.read()
-                logging.info("Custom command %s %s: %s", exename, args, output)
+            argv = [
+                token.replace("%d", str(dupe.path)).replace("%r", str(ref.path))
+                for token in cmd_tokens
+            ]
+            p = subprocess.Popen(argv, shell=False, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            output = p.stdout.read()
+            rc = p.wait()
+            if rc != 0:
+                logging.warning("Custom command %r exited with code %d: %s", argv, rc, output)
             else:
-                p = subprocess.Popen(dupe_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-                output = p.stdout.read()
-                logging.info("Custom command %s: %s", dupe_cmd, output)
+                logging.info("Custom command %r: %s", argv, output)
 
     def load(self):
         """Load directory selection and ignore list from files in appdata.
@@ -799,8 +817,7 @@ class DupeGuru(Broadcaster):
         """
         scanner = self.SCANNER_CLASS()
         fs.filesdb.ignore_mtime = self.options["rehash_ignore_mtime"] is True
-        fs.filesdb.purge_missing()
-        fs.filesdb.purge_old_entries()
+        fs.filesdb.purge_if_stale()
         if not self.directories.has_any_file():
             self.view.show_message(tr("The selected directories contain no scannable file."))
             return

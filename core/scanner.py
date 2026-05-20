@@ -65,7 +65,7 @@ def remove_dupe_paths(files):
         normalized = str(f.path).lower()
         if normalized in path2file:
             try:
-                if op.samefile(normalized, str(path2file[normalized].path)):
+                if op.samefile(str(f.path), str(path2file[normalized].path)):
                     continue  # same file, it's a dupe
                 else:
                     pass  # We don't treat them as dupes
@@ -77,17 +77,34 @@ def remove_dupe_paths(files):
     return result
 
 
+def _apply_digest(f, digest, size, bigsize):
+    """Set digest fields on a File from a pre-computed full hash.
+
+    For big files (size > bigsize > 0), only f.digest is set so that
+    digest_partial and digest_samples are computed lazily with the correct
+    partial/sampling algorithms, preserving the big_file_size_threshold
+    optimisation. For small files all three fields equal the full hash anyway.
+    """
+    f.digest = digest
+    if bigsize == 0 or size <= bigsize:
+        f.digest_partial = digest
+        f.digest_samples = digest
+
+
 class Scanner:
     def __init__(self):
         self.discarded_file_count = 0
+        self.parallel_scan = (os.cpu_count() or 1) > 1
 
-    def _hash_files_parallel(self, candidates, j):
+    def _hash_files_parallel(self, candidates, j, bigsize=0):
         """Pre-populate File.digest for content-scan candidates using the hash cache
         and a ProcessPoolExecutor for cache misses.
 
         candidates: list of File objects that share a size with at least one other file.
         Modifies each file's .digest in-place and writes new hashes to hashcachedb.
         j must already have had start_job() called by the caller.
+        bigsize: value of big_file_size_threshold — files larger than this need partial/samples
+        hashes computed separately, so only f.digest is set for them here.
         """
         total = len(candidates)
         cache_misses = []
@@ -102,7 +119,7 @@ class Scanner:
                 continue
             cached = hashcachedb.get(f.path, size, mtime_ns)
             if cached is not None:
-                f.digest = f.digest_partial = f.digest_samples = cached
+                _apply_digest(f, cached, size, bigsize)
             else:
                 cache_misses.append((f, size, mtime_ns))
 
@@ -115,34 +132,61 @@ class Scanner:
         miss_total = len(cache_misses)
         half = total // 2
 
+        # Paths that the parallel pool successfully hashed; used to skip them in fallback.
+        completed_paths: set[str] = set()
+        # Entries that the pool couldn't hash (per-worker exception); retried sequentially.
+        failed_entries: list = []
+        parallel_done = 0
+
         try:
             with ProcessPoolExecutor(max_workers=workers) as pool:
                 future_to_meta = {
                     pool.submit(hash_file_worker, str(f.path)): (f, sz, mt)
                     for f, sz, mt in cache_misses
                 }
-                done = 0
                 for future in as_completed(future_to_meta):
                     f, sz, mt = future_to_meta[future]
-                    result = future.result()
+                    try:
+                        result = future.result()
+                    except Exception as exc:
+                        logging.warning("Worker failed for %s (%s), will retry", f.path, exc)
+                        failed_entries.append((f, sz, mt))
+                        parallel_done += 1
+                        continue
                     if result is not None:
                         _, digest = result
-                        f.digest = f.digest_partial = f.digest_samples = digest
+                        _apply_digest(f, digest, sz, bigsize)
                         new_rows.append((f.path, sz, mt, digest))
-                    done += 1
-                    if done % _BATCH_SIZE == 0:
+                        completed_paths.add(str(f.path))
+                    parallel_done += 1
+                    if parallel_done % _BATCH_SIZE == 0:
                         hashcachedb.set_batch(new_rows)
                         new_rows = []
-                        j.set_progress(half + done * half // miss_total,
-                                       tr("Hashing files %d/%d") % (done, miss_total))
+                        j.set_progress(
+                            half + parallel_done * half // miss_total,
+                            tr("Hashing files %d/%d") % (parallel_done, miss_total),
+                        )
         except Exception as exc:
-            logging.warning("Parallel hashing failed (%s), falling back to sequential", exc)
-            for done, (f, sz, mt) in enumerate(cache_misses, 1):
+            logging.warning("Parallel hashing pool failed (%s), falling back to sequential", exc)
+            # Pool-level failure: queue every cache miss not already finished.
+            failed_entries = [
+                (f, sz, mt) for f, sz, mt in cache_misses if str(f.path) not in completed_paths
+            ]
+
+        if failed_entries:
+            for seq_done, (f, sz, mt) in enumerate(failed_entries, 1):
                 result = hash_file_worker(str(f.path))
                 if result is not None:
                     _, digest = result
-                    f.digest = f.digest_partial = f.digest_samples = digest
+                    _apply_digest(f, digest, sz, bigsize)
                     new_rows.append((f.path, sz, mt, digest))
+                if seq_done % _BATCH_SIZE == 0:
+                    hashcachedb.set_batch(new_rows)
+                    new_rows = []
+                    j.set_progress(
+                        half + (parallel_done + seq_done) * half // miss_total,
+                        tr("Hashing files %d/%d") % (parallel_done + seq_done, miss_total),
+                    )
 
         if new_rows:
             hashcachedb.set_batch(new_rows)
@@ -172,7 +216,7 @@ class Scanner:
                 candidates = [f for grp in size_groups.values() if len(grp) > 1 for f in grp]
                 if candidates:
                     j.start_job(len(candidates), tr("Checking hash cache"))
-                    self._hash_files_parallel(candidates, j)
+                    self._hash_files_parallel(candidates, j, bigsize=self.big_file_size_threshold)
             return engine.getmatches_by_contents(files, bigsize=self.big_file_size_threshold, j=j)
         else:
             j = j.start_subjob([2, 8])
@@ -288,7 +332,6 @@ class Scanner:
     match_similar_words = False
     min_match_percentage = 80
     mix_file_kind = True
-    parallel_scan = (os.cpu_count() or 1) > 1
     scan_type = ScanType.FILENAME
     scanned_tags = {"artist", "title"}
     size_threshold = 0

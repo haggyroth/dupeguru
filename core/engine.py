@@ -7,13 +7,15 @@
 # http://www.gnu.org/licenses/gpl-3.0.html
 
 import difflib
+import gc
 import itertools
 import logging
 import os
 import sqlite3
 import string
+import sys
 import tempfile
-from collections import defaultdict, namedtuple
+from collections import Counter, defaultdict, namedtuple
 from unicodedata import normalize
 
 from hscommon.util import flatten, multi_replace
@@ -28,6 +30,7 @@ from hscommon.jobprogress import job
 
 JOB_REFRESH_RATE = 100
 PROGRESS_MESSAGE = tr("%d matches found from %d groups")
+GETMATCHES_LIMIT = 5_000_000  # max matches returned by getmatches(); override for tests
 
 
 def getwords(s):
@@ -74,22 +77,26 @@ def compare(first, second, flags=()):
         return 0
     if any(isinstance(element, list) for element in first):
         return compare_fields(first, second, flags)
-    second = second[:]  # We must use a copy of second because we remove items from it
     match_similar = MATCH_SIMILAR_WORDS in flags
     weight_words = WEIGHT_WORDS in flags
     joined = first + second
     total_count = sum(len(word) for word in joined) if weight_words else len(joined)
     match_count = 0
     in_order = True
+    # Counter gives O(1) membership test and decrement; keep a list copy only for the
+    # relative-order check and as the candidate list for get_close_matches.
+    second_count = Counter(second)
+    available = list(second)
     for word in first:
-        if match_similar and (word not in second):
-            similar = difflib.get_close_matches(word, second, 1, 0.8)
+        if match_similar and not second_count[word]:
+            similar = difflib.get_close_matches(word, available, 1, 0.8)
             if similar:
                 word = similar[0]
-        if word in second:
-            if second[0] != word:
+        if second_count[word]:
+            second_count[word] -= 1
+            if available[0] != word:
                 in_order = False
-            second.remove(word)
+            available.remove(word)
             match_count += len(word) if weight_words else 1
     result = round(((match_count * 2) / total_count) * 100)
     if (result == 100) and (not in_order):
@@ -147,18 +154,20 @@ def merge_similar_words(word_dict):
     ``difflib.get_close_matches()``, which computes the number of edits that are necessary to make
     a word equal to the other.
     """
-    keys = list(word_dict.keys())
-    keys.sort(key=len)  # we want the shortest word to stay
-    while keys:
-        key = keys.pop(0)
-        similars = difflib.get_close_matches(key, keys, 100, 0.8)
+    keys = sorted(word_dict.keys(), key=len)  # shortest word survives the merge
+    removed: set = set()
+    for key in keys:
+        if key in removed:
+            continue
+        candidates = [k for k in keys if k not in removed and k != key]
+        similars = difflib.get_close_matches(key, candidates, 100, 0.8)
         if not similars:
             continue
         objects = word_dict[key]
         for similar in similars:
             objects |= word_dict[similar]
             del word_dict[similar]
-            keys.remove(similar)
+            removed.add(similar)
 
 
 def reduce_common_words(word_dict, threshold):
@@ -235,7 +244,6 @@ def getmatches(
     :param j: A :ref:`job progress instance <jobs>`.
     """
     COMMON_WORD_THRESHOLD = 50
-    LIMIT = 5000000
     j = j.start_subjob(2)
     sj = j.start_subjob(2)
     for o in objects:
@@ -255,81 +263,80 @@ def getmatches(
     j.start_job(len(word_dict), PROGRESS_MESSAGE % (0, 0))
 
     # Disk-backed seen-pairs table replaces the former O(n²)-RAM `compared` dict.
-    # Pairs are stored bidirectionally so one query per ref suffices. The temp file
-    # is cleaned up in the finally block regardless of how we exit.
-    _fd, _pairs_path = tempfile.mkstemp(suffix="_seen_pairs.db")
-    os.close(_fd)
-    _pairs_conn = sqlite3.connect(_pairs_path)
-    _pairs_conn.execute("PRAGMA journal_mode=OFF")
-    _pairs_conn.execute("PRAGMA synchronous=OFF")
-    _pairs_conn.execute("PRAGMA cache_size=-65536")  # 64 MB page cache
-    _pairs_conn.execute(
-        "CREATE TABLE seen (file TEXT, partner TEXT, PRIMARY KEY(file,partner)) WITHOUT ROWID"
-    )
+    # TemporaryDirectory ensures the DB file is removed even on abnormal exit.
+    # The connection is explicitly closed in the finally block before the directory
+    # is torn down, which also avoids the Windows file-lock race (H6).
+    with tempfile.TemporaryDirectory() as _tmpdir:
+        _pairs_path = os.path.join(_tmpdir, "seen_pairs.db")
+        _pairs_conn = sqlite3.connect(_pairs_path)
+        _pairs_conn.execute("PRAGMA journal_mode=OFF")
+        _pairs_conn.execute("PRAGMA synchronous=OFF")
+        _pairs_conn.execute("PRAGMA cache_size=-65536")  # 64 MB page cache
+        _pairs_conn.execute(
+            "CREATE TABLE seen (file TEXT, partner TEXT, PRIMARY KEY(file,partner)) WITHOUT ROWID"
+        )
 
-    # Older SQLite versions cap bind variables at 999; leave one slot for the file param.
-    _CHUNK = 998
+        # Older SQLite versions cap bind variables at 999; leave one slot for the file param.
+        _CHUNK = 998
 
-    result = []
-    try:
-        word_count = 0
-        # This whole 'popping' thing is there to avoid taking too much memory at the same time.
-        while word_dict:
-            items = word_dict.popitem()[1]
-            while items:
-                ref = items.pop()
-                if not items:
-                    break
-                ref_path = str(ref.path)
-                path_to_obj = {str(o.path): o for o in items}
-                other_paths = list(path_to_obj)
+        result = []
+        try:
+            word_count = 0
+            # This whole 'popping' thing is there to avoid taking too much memory at the same time.
+            while word_dict:
+                items = word_dict.popitem()[1]
+                while items:
+                    ref = items.pop()
+                    if not items:
+                        break
+                    ref_key = str(id(ref))
+                    key_to_obj = {str(id(o)): o for o in items}
+                    other_keys = list(key_to_obj)
 
-                # Find which partners have already been seen for this ref (chunked).
-                seen_paths: set[str] = set()
-                for i in range(0, len(other_paths), _CHUNK):
-                    chunk = other_paths[i : i + _CHUNK]
-                    ph = ",".join("?" * len(chunk))
-                    seen_paths.update(
-                        row[0]
-                        for row in _pairs_conn.execute(
-                            f"SELECT partner FROM seen WHERE file=? AND partner IN ({ph})",
-                            [ref_path, *chunk],
+                    # Find which partners have already been seen for this ref (chunked).
+                    seen_keys: set[str] = set()
+                    for i in range(0, len(other_keys), _CHUNK):
+                        chunk = other_keys[i : i + _CHUNK]
+                        ph = ",".join("?" * len(chunk))
+                        seen_keys.update(
+                            row[0]
+                            for row in _pairs_conn.execute(
+                                f"SELECT partner FROM seen WHERE file=? AND partner IN ({ph})",
+                                [ref_key, *chunk],
+                            )
                         )
-                    )
 
-                to_compare = [o for p, o in path_to_obj.items() if p not in seen_paths]
-                if to_compare:
-                    # Record both directions so the next ref can find the pair with one query.
-                    insert_rows = []
-                    for o in to_compare:
-                        p = str(o.path)
-                        insert_rows.append((ref_path, p))
-                        insert_rows.append((p, ref_path))
-                    _pairs_conn.executemany("INSERT OR IGNORE INTO seen VALUES(?,?)", insert_rows)
+                    to_compare = [o for k, o in key_to_obj.items() if k not in seen_keys]
+                    if to_compare:
+                        # Record both directions so the next ref can find the pair with one query.
+                        insert_rows = []
+                        for o in to_compare:
+                            k = str(id(o))
+                            insert_rows.append((ref_key, k))
+                            insert_rows.append((k, ref_key))
+                        _pairs_conn.executemany("INSERT OR IGNORE INTO seen VALUES(?,?)", insert_rows)
 
-                    for other in to_compare:
-                        m = get_match(ref, other, match_flags)
-                        if m.percentage >= min_match_percentage:
-                            result.append(m)
-                            if len(result) >= LIMIT:
-                                return result
-            word_count += 1
-            j.add_progress(desc=PROGRESS_MESSAGE % (len(result), word_count))
-    except MemoryError:
-        # This is the place where the memory usage is at its peak during the scan.
-        # Just continue the process with an incomplete list of matches.
-        logging.warning("Memory Overflow. Matches: %d. Word dict: %d" % (len(result), len(word_dict)))
-        return result
-    finally:
-        try:
+                        for other in to_compare:
+                            m = get_match(ref, other, match_flags)
+                            if m.percentage >= min_match_percentage:
+                                result.append(m)
+                                if len(result) >= GETMATCHES_LIMIT:
+                                    return result
+                word_count += 1
+                j.add_progress(desc=PROGRESS_MESSAGE % (len(result), word_count))
+        except MemoryError:
+            # This is the place where the memory usage is at its peak during the scan.
+            # Just continue the process with an incomplete list of matches.
+            logging.warning("Memory Overflow. Matches: %d. Word dict: %d" % (len(result), len(word_dict)))
+            return result
+        finally:
             _pairs_conn.close()
-        except Exception:
-            pass
-        try:
-            os.unlink(_pairs_path)
-        except OSError:
-            pass
-    return result
+            # On Windows, SQLite may hold the file lock briefly after close();
+            # a GC cycle releases the last reference and lets the OS unlock it
+            # before TemporaryDirectory.__exit__ calls shutil.rmtree.
+            if sys.platform == "win32":
+                gc.collect()
+        return result
 
 
 def getmatches_by_contents(files, bigsize=0, j=job.nulljob):
@@ -601,6 +608,41 @@ def get_groups(matches):
         orphan_matches += {
             m for m in group.discard_matches() if not any(obj in matched_files for obj in [m.first, m.second])
         }
-    if groups and orphan_matches:
-        groups += get_groups(orphan_matches)  # no job, as it isn't supposed to take a long time
+    # Iterative instead of recursive: process orphan tiers one level at a time so that
+    # a degenerate match graph cannot overflow the call stack.
+    pending = orphan_matches
+    while pending:
+        extra_groups = []
+        extra_dupe2group = {}
+        for match in sorted(pending, key=lambda m: -m.percentage):
+            first, second, _ = match
+            fg = extra_dupe2group.get(first)
+            sg = extra_dupe2group.get(second)
+            if fg and sg:
+                if fg is not sg:
+                    continue
+                target = fg
+            elif fg:
+                target = fg
+                extra_dupe2group[second] = target
+            elif sg:
+                target = sg
+                extra_dupe2group[first] = target
+            else:
+                target = Group()
+                extra_groups.append(target)
+                extra_dupe2group[first] = target
+                extra_dupe2group[second] = target
+            target.add_match(match)
+        if not extra_groups:
+            break
+        groups += extra_groups
+        extra_files = set(flatten(extra_groups))
+        pending = []
+        for group in extra_groups:
+            pending += {
+                m
+                for m in group.discard_matches()
+                if not any(obj in extra_files for obj in [m.first, m.second])
+            }
     return groups

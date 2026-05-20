@@ -12,11 +12,11 @@
 # and I'm doing it now.
 
 import os
+import time
 
 from math import floor
 import logging
 import sqlite3
-from sys import platform
 from threading import Lock
 from typing import Any, AnyStr, Union, Callable
 
@@ -113,17 +113,19 @@ class FilesDB:
     """
 
     ignore_mtime = False
+    _BATCH_SIZE = 500
 
     def __init__(self):
         self.conn = None
         self.lock = None
+        self._pending: list = []
 
     def connect(self, path: Union[AnyStr, os.PathLike]) -> None:
-        if platform.startswith("gnu0"):
-            self.conn = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
-        else:
-            self.conn = sqlite3.connect(path, check_same_thread=False)
+        self.conn = sqlite3.connect(path, check_same_thread=False)
         self.lock = Lock()
+        self._pending = []
+        self.conn.execute("PRAGMA journal_mode=WAL")
+        self.conn.execute("PRAGMA synchronous=NORMAL")
         self._check_upgrade()
 
     def _check_upgrade(self) -> None:
@@ -143,14 +145,17 @@ class FilesDB:
                     {"version": self.schema_version, "description": self.schema_version_description},
                 )
             conn.execute(self.create_table_query)
+            conn.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)")
 
     def clear(self) -> None:
+        self._flush_if_pending()
         with self.lock, self.conn as conn:
             conn.execute(self.drop_table_query)
             conn.execute(self.create_table_query)
 
     def purge_missing(self) -> int:
         """Remove entries whose paths no longer exist on disk. Returns count of purged rows."""
+        self._flush_if_pending()
         with self.lock, self.conn as conn:
             cur = conn.execute("SELECT path FROM files")
             to_delete = [row[0] for row in cur if not os.path.exists(row[0])]
@@ -163,6 +168,7 @@ class FilesDB:
 
     def purge_old_entries(self, days: int = 90) -> int:
         """Remove entries not updated within ``days`` days. Returns count of purged rows."""
+        self._flush_if_pending()
         with self.lock, self.conn as conn:
             cur = conn.execute(
                 "DELETE FROM files WHERE entry_dt < datetime('now', ?)",
@@ -172,6 +178,24 @@ class FilesDB:
         if count:
             logging.info("FilesDB: purged %d entries older than %d days", count, days)
         return count
+
+    def purge_if_stale(self, interval_days: int = 7) -> bool:
+        """Run purge_missing + purge_old_entries only when the last purge is older than
+        interval_days. Returns True if a purge was performed."""
+        self._flush_if_pending()
+        with self.lock, self.conn as conn:
+            row = conn.execute("SELECT value FROM meta WHERE key='last_purge'").fetchone()
+        last_purge = float(row[0]) if row else 0.0
+        if time.time() - last_purge < interval_days * 86400:
+            return False
+        self.purge_missing()
+        self.purge_old_entries()
+        with self.lock, self.conn as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO meta(key, value) VALUES('last_purge', ?)",
+                (str(time.time()),),
+            )
+        return True
 
     def get(self, path: Path, key: str) -> Union[bytes, None]:
         stat = path.stat()
@@ -202,21 +226,40 @@ class FilesDB:
         stat = path.stat()
         size = stat.st_size
         mtime_ns = stat.st_mtime_ns
+        with self.lock:
+            self._pending.append((key, str(path), size, mtime_ns, value))
+            if len(self._pending) >= self._BATCH_SIZE:
+                self._flush_pending()
+
+    def _flush_pending(self) -> None:
+        """Flush buffered puts to the DB. Caller must hold self.lock."""
+        if not self._pending:
+            return
         try:
-            with self.lock, self.conn as conn:
-                conn.execute(
+            for key, path_str, size, mtime_ns, value in self._pending:
+                self.conn.execute(
                     self.insert_query.format(key=key),
-                    {"path": str(path), "size": size, "mtime_ns": mtime_ns, "value": value},
+                    {"path": path_str, "size": size, "mtime_ns": mtime_ns, "value": value},
                 )
+            self.conn.commit()
         except Exception as ex:
-            logging.warning(f"Couldn't put {key} for {path} w/{size}, {mtime_ns}: {ex}")
+            logging.warning("FilesDB: batch flush failed: %s", ex)
+        finally:
+            self._pending.clear()
+
+    def _flush_if_pending(self) -> None:
+        """Flush pending writes if any, acquiring the lock."""
+        with self.lock:
+            self._flush_pending()
 
     def commit(self) -> None:
         with self.lock:
+            self._flush_pending()
             self.conn.commit()
 
     def close(self) -> None:
         with self.lock:
+            self._flush_pending()
             self.conn.close()
 
 
@@ -429,9 +472,12 @@ class Folder(File):
     @property
     def subfolders(self):
         if self._subfolders is None:
-            with os.scandir(self.path) as iter:
-                subfolders = [p for p in iter if not p.is_symlink() and p.is_dir()]
-            self._subfolders = [self.__class__(p) for p in subfolders]
+            with os.scandir(self.path) as it:
+                entries = sorted(
+                    (p for p in it if not p.is_symlink() and p.is_dir()),
+                    key=lambda e: e.path,
+                )
+            self._subfolders = [self.__class__(e) for e in entries]
         return self._subfolders
 
     @classmethod

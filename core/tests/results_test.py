@@ -805,6 +805,48 @@ class TestCaseResultsFilter:
         eq_(expected, self.results.stat_line)
 
 
+class TestCaseResultsHugeGroup:
+    """Regression for M10: do_match used unbounded recursion that hit Python's
+    recursion limit for groups with more than ~1000 dupes."""
+
+    def _make_xml_group(self, n_dupes):
+        """Return a BytesIO XML with one group holding n_dupes files, no <match> elements."""
+        root = ET.Element("results")
+        group_elem = ET.SubElement(root, "group")
+        for i in range(n_dupes):
+            fe = ET.SubElement(group_elem, "file")
+            fe.set("path", f"basepath/file_{i:04d}")
+            fe.set("words", f"word{i}")
+            fe.set("is_ref", "y" if i == 0 else "n")
+            fe.set("marked", "n")
+        buf = io.BytesIO()
+        ET.ElementTree(root).write(buf, encoding="utf-8", xml_declaration=True)
+        buf.seek(0)
+        return buf
+
+    def test_load_huge_group_no_recursion_error(self):
+        # 1 200 dupes in a single group — above Python's default recursion limit
+        # of 1 000.  With the old recursive do_match this raised RecursionError.
+        n = 1200
+        buf = self._make_xml_group(n)
+        files = {f"basepath/file_{i:04d}": NamedObject(f"file_{i:04d}") for i in range(n)}
+
+        def get_file(path):
+            return files.get(path)
+
+        app = DupeGuru()
+        r = Results(app)
+        try:
+            r.load_from_xml(buf, get_file)
+        except RecursionError:
+            raise AssertionError(
+                "load_from_xml raised RecursionError on a group with "
+                f"{n} dupes — do_match must be iterative"
+            )
+        assert len(r.groups) == 1
+        assert len(r.groups[0]) == n
+
+
 class TestCaseResultsRefFile:
     def setup_method(self, method):
         self.app = DupeGuru()

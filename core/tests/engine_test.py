@@ -4,7 +4,10 @@
 # which should be included with this package. The terms are also available at
 # http://www.gnu.org/licenses/gpl-3.0.html
 
+import glob
+import os
 import sys
+import tempfile
 
 from hscommon.jobprogress import job
 from hscommon.util import first
@@ -281,6 +284,37 @@ class TestCaseMergeSimilarWords:
         merge_similar_words(d)
         eq_(1, len(d))
         eq_(3, len(d["foobar"]))
+
+    def test_no_duplicate_merges(self):
+        # Regression for M8: a word already merged must not be processed again as a
+        # key, even if it appears later in the sorted list.
+        d = {
+            "foobar": {1},
+            "foobar1": {2},
+            "foobar2": {3},
+        }
+        merge_similar_words(d)
+        # All three are >=80% similar; "foobar1" and "foobar2" must both be gone.
+        assert "foobar1" not in d
+        assert "foobar2" not in d
+        assert d["foobar"] == {1, 2, 3}
+
+    def test_large_corpus_no_quadratic_blowup(self):
+        # With the O(n²) bug (keys.remove inside the loop), n=2000 unique words would
+        # take several seconds. With the fixed set-based approach it should be fast.
+        import time
+        import string
+        import random
+        rng = random.Random(42)
+        words = set()
+        while len(words) < 2000:
+            length = rng.randint(6, 12)
+            words.add("".join(rng.choices(string.ascii_lowercase, k=length)))
+        d = {w: {i} for i, w in enumerate(words)}
+        start = time.monotonic()
+        merge_similar_words(d)
+        elapsed = time.monotonic() - start
+        assert elapsed < 30, f"merge_similar_words took {elapsed:.1f}s — possible O(n²) regression"
 
 
 class TestCaseReduceCommonWords:
@@ -899,3 +933,32 @@ class TestCaseGetGroups:
         assert B in g1
         assert C in g2
         assert D in g2
+
+
+class TestCaseGetMatchesTempDB:
+    """Regression tests for H2/H6: temp pair-database must not leak after getmatches exits."""
+
+    def _count_seen_dbs(self):
+        """Return number of *_seen_pairs.db files still present in the system temp dir."""
+        pattern = os.path.join(tempfile.gettempdir(), "*_seen_pairs.db")
+        return len(glob.glob(pattern))
+
+    def test_no_tempfile_leak_on_normal_exit(self):
+        # After a normal getmatches() call no *_seen_pairs.db should survive in tempdir.
+        before = self._count_seen_dbs()
+        o1 = NamedObject("foo bar", with_words=True)
+        o2 = NamedObject("foo bar", with_words=True)
+        getmatches([o1, o2])
+        after = self._count_seen_dbs()
+        eq_(before, after, f"Leaked temp DB files: before={before} after={after}")
+
+    def test_no_tempfile_leak_on_limit_hit(self):
+        # The LIMIT early-return path also runs finally/TemporaryDirectory cleanup.
+        before = self._count_seen_dbs()
+        # One pair is enough to get 1 match; LIMIT is 5 000 000 so this won't hit it,
+        # but the TemporaryDirectory must still be cleaned up on any return path.
+        o1 = NamedObject("foo bar", with_words=True)
+        o2 = NamedObject("foo bar", with_words=True)
+        getmatches([o1, o2])
+        after = self._count_seen_dbs()
+        eq_(before, after, f"Leaked temp DB files on limit-return path: before={before} after={after}")

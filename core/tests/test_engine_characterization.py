@@ -183,6 +183,7 @@ class TestFilesDBPurgeOldEntries:
         p.write_bytes(content)
         f = fs.File(p)
         _ = f.digest
+        fs.filesdb.commit()  # flush buffered puts so direct SQL updates see the rows
         return p
 
     def test_purge_old_removes_aged_entries(self, tmp_path):
@@ -228,6 +229,110 @@ class TestFilesDBPurgeOldEntries:
 
     def test_purge_old_empty_db(self):
         assert fs.filesdb.purge_old_entries() == 0
+
+
+class TestCaseFilesDBPurgeIfStale:
+    def _put(self, tmp_path, name, content=b"x" * 100):
+        p = tmp_path / name
+        p.write_bytes(content)
+        f = fs.File(p)
+        _ = f.digest
+        return p
+
+    def test_purge_runs_on_first_call(self, tmp_path):
+        missing = tmp_path / "gone.bin"
+        missing.write_bytes(b"x")
+        f = fs.File(missing)
+        _ = f.digest
+        missing.unlink()
+
+        result = fs.filesdb.purge_if_stale(interval_days=7)
+        assert result is True
+
+        with fs.filesdb.conn as conn:
+            rows = conn.execute("SELECT path FROM files").fetchall()
+        assert rows == []
+
+    def test_purge_skipped_within_interval(self, tmp_path):
+        missing = tmp_path / "gone2.bin"
+        missing.write_bytes(b"x")
+        f = fs.File(missing)
+        _ = f.digest
+        missing.unlink()
+
+        fs.filesdb.purge_if_stale(interval_days=7)
+        # Second call immediately after: still within interval, should not purge again.
+        result = fs.filesdb.purge_if_stale(interval_days=7)
+        assert result is False
+
+    def test_purge_runs_after_interval_expires(self, tmp_path):
+        # Back-date the last_purge timestamp so the interval appears to have passed.
+        with fs.filesdb.conn as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO meta(key, value) VALUES('last_purge', ?)",
+                (str(0.0),),  # epoch — always expired
+            )
+        result = fs.filesdb.purge_if_stale(interval_days=7)
+        assert result is True
+
+    def test_purge_updates_timestamp(self, tmp_path):
+        import time
+
+        before = time.time()
+        fs.filesdb.purge_if_stale(interval_days=7)
+        with fs.filesdb.conn as conn:
+            row = conn.execute("SELECT value FROM meta WHERE key='last_purge'").fetchone()
+        assert row is not None
+        assert float(row[0]) >= before
+
+
+class TestFilesDBBatchedWrites:
+    """M5: FilesDB WAL mode and batched commits."""
+
+    def _put_file(self, tmp_path, name, content=b"x" * 100):
+        p = tmp_path / name
+        p.write_bytes(content)
+        f = fs.File(p)
+        _ = f.digest  # triggers put()
+        return p
+
+    def test_wal_mode_enabled(self):
+        with fs.filesdb.conn as conn:
+            mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+        assert mode == "wal", "FilesDB must use WAL journal mode"
+
+    def test_buffered_put_visible_after_commit(self, tmp_path):
+        p = self._put_file(tmp_path, "buffered.bin")
+        # Before explicit commit the row may not be visible via a fresh connection,
+        # but must be visible after commit().
+        fs.filesdb.commit()
+        with fs.filesdb.conn as conn:
+            row = conn.execute("SELECT path FROM files WHERE path=?", (str(p),)).fetchone()
+        assert row is not None
+
+    def test_pending_flushed_on_purge_missing(self, tmp_path):
+        p = self._put_file(tmp_path, "present.bin")
+        # purge_missing must flush pending before scanning, so the existing file survives.
+        purged = fs.filesdb.purge_missing()
+        assert purged == 0
+        with fs.filesdb.conn as conn:
+            row = conn.execute("SELECT path FROM files WHERE path=?", (str(p),)).fetchone()
+        assert row is not None
+
+    def test_batch_size_triggers_flush(self, tmp_path):
+        # Fill up exactly _BATCH_SIZE puts and verify they land in the DB without explicit commit.
+        n = fs.FilesDB._BATCH_SIZE
+        paths = []
+        for i in range(n):
+            p = tmp_path / f"file_{i}.bin"
+            p.write_bytes(b"x" * (i + 1))
+            paths.append(p)
+            f = fs.File(p)
+            _ = f.digest
+        # The batch flush happens inside put() when pending reaches _BATCH_SIZE.
+        with fs.filesdb.conn as conn:
+            count = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
+        assert count >= n, f"Expected at least {n} rows after batch, got {count}"
 
 
 def _named_file(tmp_path, name):

@@ -7,6 +7,7 @@
 import os
 import os.path as op
 import logging
+import subprocess
 import tempfile
 
 import pytest
@@ -480,6 +481,87 @@ class TestCaseDupeGuruRenameSelected:
         assert "foo bar 1" in names
         assert "foo bar 2" in names
         eq_(g.dupes[0].name, "foo bar 2")
+
+
+class TestCaseInvokeCustomCommand:
+    """Tests that invoke_custom_command never passes filenames to a shell."""
+
+    def _make_app_with_dupe(self, name, monkeypatch):
+        """Return (dgapp, dupe, ref) with a single-group result whose dupe has the given name."""
+        from core.tests.base import NamedObject
+
+        ref = NamedObject("ref_file", with_words=True)
+        dupe = NamedObject(name, with_words=True)
+        ref.is_ref = True
+        dupe.is_ref = False
+        # Build a group manually so we don't rely on word-similarity matching.
+        group = engine.Group()
+        match = engine.Match(ref, dupe, 100)
+        group.add_match(match)
+        dgapp = TestApp().app
+        dgapp.results.groups = [group]
+        dgapp.selected_dupes = [dupe]
+        return dgapp, dupe, ref
+
+    def test_no_shell_injection_posix_metacharacters(self, monkeypatch):
+        # A filename containing ';' must land as a single argv element, not be
+        # parsed by a shell — verifies shell=False is used.
+        popen_calls = []
+
+        class FakePopen:
+            def __init__(self, argv, shell, stdout, stderr):
+                popen_calls.append({"argv": argv, "shell": shell})
+                self.stdout = type("S", (), {"read": lambda self: b""})()
+
+            def wait(self):
+                return 0
+
+        monkeypatch.setattr(app.subprocess, "Popen", FakePopen)
+        dgapp, dupe, ref = self._make_app_with_dupe("foo; echo injected", monkeypatch)
+        monkeypatch.setattr(dgapp.view, "get_default", lambda key: "mycommand %d %r")
+        dgapp.invoke_custom_command()
+
+        assert len(popen_calls) == 1
+        call = popen_calls[0]
+        assert call["shell"] is False, "shell=True allows metacharacter injection"
+        assert isinstance(call["argv"], list), "argv must be a list when shell=False"
+        # The dupe path (with ';') must appear as one unbroken token, not split by shell
+        dupe_path = str(dupe.path)
+        assert any(dupe_path in token for token in call["argv"]), (
+            f"dupe path {dupe_path!r} not found in argv {call['argv']!r}"
+        )
+
+    def test_no_shell_injection_ampersand(self, monkeypatch):
+        popen_calls = []
+
+        class FakePopen:
+            def __init__(self, argv, shell, stdout, stderr):
+                popen_calls.append({"argv": argv, "shell": shell})
+                self.stdout = type("S", (), {"read": lambda self: b""})()
+
+            def wait(self):
+                return 0
+
+        monkeypatch.setattr(app.subprocess, "Popen", FakePopen)
+        dgapp, dupe, ref = self._make_app_with_dupe('foo" & calc &"', monkeypatch)
+        monkeypatch.setattr(dgapp.view, "get_default", lambda key: "mycommand %d")
+        dgapp.invoke_custom_command()
+
+        assert popen_calls[0]["shell"] is False
+        dupe_path = str(dupe.path)
+        assert any(dupe_path in token for token in popen_calls[0]["argv"])
+
+    def test_no_custom_command_shows_message(self, monkeypatch):
+        dgapp = TestApp().app
+        monkeypatch.setattr(dgapp.view, "get_default", lambda key: "")
+        dgapp.invoke_custom_command()
+        assert any("custom command" in m.lower() for m in dgapp.view.messages)
+
+    def test_invalid_template_shows_message(self, monkeypatch):
+        dgapp, dupe, ref = self._make_app_with_dupe("normal_file", monkeypatch)
+        monkeypatch.setattr(dgapp.view, "get_default", lambda key: "cmd 'unterminated")
+        dgapp.invoke_custom_command()
+        assert any("custom command" in m.lower() for m in dgapp.view.messages)
 
 
 class TestAppWithDirectoriesInTree:
