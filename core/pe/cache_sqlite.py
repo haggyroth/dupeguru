@@ -28,8 +28,8 @@ class SqliteCache:
     drop_index_query = "DROP INDEX IF EXISTS idx_path"
 
     def __init__(self, db=":memory:", readonly=False):
-        # readonly is not used in the sqlite version of the cache
         self.dbname = db
+        self.readonly = readonly
         self.con = None
         self._create_con()
 
@@ -108,7 +108,11 @@ class SqliteCache:
                 raise  # Something really strange is happening
             logging.warning("Could not create picture cache because of an error: %s", str(e))
             self.con.close()
-            os.remove(self.dbname)
+            if self.dbname != ":memory:":
+                try:
+                    os.remove(self.dbname)
+                except OSError as remove_err:
+                    raise e from remove_err
             self._create_con(second_try=True)
 
     def _check_upgrade(self) -> None:
@@ -155,12 +159,13 @@ class SqliteCache:
             raise ValueError(path)
 
     def get_multiple(self, rowids):
-        ids = ",".join(map(str, rowids))
+        rowids = list(rowids)
+        ph = ",".join("?" * len(rowids))
         sql = (
             "select rowid, blocks, blocks2, blocks3, blocks4, blocks5, blocks6, blocks7, blocks8 "
-            f"from pictures where rowid in ({ids})"
+            f"from pictures where rowid in ({ph})"
         )
-        cur = self.con.execute(sql)
+        cur = self.con.execute(sql, rowids)
         return (
             (
                 rowid,
@@ -182,18 +187,35 @@ class SqliteCache:
         """Go through the cache and purge outdated records.
 
         A record is outdated if the picture doesn't exist or if its mtime is greater than the one in
-        the db.
+        the db.  Skipped entirely when the cache was opened readonly.
         """
+        if self.readonly:
+            return
+        rows = list(self.con.execute("select rowid, path, mtime_ns from pictures"))
+        if not rows:
+            return
+
+        # Build a per-directory mtime map via scandir (one syscall per dir, free stat on Linux).
+        from collections import defaultdict
+        dir_to_rows = defaultdict(list)
+        for rowid, path_str, mtime_ns in rows:
+            dir_to_rows[op.dirname(path_str)].append((rowid, path_str, mtime_ns))
+
+        path_mtime: dict = {}
+        for dirpath in dir_to_rows:
+            try:
+                for entry in os.scandir(dirpath):
+                    path_mtime[entry.path] = entry.stat().st_mtime
+            except OSError:
+                pass
+
         todelete = []
-        sql = "select rowid, path, mtime_ns from pictures"
-        cur = self.con.execute(sql)
-        for rowid, path_str, mtime_ns in cur:
-            if mtime_ns and op.exists(path_str):
-                picture_mtime = os.stat(path_str).st_mtime
-                if int(picture_mtime) <= mtime_ns:
-                    # not outdated
-                    continue
-            todelete.append(rowid)
+        for rowid, path_str, mtime_ns in rows:
+            file_mtime = path_mtime.get(path_str)
+            if file_mtime is None:
+                todelete.append(rowid)  # file gone
+            elif int(file_mtime) > mtime_ns:
+                todelete.append(rowid)  # file changed
         if todelete:
-            sql = "delete from pictures where rowid in (%s)" % ",".join(map(str, todelete))
-            self.con.execute(sql)
+            ph = ",".join("?" * len(todelete))
+            self.con.execute(f"delete from pictures where rowid in ({ph})", todelete)

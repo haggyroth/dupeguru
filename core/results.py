@@ -220,12 +220,10 @@ class Results(Markable):
         :param j: A :ref:`job progress instance <jobs>`.
         """
 
-        def do_match(ref_file, other_files, group):
-            if not other_files:
-                return
-            for other_file in other_files:
-                group.add_match(engine.get_match(ref_file, other_file))
-            do_match(other_files[0], other_files[1:], group)
+        def do_match(dupes, group):
+            for i, ref in enumerate(dupes[:-1]):
+                for other in dupes[i + 1:]:
+                    group.add_match(engine.get_match(ref, other))
 
         self.apply_filter(None)
         root = ET.parse(infile).getroot()
@@ -259,7 +257,7 @@ class Results(Markable):
                     # Covers missing attr, non-int values and indexes out of bounds
                     pass
             if (not group.matches) and (len(dupes) >= 2):
-                do_match(dupes[0], dupes[1:], group)
+                do_match(dupes, group)
             group.prioritize(lambda x: dupes.index(x))
             if len(group):
                 groups.append(group)

@@ -5,6 +5,8 @@
 # http://www.gnu.org/licenses/gpl-3.0.html
 
 import logging
+import os
+import sqlite3
 
 from pytest import raises, skip
 from hscommon.testutil import eq_
@@ -131,6 +133,113 @@ class TestCaseSqliteCache(BaseTestCaseCache):
         del c
         c = self.get_cache(dbname)
         eq_(c["foo"], [[(1, 2, 3)]] * 8)
+
+
+class TestCaseCorruptionRecovery:
+    """M9: corruption recovery must not call os.remove(":memory:") or swallow the error."""
+
+    def test_memory_cache_survives_check_upgrade_error(self, monkeypatch):
+        # If _check_upgrade raises on a :memory: cache, we must NOT call os.remove(":memory:")
+        # (which raises FileNotFoundError and masks the real error). The cache must recover by
+        # re-creating the schema in-memory.
+        monkeypatch.setattr(logging, "warning", lambda *args, **kw: None)
+        # Corrupt the in-memory DB by replacing _check_upgrade with a one-shot raiser.
+        original_check = SqliteCache._check_upgrade
+        calls = []
+
+        def patched_check(self):
+            if not calls:
+                calls.append(1)
+                raise sqlite3.DatabaseError("simulated corruption")
+            original_check(self)
+
+        monkeypatch.setattr(SqliteCache, "_check_upgrade", patched_check)
+        # Must not raise FileNotFoundError or propagate DatabaseError.
+        c = SqliteCache(":memory:")
+        c["foo"] = [[(1, 2, 3)]] * 8
+        assert c["foo"] == [[(1, 2, 3)]] * 8
+
+    def test_file_removal_failure_raises_original_db_error(self, tmp_path, monkeypatch):
+        # If os.remove fails (e.g. permissions), we must re-raise the original DatabaseError,
+        # not the OSError from the failed removal.
+        monkeypatch.setattr(logging, "warning", lambda *args, **kw: None)
+        dbname = str(tmp_path / "bad.db")
+        (tmp_path / "bad.db").write_text("invalid sqlite content")
+
+        original_check = SqliteCache._check_upgrade
+        calls = []
+
+        def patched_check(self):
+            if not calls:
+                calls.append(1)
+                raise sqlite3.DatabaseError("simulated corruption")
+            original_check(self)
+
+        def fail_remove(path):
+            raise OSError("permission denied")
+
+        monkeypatch.setattr(SqliteCache, "_check_upgrade", patched_check)
+        monkeypatch.setattr(os, "remove", fail_remove)
+
+        with raises(sqlite3.DatabaseError):
+            SqliteCache(dbname)
+
+
+class TestCasePurgeOutdated:
+    """Tests for SqliteCache.purge_outdated (M1 fixes: readonly skip + scandir batching)."""
+
+    BLOCKS = [[(1, 2, 3)]] * 8
+
+    def _cache_with_entry(self, tmp_path, name="pic.jpg"):
+        p = tmp_path / name
+        p.write_bytes(b"img" * 100)
+        c = SqliteCache(str(tmp_path / "cache.db"))
+        c[str(p)] = self.BLOCKS
+        return c, p
+
+    def test_readonly_skips_purge(self, tmp_path):
+        c, p = self._cache_with_entry(tmp_path)
+        p.unlink()
+        c.readonly = True
+        c.purge_outdated()
+        # Entry must still be present because readonly skipped the purge.
+        assert str(p) in c
+
+    def test_missing_file_removed(self, tmp_path):
+        c, p = self._cache_with_entry(tmp_path)
+        p.unlink()
+        c.purge_outdated()
+        assert str(p) not in c
+
+    def test_unchanged_file_kept(self, tmp_path):
+        c, p = self._cache_with_entry(tmp_path)
+        c.purge_outdated()
+        assert str(p) in c
+
+    def test_modified_file_removed(self, tmp_path):
+        c, p = self._cache_with_entry(tmp_path)
+        # Force mtime_ns in DB to be less than actual mtime so the file looks changed.
+        c.con.execute("UPDATE pictures SET mtime_ns = 0 WHERE path=?", [str(p)])
+        c.purge_outdated()
+        assert str(p) not in c
+
+    def test_multiple_dirs_batched(self, tmp_path):
+        dir_a = tmp_path / "a"
+        dir_b = tmp_path / "b"
+        dir_a.mkdir()
+        dir_b.mkdir()
+        db = str(tmp_path / "cache.db")
+        c = SqliteCache(db)
+        pa = dir_a / "img.jpg"
+        pb = dir_b / "img.jpg"
+        pa.write_bytes(b"x")
+        pb.write_bytes(b"x")
+        c[str(pa)] = self.BLOCKS
+        c[str(pb)] = self.BLOCKS
+        pa.unlink()  # only dir_a file gone
+        c.purge_outdated()
+        assert str(pa) not in c
+        assert str(pb) in c
 
 
 class TestCaseCacheSQLEscape:

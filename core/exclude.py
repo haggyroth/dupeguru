@@ -40,16 +40,6 @@ def timer(func):
     return wrapper_timer
 
 
-def memoize(func):
-    func.cache = dict()
-
-    @functools.wraps(func)
-    def _memoize(*args):
-        if args not in func.cache:
-            func.cache[args] = func(*args)
-        return func.cache[args]
-
-    return _memoize
 
 
 class AlreadyThereException(Exception):
@@ -142,14 +132,17 @@ class ExcludeList(Markable):
         self._dirty = True
         if self._use_union:
             return
+        to_remove = None
         for item in self._excluded_compiled:
-            if regex in item.pattern:
-                self._excluded_compiled.remove(item)
+            if item.pattern == regex:
+                to_remove = item
                 break
+        if to_remove is not None:
+            self._excluded_compiled.discard(to_remove)
 
-    # @timer
-    @memoize
-    def _do_compile(self, expr):
+    @staticmethod
+    @functools.lru_cache(maxsize=1024)
+    def _do_compile(expr):
         return re.compile(expr)
 
     # @timer

@@ -226,6 +226,31 @@ class TestCaseListEmpty:
                 raise (Exception(f"Default RE {re} not found in compiled list."))
         eq_(len(default_regexes), len(self.exclude_list.compiled))
 
+    def test_unmark_prefix_does_not_remove_longer_pattern(self):
+        # Regression for H5: _remove_compiled used a substring test (`regex in item.pattern`),
+        # so unmarking "^a" would remove "^abc" because "^a" is a substring of "^abc".
+        # Only applies to non-union mode; in union mode _excluded_compiled is never populated
+        # directly (the union is rebuilt on demand).
+        if self.exclude_list._use_union:
+            import pytest; pytest.skip("not applicable in union mode")
+        short = r"^a"
+        long_ = r"^abc"
+        self.exclude_list.add(short)
+        self.exclude_list.add(long_)
+        self.exclude_list.mark(short)
+        self.exclude_list.mark(long_)
+        eq_(len(self.exclude_list._excluded_compiled), 2)
+
+        self.exclude_list.unmark(short)
+
+        compiled_patterns = {p.pattern for p in self.exclude_list._excluded_compiled}
+        assert long_ in compiled_patterns, (
+            f"Unmarking {short!r} incorrectly removed {long_!r} from compiled set"
+        )
+        assert short not in compiled_patterns
+        # The surviving pattern must still work
+        assert self.exclude_list._excluded_compiled.pop().match("abcdef") is not None
+
 
 class TestCaseListEmptyUnion(TestCaseListEmpty):
     """Same but with union regex"""
