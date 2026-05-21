@@ -9,6 +9,18 @@ Exit codes:
     1  Scan completed, duplicates found.
     2  Bad arguments or startup error.
     3  Scan failed (I/O error, corrupt cache, etc.).
+
+Output formats:
+    Default  Pretty-printed JSON object with "groups" and "stats" keys.
+    --ndjson One JSON object per line: group records followed by a stats record.
+             Suitable for streaming large result sets through jq or similar tools.
+             Each group line: {"type":"group","reference":{...},"duplicates":[...]}
+             Final line:      {"type":"stats","groups":N,...}
+
+Progress (stderr):
+    --verbose        Human-readable progress messages.
+    --progress-json  Machine-readable {"type":"progress","percent":N,"description":"..."} lines.
+                     Combine with --ndjson for fully structured pipelines.
 """
 
 import argparse
@@ -99,7 +111,7 @@ class _HeadlessView:
 
 # --- Synchronous scan ------------------------------------------------------
 
-def _run_scan(app: DupeGuru, verbose: bool) -> None:
+def _run_scan(app: DupeGuru, verbose: bool, progress_json: bool = False) -> None:
     """Run the scan synchronously on the calling thread (no Qt event loop needed)."""
     scanner = app.SCANNER_CLASS()
     fs.filesdb.ignore_mtime = app.options.get("rehash_ignore_mtime", False)
@@ -113,7 +125,13 @@ def _run_scan(app: DupeGuru, verbose: bool) -> None:
         scanner.cache_path = app._get_picture_cache_path()
 
     def _progress(progress: int, desc: str = "") -> bool:
-        if verbose and desc:
+        if progress_json and desc:
+            print(
+                json.dumps({"type": "progress", "percent": progress, "description": desc}),
+                file=sys.stderr,
+                flush=True,
+            )
+        elif verbose and desc:
             print(f"\r  {desc}...{' ' * 10}", end="", file=sys.stderr, flush=True)
         return True  # returning False would cancel the job
 
@@ -136,11 +154,35 @@ def _run_scan(app: DupeGuru, verbose: bool) -> None:
     from core.hash_cache import hashcachedb
     hashcachedb.commit()
 
-    if verbose:
-        print(file=sys.stderr)  # end the progress line
+    if verbose and not progress_json:
+        print(file=sys.stderr)  # end the \r progress line
 
 
 # --- Result serialisation --------------------------------------------------
+
+def _group_to_dict(group) -> dict:
+    """Serialise a single duplicate group to a plain dict."""
+    ref = group.ref
+    ref_entry = {
+        "path": str(ref.path),
+        "size": ref.size,
+        "mtime": ref.mtime,
+        "is_ref_folder": bool(ref.is_ref),
+    }
+    dupes_out = []
+    for dupe in group.dupes:
+        match = group.get_match_of(dupe)
+        dupes_out.append(
+            {
+                "path": str(dupe.path),
+                "size": dupe.size,
+                "mtime": dupe.mtime,
+                "is_ref_folder": bool(dupe.is_ref),
+                "match_percentage": match.percentage if match else 0,
+            }
+        )
+    return {"reference": ref_entry, "duplicates": dupes_out}
+
 
 def _serialise_results(app: DupeGuru) -> dict:
     """Convert scan results to a plain dict suitable for JSON output."""
@@ -149,28 +191,10 @@ def _serialise_results(app: DupeGuru) -> dict:
     total_dupe_size = 0
 
     for group in app.results.groups:
-        ref = group.ref
-        ref_entry = {
-            "path": str(ref.path),
-            "size": ref.size,
-            "mtime": ref.mtime,
-            "is_ref_folder": bool(ref.is_ref),
-        }
-        dupes_out = []
-        for dupe in group.dupes:
-            match = group.get_match_of(dupe)
-            dupes_out.append(
-                {
-                    "path": str(dupe.path),
-                    "size": dupe.size,
-                    "mtime": dupe.mtime,
-                    "is_ref_folder": bool(dupe.is_ref),
-                    "match_percentage": match.percentage if match else 0,
-                }
-            )
-            total_dupe_count += 1
-            total_dupe_size += dupe.size
-        groups_out.append({"reference": ref_entry, "duplicates": dupes_out})
+        g = _group_to_dict(group)
+        groups_out.append(g)
+        total_dupe_count += len(g["duplicates"])
+        total_dupe_size += sum(d["size"] for d in g["duplicates"])
 
     return {
         "groups": groups_out,
@@ -181,6 +205,31 @@ def _serialise_results(app: DupeGuru) -> dict:
             "discarded_files": app.discarded_file_count,
         },
     }
+
+
+def _emit_ndjson(app: DupeGuru, out) -> tuple[int, int, int]:
+    """Write one JSON line per group then a stats line; return (groups, dupes, dupe_bytes)."""
+    total_dupe_count = 0
+    total_dupe_size = 0
+    group_count = 0
+
+    for group in app.results.groups:
+        g = _group_to_dict(group)
+        dupe_size = sum(d["size"] for d in g["duplicates"])
+        total_dupe_count += len(g["duplicates"])
+        total_dupe_size += dupe_size
+        group_count += 1
+        print(json.dumps({"type": "group", **g}, ensure_ascii=False), file=out)
+
+    stats = {
+        "type": "stats",
+        "groups": group_count,
+        "total_duplicates": total_dupe_count,
+        "total_duplicate_size_bytes": total_dupe_size,
+        "discarded_files": app.discarded_file_count,
+    }
+    print(json.dumps(stats, ensure_ascii=False), file=out)
+    return group_count, total_dupe_count, total_dupe_size
 
 
 # --- Argument parser -------------------------------------------------------
@@ -251,11 +300,94 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_false",
         help="Include hardlinked file pairs in results.",
     )
-    parser.add_argument(
+
+    # --- Scanner knobs -------------------------------------------------------
+    knobs = parser.add_argument_group(
+        "scanner knobs",
+        "Fine-tune the matching engine. Defaults match the GUI defaults.",
+    )
+    knobs.add_argument(
+        "--min-match",
+        type=int,
+        default=80,
+        metavar="PERCENT",
+        help="Minimum match percentage to consider two files duplicates (default: 80).",
+    )
+    knobs.add_argument(
+        "--word-weighting",
+        action="store_true",
+        default=False,
+        help="Weight word matches by frequency when comparing filenames (filename/fields modes).",
+    )
+    knobs.add_argument(
+        "--match-similar",
+        action="store_true",
+        default=False,
+        help="Match similar (not just identical) words in filename/fields/tag modes.",
+    )
+    knobs.add_argument(
+        "--mix-file-kind",
+        action="store_true",
+        default=False,
+        help="Allow files with different extensions to match each other.",
+    )
+    knobs.add_argument(
+        "--min-size",
+        type=int,
+        default=0,
+        metavar="KB",
+        help="Ignore files smaller than KB kilobytes (default: 0, no limit).",
+    )
+    knobs.add_argument(
+        "--max-size",
+        type=int,
+        default=0,
+        metavar="MB",
+        help="Ignore files larger than MB megabytes (default: 0, no limit).",
+    )
+    knobs.add_argument(
+        "--partial-hash-threshold",
+        type=int,
+        default=0,
+        metavar="MiB",
+        help=(
+            "Use partial hashing for files larger than MiB mebibytes to speed up scanning "
+            "(default: 0, disabled). May produce a small number of false positives."
+        ),
+    )
+    knobs.add_argument(
+        "--rehash-ignore-mtime",
+        action="store_true",
+        default=False,
+        help="Always rehash files even if their modification time is unchanged.",
+    )
+
+    # --- Output format -------------------------------------------------------
+    fmt = parser.add_argument_group("output format")
+    fmt.add_argument(
+        "--ndjson",
+        action="store_true",
+        help=(
+            "Emit newline-delimited JSON instead of a single JSON object. "
+            "Each group is one line; the final line is the stats record."
+        ),
+    )
+
+    # --- Progress ------------------------------------------------------------
+    prog = parser.add_argument_group("progress")
+    prog.add_argument(
         "--verbose",
         "-v",
         action="store_true",
-        help="Print progress and summary to stderr.",
+        help="Print human-readable progress and summary to stderr.",
+    )
+    prog.add_argument(
+        "--progress-json",
+        action="store_true",
+        help=(
+            'Emit {"type":"progress","percent":N,"description":"..."} lines to stderr. '
+            "Mutually exclusive with --verbose."
+        ),
     )
     return parser
 
@@ -265,6 +397,10 @@ def _build_parser() -> argparse.ArgumentParser:
 def main(argv=None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
+
+    if args.verbose and args.progress_json:
+        print("error: --verbose and --progress-json are mutually exclusive", file=sys.stderr)
+        return EXIT_BAD_ARGS
 
     # Resolve and validate folders ----------------------------------------
     folders: list[Path] = []
@@ -304,6 +440,16 @@ def main(argv=None) -> int:
     app.options["scan_type"] = scan_type
     app.options["ignore_hardlink_matches"] = args.filter_hardlinks
 
+    # Scanner knobs -------------------------------------------------------
+    app.options["min_match_percentage"] = args.min_match
+    app.options["word_weighting"] = args.word_weighting
+    app.options["match_similar_words"] = args.match_similar
+    app.options["mix_file_kind"] = args.mix_file_kind
+    app.options["size_threshold"] = args.min_size * 1024  # KB → bytes
+    app.options["large_size_threshold"] = args.max_size * 1024 * 1024  # MB → bytes
+    app.options["big_file_size_threshold"] = args.partial_hash_threshold * 1024 * 1024  # MiB → bytes
+    app.options["rehash_ignore_mtime"] = args.rehash_ignore_mtime
+
     # Add directories -----------------------------------------------------
     for folder in folders:
         try:
@@ -328,7 +474,7 @@ def main(argv=None) -> int:
 
     # Run scan ------------------------------------------------------------
     try:
-        _run_scan(app, args.verbose)
+        _run_scan(app, args.verbose, progress_json=args.progress_json)
     except Exception as exc:
         print(f"error during scan: {exc}", file=sys.stderr)
         logging.exception("CLI scan failed")
@@ -345,21 +491,34 @@ def main(argv=None) -> int:
             file=sys.stderr,
         )
 
-    # Serialise results ---------------------------------------------------
-    result = _serialise_results(app)
-    json_output = json.dumps(result, indent=2, ensure_ascii=False)
-
-    if args.output:
-        try:
-            Path(args.output).write_text(json_output, encoding="utf-8")
-            if args.verbose:
-                print(f"Results written to {args.output}", file=sys.stderr)
-        except OSError as exc:
-            print(f"error writing output file: {exc}", file=sys.stderr)
-            app.close()
-            return EXIT_SCAN_ERROR
+    # Emit results --------------------------------------------------------
+    if args.ndjson:
+        if args.output:
+            try:
+                with open(args.output, "w", encoding="utf-8") as f:
+                    group_count, _, _ = _emit_ndjson(app, f)
+                if args.verbose:
+                    print(f"Results written to {args.output}", file=sys.stderr)
+            except OSError as exc:
+                print(f"error writing output file: {exc}", file=sys.stderr)
+                app.close()
+                return EXIT_SCAN_ERROR
+        else:
+            group_count, _, _ = _emit_ndjson(app, sys.stdout)
     else:
-        print(json_output)
+        result = _serialise_results(app)
+        json_output = json.dumps(result, indent=2, ensure_ascii=False)
+        if args.output:
+            try:
+                Path(args.output).write_text(json_output, encoding="utf-8")
+                if args.verbose:
+                    print(f"Results written to {args.output}", file=sys.stderr)
+            except OSError as exc:
+                print(f"error writing output file: {exc}", file=sys.stderr)
+                app.close()
+                return EXIT_SCAN_ERROR
+        else:
+            print(json_output)
 
     app.close()
     return EXIT_DUPES_FOUND if group_count > 0 else EXIT_OK

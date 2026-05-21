@@ -201,6 +201,137 @@ class TestVerboseFlag:
 
 
 # ---------------------------------------------------------------------------
+# NDJSON output
+# ---------------------------------------------------------------------------
+
+class TestNdjsonOutput:
+    def test_ndjson_each_line_is_valid_json(self, tmp_path, capsys):
+        _write_files(tmp_path, {"a.txt": b"same", "b.txt": b"same"})
+        main([str(tmp_path), "--ndjson"])
+        lines = [l for l in capsys.readouterr().out.splitlines() if l.strip()]
+        assert len(lines) >= 2  # at least one group + stats
+        for line in lines:
+            json.loads(line)  # must not raise
+
+    def test_ndjson_group_lines_have_type_group(self, tmp_path, capsys):
+        _write_files(tmp_path, {"a.txt": b"same", "b.txt": b"same"})
+        main([str(tmp_path), "--ndjson"])
+        lines = [json.loads(l) for l in capsys.readouterr().out.splitlines() if l.strip()]
+        group_lines = [l for l in lines if l.get("type") == "group"]
+        assert len(group_lines) >= 1
+        assert "reference" in group_lines[0]
+        assert "duplicates" in group_lines[0]
+
+    def test_ndjson_last_line_is_stats(self, tmp_path, capsys):
+        _write_files(tmp_path, {"a.txt": b"same", "b.txt": b"same"})
+        main([str(tmp_path), "--ndjson"])
+        lines = [json.loads(l) for l in capsys.readouterr().out.splitlines() if l.strip()]
+        stats = lines[-1]
+        assert stats["type"] == "stats"
+        assert "groups" in stats
+        assert "total_duplicates" in stats
+
+    def test_ndjson_no_dupes_has_only_stats_line(self, tmp_path, capsys):
+        _write_files(tmp_path, {"a.txt": "unique A", "b.txt": "unique B"})
+        rc = main([str(tmp_path), "--ndjson"])
+        assert rc == EXIT_OK
+        lines = [json.loads(l) for l in capsys.readouterr().out.splitlines() if l.strip()]
+        assert lines == [{"type": "stats", "groups": 0, "total_duplicates": 0,
+                          "total_duplicate_size_bytes": 0, "discarded_files": 0}]
+
+    def test_ndjson_written_to_output_file(self, tmp_path):
+        _write_files(tmp_path, {"a.txt": b"same", "b.txt": b"same"})
+        out_file = tmp_path / "results.ndjson"
+        rc = main([str(tmp_path), "--ndjson", "--output", str(out_file)])
+        assert rc == EXIT_DUPES_FOUND
+        lines = [json.loads(l) for l in out_file.read_text().splitlines() if l.strip()]
+        assert lines[-1]["type"] == "stats"
+
+
+# ---------------------------------------------------------------------------
+# Machine-readable progress
+# ---------------------------------------------------------------------------
+
+class TestProgressJson:
+    def test_progress_json_emits_json_to_stderr(self, tmp_path, capsys):
+        _write_files(tmp_path, {"a.txt": b"same", "b.txt": b"same"})
+        main([str(tmp_path), "--progress-json"])
+        err_lines = [l for l in capsys.readouterr().err.splitlines() if l.strip()]
+        assert len(err_lines) >= 1
+        for line in err_lines:
+            obj = json.loads(line)
+            assert obj["type"] == "progress"
+            assert "percent" in obj
+            assert "description" in obj
+
+    def test_progress_json_does_not_pollute_stdout(self, tmp_path, capsys):
+        _write_files(tmp_path, {"a.txt": b"same", "b.txt": b"same"})
+        main([str(tmp_path), "--progress-json"])
+        data = json.loads(capsys.readouterr().out)
+        assert "groups" in data
+
+    def test_verbose_and_progress_json_mutually_exclusive(self, tmp_path, capsys):
+        rc = main([str(tmp_path), "--verbose", "--progress-json"])
+        assert rc == EXIT_BAD_ARGS
+        assert "mutually exclusive" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# Scanner knobs
+# ---------------------------------------------------------------------------
+
+class TestScannerKnobs:
+    def test_min_match_accepted(self, tmp_path, capsys):
+        _write_files(tmp_path, {"a.txt": b"same", "b.txt": b"same"})
+        rc = main([str(tmp_path), "--min-match", "50"])
+        assert rc in (EXIT_OK, EXIT_DUPES_FOUND)
+
+    def test_word_weighting_accepted(self, tmp_path, capsys):
+        _write_files(tmp_path, {"a.txt": b"same", "b.txt": b"same"})
+        rc = main([str(tmp_path), "--word-weighting"])
+        assert rc in (EXIT_OK, EXIT_DUPES_FOUND)
+
+    def test_match_similar_accepted(self, tmp_path, capsys):
+        _write_files(tmp_path, {"a.txt": b"same", "b.txt": b"same"})
+        rc = main([str(tmp_path), "--match-similar"])
+        assert rc in (EXIT_OK, EXIT_DUPES_FOUND)
+
+    def test_mix_file_kind_accepted(self, tmp_path, capsys):
+        _write_files(tmp_path, {"a.txt": b"same", "b.bin": b"same"})
+        rc = main([str(tmp_path), "--mix-file-kind"])
+        assert rc in (EXIT_OK, EXIT_DUPES_FOUND)
+
+    def test_min_size_filters_small_files(self, tmp_path, capsys):
+        # Files are 4 bytes; min-size 1 KB should exclude them → no dupes
+        _write_files(tmp_path, {"a.txt": b"same", "b.txt": b"same"})
+        rc = main([str(tmp_path), "--min-size", "1"])
+        assert rc == EXIT_OK
+
+    def test_knobs_wired_to_app_options(self, tmp_path, capsys):
+        """Verify scanner knob values actually reach app.options."""
+        _write_files(tmp_path, {"a.txt": b"same", "b.txt": b"same"})
+        captured_options = {}
+
+        original_run = cli._run_scan
+        def _capture_run(app, verbose, progress_json=False):
+            captured_options.update(app.options)
+            return original_run(app, verbose, progress_json)
+
+        import unittest.mock as mock
+        with mock.patch("cli._run_scan", side_effect=_capture_run):
+            main([str(tmp_path), "--min-match", "42", "--word-weighting",
+                  "--min-size", "5", "--max-size", "100",
+                  "--partial-hash-threshold", "200", "--rehash-ignore-mtime"])
+
+        assert captured_options["min_match_percentage"] == 42
+        assert captured_options["word_weighting"] is True
+        assert captured_options["size_threshold"] == 5 * 1024
+        assert captured_options["large_size_threshold"] == 100 * 1024 * 1024
+        assert captured_options["big_file_size_threshold"] == 200 * 1024 * 1024
+        assert captured_options["rehash_ignore_mtime"] is True
+
+
+# ---------------------------------------------------------------------------
 # Headless view shim
 # ---------------------------------------------------------------------------
 
