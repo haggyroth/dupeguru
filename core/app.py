@@ -236,9 +236,47 @@ class DupeGuru(Broadcaster):
         j.start_job(self.results.mark_count)
         self.results.perform_on_marked(op, True)
 
+    @staticmethod
+    def _dirs_span_multiple_devices(directories):
+        """Return True if the configured directories live on more than one storage device."""
+        devices = set()
+        for path in directories:
+            try:
+                devices.add(os.stat(path).st_dev)
+            except OSError:
+                pass
+            if len(devices) > 1:
+                return True
+        return False
+
     def _do_delete_dupe(self, dupe, link_deleted, use_hardlinks, direct_deletion):
         if not dupe.path.exists():
             return
+        # Symlinks are excluded from scans; if the path is now a symlink it was replaced
+        # after the scan and we refuse to act on it.
+        if dupe.path.is_symlink():
+            raise OSError(
+                tr("'{}' is a symlink. Deletion through symlinks is not permitted.").format(str(dupe.path))
+            )
+        # Re-validate size and mtime against values recorded at scan time.  A mismatch
+        # means the file changed between scan and delete; skipping prevents deleting
+        # something the user never actually reviewed as a duplicate.
+        try:
+            st = dupe.path.stat()
+        except OSError as e:
+            raise OSError(
+                tr("Could not verify '{}' before deletion: {}").format(str(dupe.path), e)
+            ) from e
+        size_changed = st.st_size != dupe.size
+        # 2-second tolerance covers FAT32's 2-second mtime resolution and NTFS rounding.
+        mtime_changed = abs(st.st_mtime - dupe.mtime) > 2
+        if size_changed or mtime_changed:
+            raise OSError(
+                tr(
+                    "'{}' was skipped: the file changed since the last scan (size or modification "
+                    "time differs). Re-scan to refresh results."
+                ).format(str(dupe.path))
+            )
         logging.debug("Sending '%s' to trash", dupe.path)
         str_path = str(dupe.path)
         if direct_deletion:
@@ -355,7 +393,8 @@ class DupeGuru(Broadcaster):
         result = []
         for file in files:
             try:
-                inode = file.path.stat().st_ino
+                st = file.path.stat()
+                inode = (st.st_dev, st.st_ino)
             except OSError:
                 # The file was probably deleted or something
                 continue
@@ -655,6 +694,23 @@ class DupeGuru(Broadcaster):
         self.results.mark_all()
         self.notify("marking_changed")
 
+    def mark_by_criterion(self, sort_key):
+        """Promote the best-matching file to reference in each group, then mark all others.
+
+        For every duplicate group the file that sorts lowest under ``sort_key`` is promoted to
+        the reference position (i.e. it becomes the keeper).  All remaining files in the group
+        are then marked.  Files inside a reference folder are never displaced and are never marked.
+
+        :param sort_key: callable ``f(file) -> comparable`` — lower value = preferred keeper
+        """
+        for group in self.results.groups:
+            group.prioritize(key_func=sort_key)
+        self.results.refresh_required = True
+        self.results.mark_none()
+        self.results.mark_all()
+        self.notify("marking_changed")
+        self._results_changed()
+
     def mark_none(self):
         """Set all dupes in the results as unmarked."""
         self.results.mark_none()
@@ -821,6 +877,18 @@ class DupeGuru(Broadcaster):
         if not self.directories.has_any_file():
             self.view.show_message(tr("The selected directories contain no scannable file."))
             return
+        # Warn when the selected folders span multiple storage devices.  Scanning a drive
+        # that contains backups alongside the originals risks marking originals for deletion
+        # if reference folders are not set correctly.
+        if len(self.directories) > 1 and self._dirs_span_multiple_devices(self.directories):
+            msg = tr(
+                "The selected folders are on different drives or volumes. Scanning drives that "
+                "contain both originals and backups together risks marking original files for "
+                "deletion if your reference folders are not configured correctly.\n\n"
+                "Continue with the scan?"
+            )
+            if not self.view.ask_yes_no(msg):
+                return
         # Send relevant options down to the scanner instance
         for k, v in self.options.items():
             if hasattr(scanner, k):

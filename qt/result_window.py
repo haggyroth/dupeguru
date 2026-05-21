@@ -31,6 +31,7 @@ from core.app import AppMode
 from qt.results_model import ResultsView
 from qt.stats_label import StatsLabel
 from qt.prioritize_dialog import PrioritizeDialog
+from qt.mark_dialog import MarkDialog
 from qt.se.results_model import ResultsModel as ResultsModelStandard
 from qt.me.results_model import ResultsModel as ResultsModelMusic
 from qt.pe.results_model import ResultsModel as ResultsModelPicture
@@ -153,6 +154,13 @@ class ResultWindow(QMainWindow):
                 tr("Rename Selected"),
                 self.renameTriggered,
             ),
+            (
+                "actionMarkByRule",
+                "Ctrl+Shift+R",
+                "",
+                tr("Mark by Rule..."),
+                self.markByRuleTriggered,
+            ),
             ("actionMarkAll", "Ctrl+A", "", tr("Mark All"), self.markAllTriggered),
             (
                 "actionMarkNone",
@@ -260,6 +268,8 @@ class ResultWindow(QMainWindow):
         self.menuMark.addAction(self.actionMarkNone)
         self.menuMark.addAction(self.actionInvertMarking)
         self.menuMark.addAction(self.actionMarkSelected)
+        self.menuMark.addSeparator()
+        self.menuMark.addAction(self.actionMarkByRule)
 
         self.menuView.addAction(self.actionDetails)
         self.menuView.addSeparator()
@@ -454,6 +464,11 @@ class ResultWindow(QMainWindow):
         # what we want.
         index = index.sibling(index.row(), 1)
         self.resultsView.edit(index)
+
+    def markByRuleTriggered(self):
+        dlg = MarkDialog(self, self.app)
+        if dlg.exec() == QDialog.Accepted:
+            dlg.model.apply()
 
     def reprioritizeTriggered(self):
         dlg = PrioritizeDialog(self, self.app)

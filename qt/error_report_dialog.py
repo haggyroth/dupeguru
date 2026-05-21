@@ -6,6 +6,7 @@
 # which should be included with this package. The terms are also available at
 # http://www.gnu.org/licenses/gpl-3.0.html
 
+import logging
 import traceback
 import sys
 import os
@@ -13,6 +14,7 @@ import platform
 
 from PyQt5.QtCore import Qt, QCoreApplication, QSize
 from PyQt5.QtWidgets import (
+    QApplication,
     QDialog,
     QVBoxLayout,
     QHBoxLayout,
@@ -43,6 +45,7 @@ class ErrorReportDialog(QDialog):
         self.errorTextEdit.setPlainText(error_text)
         self.github_url = github_url
 
+        self.copyButton.clicked.connect(self.copyToClipboard)
         self.sendButton.clicked.connect(self.goToGitHub)
         self.dontSendButton.clicked.connect(self.reject)
 
@@ -72,6 +75,10 @@ class ErrorReportDialog(QDialog):
         self.verticalLayout.addWidget(self.label2)
         self.horizontalLayout = QHBoxLayout()
         self.horizontalLayout.addItem(horizontal_spacer())
+        self.copyButton = QPushButton(self)
+        self.copyButton.setText(tr("Copy to Clipboard"))
+        self.copyButton.setMinimumSize(QSize(130, 0))
+        self.horizontalLayout.addWidget(self.copyButton)
         self.dontSendButton = QPushButton(self)
         self.dontSendButton.setText(tr("Close"))
         self.dontSendButton.setMinimumSize(QSize(110, 0))
@@ -83,6 +90,9 @@ class ErrorReportDialog(QDialog):
         self.horizontalLayout.addWidget(self.sendButton)
         self.verticalLayout.addLayout(self.horizontalLayout)
 
+    def copyToClipboard(self):
+        QApplication.clipboard().setText(self.errorTextEdit.toPlainText())
+
     def goToGitHub(self):
         open_url(self.github_url)
 
@@ -90,7 +100,8 @@ class ErrorReportDialog(QDialog):
 def install_excepthook(github_url):
     def my_excepthook(exctype, value, tb):
         s = "".join(traceback.format_exception(exctype, value, tb))
+        logging.critical("Unhandled exception:\n%s", s)
         dialog = ErrorReportDialog(None, github_url, s)
-        dialog.exec_()
+        dialog.exec()
 
     sys.excepthook = my_excepthook

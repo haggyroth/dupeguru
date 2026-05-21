@@ -128,6 +128,12 @@ class DirectoriesModel(TreeModel):
     def headerData(self, section, orientation, role):
         if orientation == Qt.Horizontal and role == Qt.DisplayRole and section < len(HEADERS):
             return HEADERS[section]
+        if orientation == Qt.Horizontal and role == Qt.ToolTipRole and section == 1:
+            return tr(
+                "Normal: files are scanned and may be marked for deletion.\n"
+                "Reference: files are scanned but never deleted — always kept.\n"
+                "Excluded: folder is skipped entirely."
+            )
         return None
 
     def mimeTypes(self):
