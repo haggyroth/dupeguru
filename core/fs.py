@@ -436,17 +436,18 @@ class Folder(File):
     It has the size/digest info of a File, but its value is the sum of its subitems.
     """
 
-    __slots__ = File.__slots__ + ("_subfolders",)
+    __slots__ = File.__slots__ + ("_subfolders", "_items")
 
     def __init__(self, path):
         File.__init__(self, path)
         self.size = NOT_SET
         self._subfolders = None
+        self._items = None
 
     def _all_items(self):
-        folders = self.subfolders
-        files = get_files(self.path)
-        return folders + files
+        if self._items is None:
+            self._items = self.subfolders + get_files(self.path)
+        return self._items
 
     def _read_info(self, field):
         # print(f"_read_info({field}) for Folder {self}")
@@ -456,18 +457,12 @@ class Folder(File):
             stats = self.path.stat()
             self.mtime = nonone(stats.st_mtime, 0)
         elif field in {"digest", "digest_partial", "digest_samples"}:
-            # What's sensitive here is that we must make sure that subfiles'
-            # digest are always added up in the same order, but we also want a
-            # different digest if a file gets moved in a different subdirectory.
-
-            def get_dir_digest_concat():
-                items = self._all_items()
-                items.sort(key=lambda f: f.path)
-                digests = [getattr(f, field) for f in items]
-                return b"".join(digests)
-
-            digest = hasher(get_dir_digest_concat()).digest()
-            setattr(self, field, digest)
+            # Subfiles' digests must always be concatenated in the same order;
+            # sort by path once and compute all three digest fields in one pass.
+            items = sorted(self._all_items(), key=lambda f: f.path)
+            for digest_field in ("digest", "digest_partial", "digest_samples"):
+                digests = [getattr(f, digest_field) for f in items]
+                setattr(self, digest_field, hasher(b"".join(digests)).digest())
 
     @property
     def subfolders(self):

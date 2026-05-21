@@ -6,12 +6,14 @@
 # which should be included with this package. The terms are also available at
 # http://www.gnu.org/licenses/gpl-3.0.html
 
+import io
 import logging
 import re
 import os
 import os.path as op
 from errno import EISDIR, EACCES
 from xml.etree import ElementTree as ET
+import xml.sax.saxutils as _saxutils
 
 from hscommon.jobprogress.job import nulljob
 from hscommon.conflict import get_conflicted_name
@@ -20,6 +22,9 @@ from hscommon.trans import tr
 
 from core import engine
 from core.markable import Markable
+
+# Characters forbidden in XML 1.0 attribute values (control chars, surrogates, non-chars).
+_XML_INVALID_CHARS = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f]")
 
 
 class Results(Markable):
@@ -342,34 +347,54 @@ class Results(Markable):
         :param outfile: file object or path.
         """
         self.apply_filter(None)
-        root = ET.Element("results")
-        for g in self.groups:
-            group_elem = ET.SubElement(root, "group")
-            dupe2index = {}
-            for index, d in enumerate(g):
-                dupe2index[d] = index
-                try:
-                    words = engine.unpack_fields(d.words)
-                except AttributeError:
-                    words = ()
-                file_elem = ET.SubElement(group_elem, "file")
-                try:
-                    file_elem.set("path", str(d.path))
-                    file_elem.set("words", ",".join(words))
-                except ValueError:  # If there's an invalid character, just skip the file
-                    file_elem.set("path", "")
-                file_elem.set("is_ref", ("y" if d.is_ref else "n"))
-                file_elem.set("marked", ("y" if self.is_marked(d) else "n"))
-            for match in g.matches:
-                match_elem = ET.SubElement(group_elem, "match")
-                match_elem.set("first", str(dupe2index[match.first]))
-                match_elem.set("second", str(dupe2index[match.second]))
-                match_elem.set("percentage", str(int(match.percentage)))
-        tree = ET.ElementTree(root)
 
         def do_write(outfile):
             with FileOrPath(outfile, "wb") as fp:
-                tree.write(fp, encoding="utf-8")
+                # Use a text wrapper with write_through so bytes flow to fp immediately.
+                # detach() in the finally block prevents the wrapper from closing fp on GC.
+                text_fp = io.TextIOWrapper(fp, encoding="utf-8", newline="", write_through=True)
+                gen = _saxutils.XMLGenerator(text_fp, encoding="utf-8", short_empty_elements=True)
+                try:
+                    gen.startDocument()
+                    gen.startElement("results", {})
+                    for g in self.groups:
+                        gen.startElement("group", {})
+                        dupe2index = {}
+                        for index, d in enumerate(g):
+                            dupe2index[d] = index
+                            try:
+                                words = ",".join(engine.unpack_fields(d.words))
+                            except AttributeError:
+                                words = ""
+                            path = str(d.path)
+                            if _XML_INVALID_CHARS.search(path):
+                                path = ""
+                            gen.startElement(
+                                "file",
+                                {
+                                    "path": path,
+                                    "words": words,
+                                    "is_ref": "y" if d.is_ref else "n",
+                                    "marked": "y" if self.is_marked(d) else "n",
+                                },
+                            )
+                            gen.endElement("file")
+                        for match in g.matches:
+                            gen.startElement(
+                                "match",
+                                {
+                                    "first": str(dupe2index[match.first]),
+                                    "second": str(dupe2index[match.second]),
+                                    "percentage": str(int(match.percentage)),
+                                },
+                            )
+                            gen.endElement("match")
+                        gen.endElement("group")
+                    gen.endElement("results")
+                    gen.endDocument()
+                    text_fp.flush()
+                finally:
+                    text_fp.detach()
 
         try:
             do_write(outfile)
