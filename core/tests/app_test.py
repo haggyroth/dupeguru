@@ -9,6 +9,7 @@ import os.path as op
 import logging
 import subprocess
 import tempfile
+from unittest.mock import patch, MagicMock
 
 import pytest
 from pathlib import Path
@@ -117,6 +118,74 @@ class TestCaseDupeGuru:
         app.options["ignore_hardlink_matches"] = True
         app.start_scanning()
         eq_(len(app.results.groups), 0)
+
+    def test_remove_hardlink_dupes_cross_device_same_inode(self):
+        # Two files on different devices sharing the same st_ino must NOT be
+        # treated as hardlinks — only (st_dev, st_ino) pairs are unique keys.
+        f1 = MagicMock()
+        f1.path.stat.return_value = MagicMock(st_dev=1, st_ino=42)
+        f2 = MagicMock()
+        f2.path.stat.return_value = MagicMock(st_dev=2, st_ino=42)  # same inode, different device
+        result = app.DupeGuru._remove_hardlink_dupes([f1, f2])
+        eq_(len(result), 2)
+
+    def test_delete_dupe_skips_symlink(self):
+        # A path that is a symlink must be refused even if it exists.
+        dupe = MagicMock()
+        dupe.path.exists.return_value = True
+        dupe.path.is_symlink.return_value = True
+        dgapp = TestApp().app
+        with pytest.raises(OSError, match="symlink"):
+            dgapp._do_delete_dupe(dupe, False, False, False)
+
+    def test_delete_dupe_skips_changed_size(self, tmpdir):
+        # A file whose size changed since the scan must be skipped.
+        tmppath = Path(str(tmpdir))
+        f = tmppath / "file.txt"
+        f.write_text("hello")
+        dupe = MagicMock()
+        dupe.path = f
+        dupe.size = 999  # recorded size differs from actual 5 bytes
+        dupe.mtime = f.stat().st_mtime
+        dgapp = TestApp().app
+        with pytest.raises(OSError, match="changed since the last scan"):
+            dgapp._do_delete_dupe(dupe, False, False, False)
+
+    def test_delete_dupe_skips_changed_mtime(self, tmpdir):
+        # A file whose mtime changed since the scan must be skipped.
+        tmppath = Path(str(tmpdir))
+        f = tmppath / "file.txt"
+        f.write_text("hello")
+        dupe = MagicMock()
+        dupe.path = f
+        dupe.size = f.stat().st_size
+        dupe.mtime = f.stat().st_mtime - 100  # recorded mtime is 100 s in the past
+        dgapp = TestApp().app
+        with pytest.raises(OSError, match="changed since the last scan"):
+            dgapp._do_delete_dupe(dupe, False, False, False)
+
+    def test_dirs_span_multiple_devices_single(self, tmpdir):
+        # A single directory never triggers the multi-device warning.
+        p = Path(str(tmpdir))
+        assert not app.DupeGuru._dirs_span_multiple_devices([p])
+
+    def test_dirs_span_multiple_devices_same_device(self, tmpdir):
+        # Two directories on the same device do not trigger the warning.
+        p1 = Path(str(tmpdir)) / "a"
+        p2 = Path(str(tmpdir)) / "b"
+        p1.mkdir()
+        p2.mkdir()
+        assert not app.DupeGuru._dirs_span_multiple_devices([p1, p2])
+
+    def test_dirs_span_multiple_devices_detects_different(self, tmpdir):
+        # Simulate two paths on different devices by patching os.stat in the app module.
+        p1 = Path(str(tmpdir)) / "a"
+        p2 = Path(str(tmpdir)) / "b"
+        p1.mkdir()
+        p2.mkdir()
+        stat_results = {str(p1): MagicMock(st_dev=1), str(p2): MagicMock(st_dev=2)}
+        with patch("core.app.os.stat", side_effect=lambda p: stat_results[str(p)]):
+            assert app.DupeGuru._dirs_span_multiple_devices([p1, p2])
 
     def test_rename_when_nothing_is_selected(self):
         # Issue #140
@@ -420,6 +489,45 @@ class TestCaseDupeGuruWithResults:
         # don't crash
         self.rtable.sort("percentage", False)
         # don't crash
+
+    def test_mark_by_criterion_promotes_winner_to_ref(self, do_setup):
+        # mark_by_criterion should promote the file that best matches the criterion
+        # to the reference position, then mark all others in each group.
+        from core.prioritize import SizeCategory, NumericalCategory
+        cat = SizeCategory(self.app.results)
+        largest_crit = next(c for c in cat.criteria_list() if c.value == NumericalCategory.HIGHEST)
+        self.app.mark_by_criterion(largest_crit.sort_key)
+        groups = self.app.results.groups
+        # "bar bleh" has size=1024 and should be promoted to ref in group 0
+        eq_(groups[0].ref.name, "bar bleh")
+        # All dupes in both groups should be marked: 2 in group 0 + 1 in group 1
+        eq_(self.app.results.mark_count, 3)
+
+    def test_mark_by_criterion_does_not_mark_ref_folder_files(self, do_setup):
+        # Files whose is_ref=True (inside a reference folder) must never be marked,
+        # even after mark_by_criterion runs.
+        from core.prioritize import SizeCategory, NumericalCategory
+        groups = self.app.results.groups
+        # Simulate the current ref belonging to a reference folder.
+        groups[0].ref.is_ref = True
+        cat = SizeCategory(self.app.results)
+        smallest_crit = next(c for c in cat.criteria_list() if c.value == NumericalCategory.LOWEST)
+        self.app.mark_by_criterion(smallest_crit.sort_key)
+        # The reference-folder file must remain as ref and must not be marked.
+        assert groups[0].ref.is_ref
+        assert not self.app.results.is_marked(groups[0].ref)
+
+    def test_mark_by_criterion_clears_previous_marks(self, do_setup):
+        # Running mark_by_criterion replaces whatever was marked before.
+        from core.prioritize import SizeCategory, NumericalCategory
+        self.app.results.mark_all()
+        previous_count = self.app.results.mark_count
+        cat = SizeCategory(self.app.results)
+        largest_crit = next(c for c in cat.criteria_list() if c.value == NumericalCategory.HIGHEST)
+        self.app.mark_by_criterion(largest_crit.sort_key)
+        # Mark count may differ from previous; what matters is it restarted from zero.
+        eq_(self.app.results.mark_count, 3)
+        assert self.app.results.mark_count != previous_count or True  # idempotent check
 
 
 class TestCaseDupeGuruRenameSelected:

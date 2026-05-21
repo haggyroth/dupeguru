@@ -209,6 +209,7 @@ class Preferences(PreferencesBase):
 
         self.recentResults = get("RecentResults", self.recentResults)
         self.recentFolders = get("RecentFolders", self.recentFolders)
+        self.first_run_shown = get("FirstRunShown", self.first_run_shown)
         self.tabs_default_pos = get("TabsDefaultPosition", self.tabs_default_pos)
         self.word_weighting = get("WordWeighting", self.word_weighting)
         self.match_similar = get("MatchSimilar", self.match_similar)
@@ -262,6 +263,7 @@ class Preferences(PreferencesBase):
         self.recentResults = []
         self.recentFolders = []
 
+        self.first_run_shown = False
         self.tabs_default_pos = True
         self.word_weighting = True
         self.match_similar = False
@@ -316,6 +318,7 @@ class Preferences(PreferencesBase):
         set_("RecentResults", self.recentResults)
         set_("RecentFolders", self.recentFolders)
 
+        set_("FirstRunShown", self.first_run_shown)
         set_("TabsDefaultPosition", self.tabs_default_pos)
         set_("WordWeighting", self.word_weighting)
         set_("MatchSimilar", self.match_similar)

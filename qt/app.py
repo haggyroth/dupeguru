@@ -15,6 +15,7 @@ from hscommon.trans import trget
 from hscommon import desktop, plat
 
 from qt.about_box import AboutBox
+from qt.first_run_dialog import FirstRunDialog
 from qt.recent import Recent
 from qt.util import create_actions
 from qt.progress_window import ProgressWindow
@@ -307,6 +308,12 @@ class DupeGuru(QObject):
 
     # --- Events
     def finishedLaunching(self):
+        if not self.prefs.first_run_shown:
+            parent = self.main_window if self.main_window else self.directories_dialog
+            dlg = FirstRunDialog(parent)
+            dlg.exec()
+            self.prefs.first_run_shown = True
+            self.prefs.save()
         if sys.getfilesystemencoding() == "ascii":
             # No need to localize this, it's a debugging message.
             msg = (
