@@ -268,7 +268,7 @@ def getmatches(
     # is torn down, which also avoids the Windows file-lock race (H6).
     with tempfile.TemporaryDirectory() as _tmpdir:
         _pairs_path = os.path.join(_tmpdir, "seen_pairs.db")
-        _pairs_conn = sqlite3.connect(_pairs_path)
+        _pairs_conn = sqlite3.connect(_pairs_path, isolation_level=None)
         _pairs_conn.execute("PRAGMA journal_mode=OFF")
         _pairs_conn.execute("PRAGMA synchronous=OFF")
         _pairs_conn.execute("PRAGMA cache_size=-65536")  # 64 MB page cache
