@@ -46,6 +46,11 @@ DEBUG_MODE_PREFERENCE = "DebugMode"
 
 MSG_NO_MARKED_DUPES = tr("There are no marked duplicates. Nothing has been done.")
 MSG_NO_SELECTED_DUPES = tr("There are no selected duplicates. Nothing has been done.")
+MSG_PARTIAL_HASH_WARNING = tr(
+    "Some of the marked duplicates were matched using a partial (sampled) hash, not a full "
+    "file comparison. They are probable duplicates but a false positive is possible.\n\n"
+    "Do you want to continue with deletion?"
+)
 MSG_MANY_FILES_TO_OPEN = tr(
     "You're about to open many files at once. Depending on what those "
     "files are opened with, doing so can create quite a mess. Continue?"
@@ -539,6 +544,9 @@ class DupeGuru(Broadcaster):
         if not self.results.mark_count:
             self.view.show_message(MSG_NO_MARKED_DUPES)
             return
+        if self.results.has_marked_partial_matches():
+            if not self.view.ask_yes_no(MSG_PARTIAL_HASH_WARNING):
+                return
         if not self.deletion_options.show(self.results.mark_count):
             return
         args = [

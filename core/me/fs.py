@@ -64,6 +64,7 @@ class MusicFile(fs.File):
         m = group.get_match_of(self)
         if m:
             percentage = m.percentage
+            is_partial = m.partial
             dupe_count = 0
             if delta:
                 r = group.ref
@@ -74,7 +75,9 @@ class MusicFile(fs.File):
                 mtime -= r.mtime
         else:
             percentage = group.percentage
+            is_partial = any(getattr(m2, "partial", False) for m2 in group.matches)
             dupe_count = len(group.dupes)
+        perc_str = ("~" if is_partial else "") + format_perc(percentage)
         dupe_folder_path = getattr(self, "display_folder_path", self.folder_path)
         return {
             "name": self.name,
@@ -92,7 +95,7 @@ class MusicFile(fs.File):
             "year": self.year,
             "track": str(self.track),
             "comment": self.comment,
-            "percentage": format_perc(percentage),
+            "percentage": perc_str,
             "words": format_words(self.words) if hasattr(self, "words") else "",
             "dupe_count": format_dupe_count(dupe_count),
         }

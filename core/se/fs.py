@@ -18,6 +18,7 @@ def get_display_info(dupe, group, delta):
     m = group.get_match_of(dupe)
     if m:
         percentage = m.percentage
+        is_partial = m.partial
         dupe_count = 0
         if delta:
             r = group.ref
@@ -25,14 +26,16 @@ def get_display_info(dupe, group, delta):
             mtime -= r.mtime
     else:
         percentage = group.percentage
+        is_partial = any(getattr(m2, "partial", False) for m2 in group.matches)
         dupe_count = len(group.dupes)
+    perc_str = ("~" if is_partial else "") + format_perc(percentage)
     return {
         "name": dupe.name,
         "folder_path": str(dupe.folder_path),
         "size": format_size(size, 0, 1, False),
         "extension": dupe.extension,
         "mtime": format_timestamp(mtime, delta and m),
-        "percentage": format_perc(percentage),
+        "percentage": perc_str,
         "words": format_words(dupe.words) if hasattr(dupe, "words") else "",
         "dupe_count": format_dupe_count(dupe_count),
     }

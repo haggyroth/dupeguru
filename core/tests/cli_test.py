@@ -28,9 +28,9 @@ def _write_files(directory: Path, names_and_contents: dict) -> None:
 
 class TestArgValidation:
     def test_missing_folder_exits_bad_args(self, capsys):
-        with pytest.raises(SystemExit) as exc_info:
-            main([])
-        assert exc_info.value.code != 0
+        rc = main([])
+        assert rc == EXIT_BAD_ARGS
+        assert "FOLDER" in capsys.readouterr().err or "from-results" in capsys.readouterr().err
 
     def test_nonexistent_folder_exits_bad_args(self, tmp_path, capsys):
         rc = main([str(tmp_path / "does_not_exist")])
@@ -329,6 +329,117 @@ class TestScannerKnobs:
         assert captured_options["large_size_threshold"] == 100 * 1024 * 1024
         assert captured_options["big_file_size_threshold"] == 200 * 1024 * 1024
         assert captured_options["rehash_ignore_mtime"] is True
+
+
+# ---------------------------------------------------------------------------
+# Deletion (--delete / --direct-delete)
+# ---------------------------------------------------------------------------
+
+class TestDelete:
+    def test_delete_without_yes_returns_bad_args(self, tmp_path, capsys):
+        _write_files(tmp_path, {"a.txt": b"same", "b.txt": b"same"})
+        rc = main([str(tmp_path), "--delete"])
+        assert rc == EXIT_BAD_ARGS
+        assert "--yes" in capsys.readouterr().err
+
+    def test_direct_delete_without_yes_returns_bad_args(self, tmp_path, capsys):
+        _write_files(tmp_path, {"a.txt": b"same", "b.txt": b"same"})
+        rc = main([str(tmp_path), "--direct-delete"])
+        assert rc == EXIT_BAD_ARGS
+
+    def test_direct_delete_with_yes_removes_dupe(self, tmp_path):
+        _write_files(tmp_path, {"a.txt": b"same", "b.txt": b"same"})
+        rc = main([str(tmp_path), "--direct-delete", "--yes"])
+        assert rc == EXIT_DUPES_FOUND
+        existing = [f for f in tmp_path.iterdir()]
+        assert len(existing) == 1  # one kept, one deleted
+
+    def test_no_dupes_with_delete_returns_ok(self, tmp_path):
+        _write_files(tmp_path, {"a.txt": "unique A", "b.txt": "unique B"})
+        rc = main([str(tmp_path), "--direct-delete", "--yes"])
+        assert rc == EXIT_OK
+        # No files should have been deleted
+        assert len(list(tmp_path.iterdir())) == 2
+
+
+# ---------------------------------------------------------------------------
+# --from-results
+# ---------------------------------------------------------------------------
+
+class TestFromResults:
+    def _scan_and_save(self, tmp_path, out_file):
+        _write_files(tmp_path, {"a.txt": b"same", "b.txt": b"same"})
+        rc = main([str(tmp_path), "--output", str(out_file)])
+        assert rc == EXIT_DUPES_FOUND
+        return out_file
+
+    def test_from_results_re_emits_json(self, tmp_path, capsys):
+        out = tmp_path / "results.json"
+        scan_dir = tmp_path / "scan"
+        scan_dir.mkdir()
+        self._scan_and_save(scan_dir, out)
+        capsys.readouterr()  # flush
+
+        rc = main(["--from-results", str(out)])
+        assert rc == EXIT_DUPES_FOUND
+        data = json.loads(capsys.readouterr().out)
+        assert data["stats"]["groups"] >= 1
+
+    def test_from_results_ndjson(self, tmp_path, capsys):
+        out = tmp_path / "results.json"
+        scan_dir = tmp_path / "scan"
+        scan_dir.mkdir()
+        self._scan_and_save(scan_dir, out)
+        capsys.readouterr()
+
+        rc = main(["--from-results", str(out), "--ndjson"])
+        assert rc == EXIT_DUPES_FOUND
+        lines = [json.loads(l) for l in capsys.readouterr().out.splitlines() if l.strip()]
+        assert lines[-1]["type"] == "stats"
+
+    def test_from_results_with_folders_returns_bad_args(self, tmp_path, capsys):
+        out = tmp_path / "results.json"
+        out.write_text("{}", encoding="utf-8")
+        rc = main([str(tmp_path), "--from-results", str(out)])
+        assert rc == EXIT_BAD_ARGS
+
+    def test_from_results_missing_file_returns_bad_args(self, tmp_path, capsys):
+        rc = main(["--from-results", str(tmp_path / "no_such.json")])
+        assert rc == EXIT_BAD_ARGS
+
+    def test_from_results_delete_requires_yes(self, tmp_path, capsys):
+        out = tmp_path / "results.json"
+        scan_dir = tmp_path / "scan"
+        scan_dir.mkdir()
+        self._scan_and_save(scan_dir, out)
+        capsys.readouterr()
+
+        rc = main(["--from-results", str(out), "--delete"])
+        assert rc == EXIT_BAD_ARGS
+        assert "--yes" in capsys.readouterr().err
+
+    def test_from_results_delete_with_yes_removes_file(self, tmp_path):
+        scan_dir = tmp_path / "scan"
+        scan_dir.mkdir()
+        out = tmp_path / "results.json"
+        _write_files(scan_dir, {"a.txt": b"same", "b.txt": b"same"})
+        main([str(scan_dir), "--output", str(out)])
+
+        rc = main(["--from-results", str(out), "--direct-delete", "--yes"])
+        assert rc == EXIT_DUPES_FOUND
+        assert len(list(scan_dir.iterdir())) == 1
+
+    def test_from_results_ndjson_input(self, tmp_path, capsys):
+        """NDJSON saved output can be read back with --from-results."""
+        scan_dir = tmp_path / "scan"
+        scan_dir.mkdir()
+        _write_files(scan_dir, {"a.txt": b"same", "b.txt": b"same"})
+        out = tmp_path / "results.ndjson"
+        main([str(scan_dir), "--ndjson", "--output", str(out)])
+        capsys.readouterr()
+
+        rc = main(["--from-results", str(out)])
+        assert rc == EXIT_DUPES_FOUND
 
 
 # ---------------------------------------------------------------------------

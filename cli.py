@@ -5,10 +5,10 @@ Usage:
     python cli.py scan <folder> [<folder> ...] [options]
 
 Exit codes:
-    0  Scan completed, no duplicates found.
-    1  Scan completed, duplicates found.
+    0  Scan completed, no duplicates found (or --from-results: nothing deleted).
+    1  Scan completed, duplicates found (or --from-results: files deleted).
     2  Bad arguments or startup error.
-    3  Scan failed (I/O error, corrupt cache, etc.).
+    3  Scan failed / deletion errors encountered.
 
 Output formats:
     Default  Pretty-printed JSON object with "groups" and "stats" keys.
@@ -21,6 +21,15 @@ Progress (stderr):
     --verbose        Human-readable progress messages.
     --progress-json  Machine-readable {"type":"progress","percent":N,"description":"..."} lines.
                      Combine with --ndjson for fully structured pipelines.
+
+Deletion:
+    --delete         Send all duplicate files (non-reference) to the system trash after scanning.
+                     Requires --yes to confirm, or the flag is a no-op.
+    --yes            Skip the interactive deletion confirmation prompt.
+    --direct-delete  Permanently delete instead of sending to trash (use with care).
+    --from-results F Re-use a prior JSON/NDJSON output instead of rescanning. Validates each
+                     file's size and mtime before deleting; skips any that changed since the
+                     prior scan. Combine with --delete --yes to act on saved results.
 """
 
 import argparse
@@ -232,6 +241,102 @@ def _emit_ndjson(app: DupeGuru, out) -> tuple[int, int, int]:
     return group_count, total_dupe_count, total_dupe_size
 
 
+# --- Deletion helpers -------------------------------------------------------
+
+def _delete_dupes(app: DupeGuru, direct_delete: bool, verbose: bool) -> list[tuple]:
+    """Mark all dupes in results then delete them. Returns list of (path, error) problems."""
+    app.results.mark_all()
+
+    problems = []
+
+    def _op(dupe):
+        app._do_delete_dupe(dupe, link_deleted=False, use_hardlinks=False, direct_deletion=direct_delete)
+
+    app.results.perform_on_marked(_op, remove_from_results=True)
+    problems = list(app.results.problems)
+
+    if verbose:
+        deleted = sum(1 for g in app.results.groups for _ in g.dupes)  # remaining (not deleted)
+        print(
+            f"Deleted duplicates. {len(problems)} problem(s) encountered.",
+            file=sys.stderr,
+        )
+
+    return problems
+
+
+# --- Load saved results (--from-results) ------------------------------------
+
+def _load_results_json(path: str) -> list[dict]:
+    """Parse a prior JSON or NDJSON results file into a flat list of group dicts."""
+    text = Path(path).read_text(encoding="utf-8")
+    # Try regular JSON first (the default output format, even when pretty-printed).
+    try:
+        data = json.loads(text)
+        return data.get("groups", [])
+    except json.JSONDecodeError:
+        pass
+    # Fall back to NDJSON: one JSON object per line.
+    groups = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        obj = json.loads(line)  # let parse errors propagate
+        if obj.get("type") == "group":
+            groups.append({"reference": obj["reference"], "duplicates": obj["duplicates"]})
+    return groups
+
+
+def _delete_from_saved_results(
+    groups: list[dict], direct_delete: bool, verbose: bool
+) -> tuple[int, list[tuple[str, str]]]:
+    """Delete dupe files listed in saved results after re-validating size/mtime.
+
+    Returns (deleted_count, [(path, reason), ...]) where the second element lists
+    files that were skipped due to validation failure or I/O error.
+    """
+    deleted = 0
+    problems = []
+
+    for group in groups:
+        for dupe in group.get("duplicates", []):
+            if dupe.get("is_ref_folder"):
+                continue
+            p = Path(dupe["path"])
+            if not p.exists():
+                problems.append((dupe["path"], "file no longer exists"))
+                continue
+            if p.is_symlink():
+                problems.append((dupe["path"], "skipped: path is a symlink"))
+                continue
+            try:
+                st = p.stat()
+            except OSError as e:
+                problems.append((dupe["path"], str(e)))
+                continue
+            if st.st_size != dupe["size"] or abs(st.st_mtime - dupe["mtime"]) > 2:
+                problems.append((dupe["path"], "skipped: file changed since last scan"))
+                continue
+            try:
+                if direct_delete:
+                    if p.is_dir():
+                        import shutil
+                        shutil.rmtree(str(p))
+                    else:
+                        p.unlink()
+                else:
+                    from send2trash import send2trash
+                    send2trash(str(p))
+                deleted += 1
+                if verbose:
+                    print(f"  deleted: {p}", file=sys.stderr)
+            except OSError as e:
+                problems.append((dupe["path"], str(e)))
+
+    return deleted, problems
+
+
 # --- Argument parser -------------------------------------------------------
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -246,9 +351,9 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "folders",
-        nargs="+",
+        nargs="*",
         metavar="FOLDER",
-        help="Folder(s) to scan for duplicates.",
+        help="Folder(s) to scan for duplicates. Not required when --from-results is used.",
     )
     parser.add_argument(
         "--output",
@@ -373,6 +478,36 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    # --- Deletion ------------------------------------------------------------
+    deletion = parser.add_argument_group(
+        "deletion",
+        "Delete duplicate files after scanning. Requires --yes to take effect.",
+    )
+    deletion.add_argument(
+        "--delete",
+        action="store_true",
+        help="Send all non-reference duplicates to the system trash after scanning.",
+    )
+    deletion.add_argument(
+        "--direct-delete",
+        action="store_true",
+        help="Permanently delete instead of sending to trash. Implies --delete.",
+    )
+    deletion.add_argument(
+        "--yes",
+        action="store_true",
+        help="Confirm deletion without an interactive prompt.",
+    )
+    deletion.add_argument(
+        "--from-results",
+        metavar="FILE",
+        help=(
+            "Load a prior JSON or NDJSON results file instead of rescanning. "
+            "Each file's size and mtime are re-validated before deletion. "
+            "Combine with --delete --yes to act on saved results."
+        ),
+    )
+
     # --- Progress ------------------------------------------------------------
     prog = parser.add_argument_group("progress")
     prog.add_argument(
@@ -398,11 +533,99 @@ def main(argv=None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
 
+    # --- Basic flag validation --------------------------------------------
     if args.verbose and args.progress_json:
         print("error: --verbose and --progress-json are mutually exclusive", file=sys.stderr)
         return EXIT_BAD_ARGS
 
+    wants_delete = args.delete or args.direct_delete
+
+    if args.from_results:
+        # ----------------------------------------------------------------
+        # --from-results path: load saved JSON/NDJSON and optionally delete
+        # ----------------------------------------------------------------
+        if args.folders:
+            print("error: --from-results cannot be combined with folder arguments", file=sys.stderr)
+            return EXIT_BAD_ARGS
+
+        try:
+            groups = _load_results_json(args.from_results)
+        except (OSError, json.JSONDecodeError) as exc:
+            print(f"error reading results file: {exc}", file=sys.stderr)
+            return EXIT_BAD_ARGS
+
+        group_count = len(groups)
+        dupe_count = sum(len(g.get("duplicates", [])) for g in groups)
+
+        if args.verbose:
+            print(
+                f"Loaded {group_count} group(s) with {dupe_count} duplicate(s) from {args.from_results}",
+                file=sys.stderr,
+            )
+
+        if not wants_delete:
+            # Just re-emit the loaded results without any scan.
+            if args.ndjson:
+                for g in groups:
+                    print(json.dumps({"type": "group", **g}, ensure_ascii=False))
+                print(json.dumps({"type": "stats", "groups": group_count,
+                                  "total_duplicates": dupe_count,
+                                  "total_duplicate_size_bytes": sum(
+                                      d["size"] for g in groups for d in g.get("duplicates", [])
+                                  ), "discarded_files": 0}, ensure_ascii=False))
+            else:
+                total_size = sum(d["size"] for g in groups for d in g.get("duplicates", []))
+                result = {
+                    "groups": groups,
+                    "stats": {"groups": group_count, "total_duplicates": dupe_count,
+                              "total_duplicate_size_bytes": total_size, "discarded_files": 0},
+                }
+                if args.output:
+                    try:
+                        Path(args.output).write_text(
+                            json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8"
+                        )
+                    except OSError as exc:
+                        print(f"error writing output file: {exc}", file=sys.stderr)
+                        return EXIT_SCAN_ERROR
+                else:
+                    print(json.dumps(result, indent=2, ensure_ascii=False))
+            return EXIT_DUPES_FOUND if group_count > 0 else EXIT_OK
+
+        # Deletion from saved results
+        if not args.yes:
+            print(
+                f"error: --delete requires --yes to confirm deletion of {dupe_count} file(s). "
+                "Re-run with --yes to proceed.",
+                file=sys.stderr,
+            )
+            return EXIT_BAD_ARGS
+
+        deleted, problems = _delete_from_saved_results(groups, args.direct_delete, args.verbose)
+
+        if problems:
+            for path, reason in problems:
+                print(f"  skipped {path}: {reason}", file=sys.stderr)
+            print(
+                f"Deleted {deleted} file(s); {len(problems)} skipped. See above for details.",
+                file=sys.stderr,
+            )
+            return EXIT_SCAN_ERROR
+
+        if args.verbose:
+            print(f"Deleted {deleted} file(s).", file=sys.stderr)
+
+        return EXIT_DUPES_FOUND if deleted > 0 else EXIT_OK
+
+    # --------------------------------------------------------------------
+    # Normal scan path
+    # --------------------------------------------------------------------
+
     # Resolve and validate folders ----------------------------------------
+    if not args.folders:
+        print("error: at least one FOLDER is required (or use --from-results)", file=sys.stderr)
+        return EXIT_BAD_ARGS
+
     folders: list[Path] = []
     for raw in args.folders:
         p = Path(raw).resolve()
@@ -490,6 +713,34 @@ def main(argv=None) -> int:
             + (f" ({discarded} file(s) discarded)" if discarded else "") + ".",
             file=sys.stderr,
         )
+
+    # Deletion (scan path) ------------------------------------------------
+    if wants_delete:
+        if not args.yes:
+            dupe_count = app.results.mark_count  # not yet marked; use len of all dupes
+            dupe_count = sum(len(g.dupes) for g in app.results.groups)
+            print(
+                f"error: --delete requires --yes to confirm deletion of {dupe_count} file(s). "
+                "Re-run with --yes to proceed.",
+                file=sys.stderr,
+            )
+            app.close()
+            return EXIT_BAD_ARGS
+
+        problems = _delete_dupes(app, direct_delete=args.direct_delete, verbose=args.verbose)
+
+        if problems:
+            for dupe, reason in problems:
+                print(f"  skipped {dupe.path}: {reason}", file=sys.stderr)
+            print(
+                f"{len(problems)} file(s) could not be deleted. See above for details.",
+                file=sys.stderr,
+            )
+            app.close()
+            return EXIT_SCAN_ERROR
+
+        app.close()
+        return EXIT_DUPES_FOUND if group_count > 0 else EXIT_OK
 
     # Emit results --------------------------------------------------------
     if args.ndjson:
