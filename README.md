@@ -1,14 +1,21 @@
 # dupeGuru
 
-[dupeGuru][dupeguru] is a cross-platform (Linux, OS X, Windows) GUI tool to find duplicate files in
+[dupeGuru][dupeguru] is a cross-platform (Linux, OS X, Windows) tool to find duplicate files in
 a system. It is written mostly in Python 3 and uses [qt](https://www.qt.io/) for the UI.
 
-## Current status
-Still looking for additional help especially with regards to:
-* OSX maintenance: reproducing bugs, packaging verification.
-* Linux maintenance: reproducing bugs, maintaining PPA repository, Debian package, rpm package.
-* Translations: updating missing strings, transifex project at https://www.transifex.com/voltaicideas/dupeguru-1
-* Documentation: keeping it up-to-date.
+## About this fork
+
+This is a personal fork of [arsenetar/dupeguru][upstream], maintained at
+[haggyroth/dupeguru][fork]. Upstream is no longer actively maintained; this fork exists to
+carry fixes and features we want for our own use.
+
+**All issues, pull requests, and discussion belong on [this fork][fork-issues].** Nothing here
+is intended to be contributed upstream. If you are looking for the original project, follow the
+[upstream link][upstream] instead.
+
+Changes in this fork over upstream include large-scan performance work (parallel hashing,
+BK-tree photo matching, WAL-mode caches), safety guards around deletion, rule-based marking,
+and a headless [command-line interface](#command-line-interface).
 
 ## Contents of this folder
 
@@ -31,7 +38,8 @@ For windows instructions see the [Windows Instructions](Windows.md).
 For macos instructions (qt version) see the [macOS Instructions](macos.md).
 
 ### Prerequisites
-* [Python 3.7+][python]
+* [Python 3.10+][python] — parts of the codebase use PEP 604 (`X | None`) annotations that are
+  evaluated at runtime, so earlier versions will not import.
 * PyQt5
 
 ### System Setup
@@ -77,6 +85,59 @@ This can be made a one-liner (once in the directory) as:
 
     $ bash -c "python3 -m venv --system-site-packages env && source env/bin/activate && pip install -r requirements.txt -r requirements-extra.txt && python build.py --clean && python package.py"
 
+## Command-line interface
+
+This fork ships a headless CLI for scripted and automated scans. It is installed as the
+`dupeguru-scan` console script, and can also be run directly from a source checkout:
+
+    $ dupeguru-scan <folder> [<folder> ...] [options]
+    $ python cli.py <folder> [<folder> ...] [options]
+
+There is no `scan` subcommand — folders are positional arguments. (`python -m dupeguru` and the
+`scan` verb are documented in `cli.py`'s docstring but do not work; see
+[issue #30][issue-invocation].)
+
+Scan a folder and write JSON results:
+
+    $ dupeguru-scan ~/Photos --output results.json
+
+Stream newline-delimited JSON for large result sets:
+
+    $ dupeguru-scan /data --ndjson | jq 'select(.type == "group")'
+
+Machine-readable progress on stderr, results on stdout:
+
+    $ dupeguru-scan /data --ndjson --progress-json > results.ndjson
+
+Re-use a previous scan instead of rescanning:
+
+    $ dupeguru-scan --from-results results.json
+
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | Completed, no duplicates found (or nothing deleted) |
+| 1 | Completed, duplicates found (or files deleted) |
+| 2 | Bad arguments or startup error |
+| 3 | Scan failed, or errors were encountered during deletion |
+
+### Deletion
+
+Deletion from the CLI requires an explicit `--yes`; `--delete` alone will refuse to run.
+
+    $ dupeguru-scan /data --delete --yes
+
+`--delete` sends files to the system trash. `--direct-delete` permanently removes them instead.
+Files are re-validated against their recorded size and modification time immediately before
+removal, and anything that changed since the scan is skipped and reported.
+
+Run `dupeguru-scan --help` for the full option list, including the scanner knobs
+(`--min-match`, `--min-size`, `--max-size`, `--partial-hash-threshold`, and others).
+
+> **Note:** `--dry-run` does not currently prevent deletion — see
+> [issue #7][issue-dryrun]. Until that is fixed, do not rely on it as a safety net.
+
 ## Running tests
 
 The complete test suite is run with [Tox 1.7+][tox]. If you have it installed system-wide, you
@@ -89,7 +150,25 @@ You can also run automated tests without Tox. Extra requirements for running tes
 `requirements-extra.txt`. So, you can do `pip install -r requirements-extra.txt` inside your
 virtualenv and then `py.test core hscommon`
 
+### Coverage
+
+    $ pytest core hscommon --cov=core --cov=hscommon --cov=cli --cov-report=term-missing
+
+CI runs the same command and uploads `coverage.xml` as a build artifact.
+
+### Linting
+
+`black` and `flake8` are enforced in CI through pre-commit. Install the hooks locally so they
+run before each commit:
+
+    $ pip install pre-commit && pre-commit install
+
 [dupeguru]: https://dupeguru.voltaicideas.net/
+[upstream]: https://github.com/arsenetar/dupeguru
+[fork]: https://github.com/haggyroth/dupeguru
+[fork-issues]: https://github.com/haggyroth/dupeguru/issues
+[issue-dryrun]: https://github.com/haggyroth/dupeguru/issues/7
+[issue-invocation]: https://github.com/haggyroth/dupeguru/issues/30
 [cross-toolkit]: http://www.hardcoded.net/articles/cross-toolkit-software
 [documentation]: http://dupeguru.voltaicideas.net/help/en/
 [python]: http://www.python.org/
