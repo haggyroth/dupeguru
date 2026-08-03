@@ -2,11 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this
+project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
 ## [Unreleased]
+
+## [4.4.0] - 2026-08-03
+
+First release of the [haggyroth fork](https://github.com/haggyroth/dupeguru). Everything below
+accumulated since forking from `arsenetar/dupeguru` at 4.3.1, which is the last upstream
+release this shares a version with.
+
+Headline: three ways the tool could delete data the user had not agreed to lose are fixed, the
+fork no longer routes anyone or anything upstream, and CI runs for the first time.
 
 ### Fixed (safety)
 
@@ -169,3 +179,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## Earlier history
 
 See `git log` for changes prior to this changelog.
+
+[Unreleased]: https://github.com/haggyroth/dupeguru/compare/v4.4.0...HEAD
+[4.4.0]: https://github.com/haggyroth/dupeguru/releases/tag/v4.4.0

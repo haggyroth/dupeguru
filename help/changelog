@@ -1,3 +1,12 @@
+=== 4.4.0 (2026-08-03)
+* First release of the haggyroth fork; see CHANGELOG.md for the full detail
+* Fix --dry-run being ignored by the CLI delete path, which deleted files anyway
+* Fix the scan walk descending through directory symlinks and Windows junctions
+* Refuse to delete partial-hash matches from the CLI without an explicit opt-in
+* Point crash reports, update checks and installer help at this fork, not upstream
+* Add a headless command-line interface with JSON and NDJSON output
+* Large-scan performance: parallel hashing, BK-tree photo matching, WAL-mode caches
+
 === 4.3.1 (2022-07-08)
 * Fix issue where cache db exceptions could prevent files being hashed (#1015)
 * Add extra guard for non-zero length files without digests to prevent false duplicates
