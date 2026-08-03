@@ -10,6 +10,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed (safety)
 
+- **The scan walk no longer follows directory links** (`core/directories.py`, issue #8):
+  `_get_files` called `os.DirEntry.is_dir()`, which follows symlinks by default, so the file
+  collection descended through links. A cycle became unbounded recursion, and a link pointing
+  out of the selected folders pulled foreign files in as deletion candidates — those files are
+  ordinary files at their real location, so the symlink guard in `_do_delete_dupe` did not
+  protect them. Symlinked *files* were already excluded by `File.can_handle`, and
+  `fs.Folder.subfolders` already guarded the folder-scan path; the file-scan path now matches.
+  Windows **directory junctions** are covered too: Python reports `is_symlink()` False and
+  `is_dir(follow_symlinks=False)` True for a junction, so excluding symlinks alone would have
+  left Windows — the platform where junctions need no privilege to create — still exposed.
+  Uses `os.DirEntry.is_junction()` on Python 3.12+, falling back to the cached
+  `FILE_ATTRIBUTE_REPARSE_POINT` attribute on 3.10/3.11.
+
 - **`--dry-run` no longer permits deletion** (`cli.py`, issue #7): the flag was parsed and then
   never read again, so `--delete --yes --dry-run` deleted files. It now takes precedence over
   `--delete` on both the scan and `--from-results` paths, reports what would be removed, and
