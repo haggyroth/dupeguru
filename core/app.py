@@ -486,6 +486,12 @@ class DupeGuru(Broadcaster):
 
     def clear_hash_cache(self):
         fs.filesdb.clear()
+        # hash_cache2.db is the cache the content-scan fast path actually reads
+        # (core/scanner.py). Clearing only filesdb left every stale digest in place,
+        # so "Clear Cache" did not do what it said.
+        from core.hash_cache import hashcachedb
+
+        hashcachedb.clear()
 
     def copy_or_move(self, dupe, copy: bool, destination: str, dest_type: DestType):
         source_path = dupe.path
@@ -877,6 +883,9 @@ class DupeGuru(Broadcaster):
         scanner = self.SCANNER_CLASS()
         fs.filesdb.ignore_mtime = self.options["rehash_ignore_mtime"] is True
         fs.filesdb.purge_if_stale()
+        from core.hash_cache import hashcachedb
+
+        hashcachedb.purge_if_stale()
         if not self.directories.has_any_file():
             self.view.show_message(tr("The selected directories contain no scannable file."))
             return

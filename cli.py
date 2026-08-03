@@ -138,6 +138,9 @@ def _run_scan(app: DupeGuru, verbose: bool, progress_json: bool = False) -> None
     scanner = app.SCANNER_CLASS()
     fs.filesdb.ignore_mtime = app.options.get("rehash_ignore_mtime", False)
     fs.filesdb.purge_if_stale()
+    from core.hash_cache import hashcachedb
+
+    hashcachedb.purge_if_stale()
 
     for k, v in app.options.items():
         if hasattr(scanner, k):

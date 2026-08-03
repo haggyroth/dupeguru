@@ -29,6 +29,21 @@ def add_fake_files_to_directories(directories, files):
 
 
 class TestCaseDupeGuru:
+    def test_clear_hash_cache_clears_both_caches(self, monkeypatch):
+        """Issue #11: this cleared only filesdb, leaving the cache scans actually read.
+
+        core/scanner.py's fast path reads hashcachedb (hash_cache2.db), not filesdb, so
+        clearing one of the two meant "Clear Cache" did not do what the dialog says.
+        """
+        from core import hash_cache
+
+        dgapp = TestApp().app
+        cleared = []
+        monkeypatch.setattr(fs.filesdb, "clear", lambda: cleared.append("filesdb"))
+        monkeypatch.setattr(hash_cache.hashcachedb, "clear", lambda: cleared.append("hashcachedb"))
+        dgapp.clear_hash_cache()
+        eq_(sorted(cleared), ["filesdb", "hashcachedb"])
+
     def test_apply_filter_calls_results_apply_filter(self, monkeypatch):
         dgapp = TestApp().app
         monkeypatch.setattr(dgapp.results, "apply_filter", log_calls(dgapp.results.apply_filter))
