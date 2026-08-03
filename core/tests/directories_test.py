@@ -9,6 +9,7 @@ import time
 import tempfile
 import shutil
 
+import pytest
 from pytest import raises
 from pathlib import Path
 from hscommon.testutil import eq_
@@ -564,3 +565,201 @@ class TestExcludeListunion(TestExcludeList):
 class TestExcludeDictunion(TestExcludeList):
     def setup_method(self, method):
         self.d = Directories(exclude_list=ExcludeDict(union_regex=True))
+
+
+# ---------------------------------------------------------------------------
+# Directory symlinks must not be traversed (issue #8)
+# ---------------------------------------------------------------------------
+
+
+def _symlinks_supported() -> bool:
+    """True if this process can create directory symlinks.
+
+    Windows requires Developer Mode or the SeCreateSymbolicLinkPrivilege; without
+    either, os.symlink raises OSError (WinError 1314). CI's Linux legs always can.
+    """
+    with tempfile.TemporaryDirectory() as d:
+        target = os.path.join(d, "target")
+        os.mkdir(target)
+        try:
+            os.symlink(target, os.path.join(d, "link"), target_is_directory=True)
+        except (OSError, NotImplementedError, AttributeError):
+            return False
+        return True
+
+
+needs_symlinks = pytest.mark.skipif(
+    not _symlinks_supported(),
+    reason="cannot create symlinks here (Windows needs SeCreateSymbolicLinkPrivilege)",
+)
+
+
+@needs_symlinks
+def test_symlinked_directory_is_not_traversed(tmpdir):
+    """A symlink to a directory must not be walked, so its files are collected once.
+
+    os.DirEntry.is_dir() follows symlinks by default, which used to make the walk
+    descend through the link and yield every file a second time.
+    """
+    root = Path(str(tmpdir))
+    real = root.joinpath("real")
+    real.mkdir()
+    real.joinpath("payload.txt").open("wt").write("data")
+    os.symlink(str(real), str(root.joinpath("link")), target_is_directory=True)
+
+    d = Directories()
+    d.add_path(root)
+    paths = [f.path for f in d.get_files()]
+
+    eq_(len(paths), 1)
+    eq_(paths[0], real.joinpath("payload.txt"))
+
+
+@needs_symlinks
+def test_symlink_cycle_does_not_recurse_forever(tmpdir):
+    """A self-referential symlink used to recurse until RecursionError."""
+    root = Path(str(tmpdir))
+    sub = root.joinpath("sub")
+    sub.mkdir()
+    sub.joinpath("file.txt").open("wt").write("data")
+    # sub/loop -> sub
+    os.symlink(str(sub), str(sub.joinpath("loop")), target_is_directory=True)
+
+    d = Directories()
+    d.add_path(root)
+    paths = [f.path for f in d.get_files()]  # must terminate
+
+    eq_(len(paths), 1)
+    eq_(paths[0], sub.joinpath("file.txt"))
+
+
+@needs_symlinks
+def test_symlink_does_not_escape_selected_folders(tmpdir):
+    """Files reached only through a symlink out of the tree must not be collected.
+
+    Those files are ordinary files at their real location, so the symlink guard in
+    _do_delete_dupe does not protect them; they have to be kept out of the scan.
+    """
+    root = Path(str(tmpdir))
+    scanned = root.joinpath("scanned")
+    outside = root.joinpath("outside")
+    scanned.mkdir()
+    outside.mkdir()
+    scanned.joinpath("inside.txt").open("wt").write("in")
+    outside.joinpath("secret.txt").open("wt").write("out")
+    os.symlink(str(outside), str(scanned.joinpath("escape")), target_is_directory=True)
+
+    d = Directories()
+    d.add_path(scanned)
+    names = {f.path.name for f in d.get_files()}
+
+    eq_(names, {"inside.txt"})
+
+
+@needs_symlinks
+def test_symlinked_file_is_still_excluded(tmpdir):
+    """Regression guard: symlinked files were already excluded, and must stay that way."""
+    root = Path(str(tmpdir))
+    real = root.joinpath("real.txt")
+    real.open("wt").write("data")
+    os.symlink(str(real), str(root.joinpath("link.txt")))
+
+    d = Directories()
+    d.add_path(root)
+    names = [f.path.name for f in d.get_files()]
+
+    eq_(names, ["real.txt"])
+
+
+# ---------------------------------------------------------------------------
+# Windows directory junctions must not be traversed either (issue #8)
+# ---------------------------------------------------------------------------
+#
+# Junctions are a separate hazard from symlinks: Python reports is_symlink() False
+# and is_dir(follow_symlinks=False) True for one, so excluding symlinks alone leaves
+# Windows exposed. They also need no special privilege to create, unlike symlinks,
+# which makes them the more likely form to meet in the wild on Windows.
+
+
+def _make_junction(link: Path, target: Path) -> bool:
+    """Create a directory junction. Returns False if unsupported on this platform."""
+    if not ISWINDOWS:
+        return False
+    import subprocess
+
+    result = subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(link), str(target)],
+        capture_output=True,
+    )
+    return result.returncode == 0 and link.exists()
+
+
+needs_junctions = pytest.mark.skipif(not ISWINDOWS, reason="directory junctions are Windows-only")
+
+
+@needs_junctions
+def test_junction_is_not_traversed(tmpdir):
+    root = Path(str(tmpdir))
+    real = root.joinpath("real")
+    real.mkdir()
+    real.joinpath("payload.txt").open("wt").write("data")
+    if not _make_junction(root.joinpath("link"), real):
+        pytest.skip("could not create a junction here")
+
+    d = Directories()
+    d.add_path(root)
+    paths = [f.path for f in d.get_files()]
+
+    eq_(len(paths), 1)
+    eq_(paths[0], real.joinpath("payload.txt"))
+
+
+@needs_junctions
+def test_junction_does_not_escape_selected_folders(tmpdir):
+    root = Path(str(tmpdir))
+    scanned = root.joinpath("scanned")
+    outside = root.joinpath("outside")
+    scanned.mkdir()
+    outside.mkdir()
+    scanned.joinpath("inside.txt").open("wt").write("in")
+    outside.joinpath("secret.txt").open("wt").write("out")
+    if not _make_junction(scanned.joinpath("escape"), outside):
+        pytest.skip("could not create a junction here")
+
+    d = Directories()
+    d.add_path(scanned)
+    names = {f.path.name for f in d.get_files()}
+
+    eq_(names, {"inside.txt"})
+
+
+@needs_junctions
+def test_junction_cycle_does_not_recurse_forever(tmpdir):
+    root = Path(str(tmpdir))
+    sub = root.joinpath("sub")
+    sub.mkdir()
+    sub.joinpath("file.txt").open("wt").write("data")
+    if not _make_junction(sub.joinpath("loop"), sub):
+        pytest.skip("could not create a junction here")
+
+    d = Directories()
+    d.add_path(root)
+    paths = [f.path for f in d.get_files()]  # must terminate
+
+    eq_(len(paths), 1)
+    eq_(paths[0], sub.joinpath("file.txt"))
+
+
+def test_ordinary_directory_is_still_traversed(tmpdir):
+    """Guard against the fix over-firing and skipping real directories."""
+    root = Path(str(tmpdir))
+    sub = root.joinpath("sub")
+    sub.mkdir()
+    sub.joinpath("nested.txt").open("wt").write("data")
+    root.joinpath("top.txt").open("wt").write("data")
+
+    d = Directories()
+    d.add_path(root)
+    names = {f.path.name for f in d.get_files()}
+
+    eq_(names, {"top.txt", "nested.txt"})

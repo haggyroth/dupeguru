@@ -5,6 +5,7 @@
 # http://www.gnu.org/licenses/gpl-3.0.html
 
 import os
+import stat
 from xml.etree import ElementTree as ET
 import logging
 from pathlib import Path
@@ -21,6 +22,34 @@ __all__ = [
     "AlreadyThereError",
     "InvalidPathError",
 ]
+
+
+def is_traversable_dir(entry: os.DirEntry) -> bool:
+    """True if ``entry`` is a real directory the scan may descend into.
+
+    Excludes anything that redirects elsewhere on the filesystem, because those can form
+    cycles (unbounded recursion) or reach files outside the folders the user selected:
+
+    * symlinks to directories, on POSIX and Windows alike. ``os.DirEntry.is_dir()``
+      follows symlinks by default, so this has to be asked explicitly.
+    * Windows directory junctions. These are *not* symlinks as far as Python is
+      concerned -- ``is_symlink()`` is False and ``is_dir(follow_symlinks=False)`` is
+      True for a junction -- so ruling out symlinks alone leaves Windows exposed.
+    """
+    if not entry.is_dir(follow_symlinks=False):
+        return False
+    # os.DirEntry.is_junction() exists from Python 3.12 onward.
+    is_junction = getattr(entry, "is_junction", None)
+    if is_junction is not None:
+        return not is_junction()
+    # Fallback for 3.10/3.11. scandir already caches these attributes on Windows, so
+    # reading them costs no extra syscall. st_file_attributes is Windows-only; its
+    # absence means there are no junctions to worry about.
+    try:
+        attributes = entry.stat(follow_symlinks=False).st_file_attributes
+    except (OSError, AttributeError):
+        return True
+    return not (attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT)
 
 
 class DirectoryState:
@@ -110,7 +139,15 @@ class Directories:
                 for item in iter:
                     j.check_if_cancelled()
                     try:
-                        if item.is_dir():
+                        # This walk used to recurse through symlinked directories and
+                        # Windows junctions, so a cycle became unbounded recursion and a
+                        # link out of the tree pulled foreign files in as deletion
+                        # candidates. Symlinked *files* were already excluded by
+                        # File.can_handle; this makes directories consistent with that, and
+                        # with fs.Folder.subfolders which already guards the folder-scan
+                        # path. A link now falls through to the file branch, where
+                        # can_handle rejects it, so it is skipped rather than walked.
+                        if is_traversable_dir(item):
                             if skip_dirs:
                                 continue
                             yield from self._get_files(item.path, fileclasses, j)
