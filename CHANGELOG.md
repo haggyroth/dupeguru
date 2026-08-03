@@ -9,6 +9,21 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`check_for_update` no longer crashes on a free-form release title** (`core/util.py`,
+  issue #19): it parsed `release["name"]` as semver with no guard, and a release name is
+  arbitrary text on GitHub. This was not theoretical — publishing v4.4.0 with the title
+  `"v4.4.0 - first release of the fork"` broke the update check immediately, which would have
+  crashed the About box for anyone running that build. Version now comes from `tag_name`
+  (with an optional `v` prefix stripped), falling back to `name`, and unparseable releases are
+  skipped rather than raising. Also guards a non-semver `current_version`, a non-list API
+  payload, malformed entries, and a missing `html_url`, and replaces the deprecated
+  `logging.warn` with `logging.warning`.
+- **`core/util.py` test coverage 32% → 99%**: added `core/tests/util_test.py`, which the module
+  previously had none of. Covers version comparison, prerelease filtering, and every error path
+  with `urlopen` mocked, so no network access is needed.
+
 ## [4.4.0] - 2026-08-03
 
 First release of the [haggyroth fork](https://github.com/haggyroth/dupeguru). Everything below
