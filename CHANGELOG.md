@@ -8,6 +8,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (safety)
+
+- **`--dry-run` no longer permits deletion** (`cli.py`, issue #7): the flag was parsed and then
+  never read again, so `--delete --yes --dry-run` deleted files. It now takes precedence over
+  `--delete` on both the scan and `--from-results` paths, reports what would be removed, and
+  removes nothing. It also no longer requires `--yes`, since a dry run is safe by definition.
+- **CLI deletion no longer silently removes partial-hash matches** (`cli.py`, issue #9): the
+  GUI warns before deleting files matched on a sampled hash, but `_delete_dupes` bypassed
+  `delete_marked()` and so never ran that check. `--delete` now refuses when any marked file
+  was matched partially, and requires the new `--allow-partial-matches` to proceed.
+- **`_HeadlessView.ask_yes_no` now fails closed** (`cli.py`): it returned `True`
+  unconditionally, so any safety prompt core asked would be auto-accepted without the user
+  seeing it. It now declines and logs to stderr; deliberate confirmation goes through explicit
+  flags. Note this means a future core-side prompt blocks the CLI rather than being waved
+  through, which is the intended direction.
+
 ### Added
 
 - **Dependabot** (`.github/dependabot.yml`): weekly update checks for the `pip` and
