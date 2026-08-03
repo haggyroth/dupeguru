@@ -72,6 +72,28 @@ def executable_folder():
     return os.path.dirname(os.path.abspath(sys.argv[0]))
 
 
+def _parse_release_version(release: dict) -> Union[semantic_version.Version, None]:
+    """Extract a semantic version from a GitHub release, or None if it has none.
+
+    Prefers ``tag_name`` over ``name``. A release *name* is free-form text -- "4.4.0 - first
+    release", "Summer build" and "" are all valid names on GitHub -- so parsing it is
+    unreliable, and an unparseable one used to raise straight out of check_for_update.
+    Tags are conventionally the version, optionally with a "v" prefix that semver rejects.
+    """
+    for key in ("tag_name", "name"):
+        raw = release.get(key)
+        if not raw or not isinstance(raw, str):
+            continue
+        candidate = raw.strip()
+        if candidate[:1] in ("v", "V"):
+            candidate = candidate[1:]
+        try:
+            return semantic_version.Version(candidate)
+        except ValueError:
+            logging.debug("Skipping unparseable release %s %r", key, raw)
+    return None
+
+
 def check_for_update(current_version: str, include_prerelease: bool = False) -> Union[None, dict]:
     request = urllib.request.Request(
         "https://api.github.com/repos/haggyroth/dupeguru/releases",
@@ -80,23 +102,37 @@ def check_for_update(current_version: str, include_prerelease: bool = False) -> 
     try:
         with urllib.request.urlopen(request) as response:
             if response.status != 200:
-                logging.warn(f"Error retriving updates. Status: {response.status}")
+                logging.warning("Error retrieving updates. Status: %s", response.status)
                 return None
             try:
                 response_json = json.loads(response.read())
             except json.JSONDecodeError as ex:
-                logging.warn(f"Error parsing updates. {ex.msg}")
+                logging.warning("Error parsing updates. %s", ex.msg)
                 return None
     except urllib.error.URLError as ex:
-        logging.warn(f"Error retriving updates. {ex.reason}")
+        logging.warning("Error retrieving updates. %s", ex.reason)
         return None
-    new_version = semantic_version.Version(current_version)
+    if not isinstance(response_json, list):
+        logging.warning("Unexpected update response shape: %s", type(response_json).__name__)
+        return None
+    try:
+        new_version = semantic_version.Version(current_version)
+    except ValueError:
+        logging.warning("Current version %r is not valid semver; skipping update check", current_version)
+        return None
     new_url = None
     for release in response_json:
-        release_version = semantic_version.Version(release["name"])
+        if not isinstance(release, dict):
+            continue
+        release_version = _parse_release_version(release)
+        if release_version is None:
+            continue
+        url = release.get("html_url")
+        if not url:
+            continue
         if new_version < release_version and (include_prerelease or not release_version.prerelease):
             new_version = release_version
-            new_url = release["html_url"]
+            new_url = url
     if new_url is not None:
         return {"version": new_version, "url": new_url}
     else:
