@@ -9,6 +9,17 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [4.4.1] - 2026-08-03
+
+Patch release carrying a single fix, cut promptly because 4.4.0 shipped with the bug live: any
+release published with a human-readable title would break the update check for anyone running
+4.4.0.
+
+> **Release convention:** GitHub release *titles* in this project must be bare semver
+> (`4.4.1`, not `v4.4.1 - some description`). 4.4.0 and earlier parse the release name rather
+> than the tag, so a descriptive title breaks the update check for those builds. This
+> constraint can be dropped once no one is running 4.4.0.
+
 ### Fixed
 
 - **`check_for_update` no longer crashes on a free-form release title** (`core/util.py`,
@@ -195,5 +206,6 @@ fork no longer routes anyone or anything upstream, and CI runs for the first tim
 
 See `git log` for changes prior to this changelog.
 
-[Unreleased]: https://github.com/haggyroth/dupeguru/compare/v4.4.0...HEAD
+[Unreleased]: https://github.com/haggyroth/dupeguru/compare/v4.4.1...HEAD
+[4.4.1]: https://github.com/haggyroth/dupeguru/compare/v4.4.0...v4.4.1
 [4.4.0]: https://github.com/haggyroth/dupeguru/releases/tag/v4.4.0

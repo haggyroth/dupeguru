@@ -63,6 +63,25 @@ While the prerequisites above must be satisfied prior to having your pull reques
 ### Documentation Style Guide
 **TODO**
 
+## Cutting a release
+
+1. Bump `__version__` in `core/__init__.py`. `setup.cfg` reads it via `attr:`, so nothing else
+   needs editing there.
+2. Move the accumulated `[Unreleased]` section in `CHANGELOG.md` under the new version heading
+   with today's date, leave a fresh empty `[Unreleased]` above it, and update the compare links
+   at the foot of the file.
+3. Add an entry to `help/changelog`. This is a separate, older-format file that feeds the
+   Sphinx docs version — `hscommon/sphinxgen.py` takes the version from its newest entry, not
+   from `core.__version__`. Do **not** use `#123` references there: `build.py` linkifies them
+   against the *upstream* issue tracker, so they would resolve to unrelated tickets.
+4. Commit, tag `vX.Y.Z`, push both, then create the GitHub release.
+
+> **Release titles must be bare semver.** Name the GitHub release `4.4.1`, not
+> `v4.4.1 - some description`. Builds at 4.4.0 and earlier read `release["name"]` and parse it
+> as semver, so a descriptive title raises `ValueError` and breaks the update check — and the
+> About box — for anyone running them. From 4.4.1 onward the version is read from `tag_name`
+> instead, so this constraint can be dropped once no one is running an affected build.
+
 ## Additional Notes
 ### Issue and Pull Request Labels
 This section lists and describes the various labels used with issues and pull requests.  Each of the labels is listed with a search link as well.

@@ -1,3 +1,7 @@
+=== 4.4.1 (2026-08-03)
+* Fix the update check crashing when a release has a human-readable title
+* Add test coverage for core/util.py, which previously had none
+
 === 4.4.0 (2026-08-03)
 * First release of the haggyroth fork; see CHANGELOG.md for the full detail
 * Fix --dry-run being ignored by the CLI delete path, which deleted files anyway
