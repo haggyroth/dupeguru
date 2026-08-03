@@ -2,6 +2,12 @@
 
 The following is a set of guidelines and information for contributing to dupeGuru.
 
+> **This repository is a fork.** It is maintained at
+> [haggyroth/dupeguru](https://github.com/haggyroth/dupeguru) and is not intended to feed changes
+> back to [arsenetar/dupeguru](https://github.com/arsenetar/dupeguru). File all issues and pull
+> requests against this fork. Do not open issues, pull requests, or discussions on the upstream
+> repository.
+
 #### Table of Contents
 
 [Things to Know Before Starting](#things-to-know-before-starting)
@@ -64,25 +70,25 @@ This section lists and describes the various labels used with issues and pull re
 #### Issue Type and Status
 | Label name | Search | Description |
 |------------|--------|-------------|
-| `enhancement` | [search](https://github.com/arsenetar/dupeguru/issues?q=is%3Aopen+is%3Aissue+label%3Aenhancement) | Feature requests and enhancements. |
-| `bug` | [search](https://github.com/arsenetar/dupeguru/issues?q=is%3Aopen+is%3Aissue+label%3Abug) | Bug reports. |
-| `duplicate` | [search](https://github.com/arsenetar/dupeguru/issues?q=is%3Aopen+is%3Aissue+label%3Aduplicate) | Issue is a duplicate of existing issue. |
-| `needs-reproduction` | [search](https://github.com/arsenetar/dupeguru/issues?q=is%3Aopen+is%3Aissue+label%3Aneeds-reproduction) | A bug that has not been able to be reproduced. |
-| `needs-information` | [search](https://github.com/arsenetar/dupeguru/issues?q=is%3Aopen+is%3Aissue+label%3Aneeds-information) | More information needs to be collected about these problems or feature requests (e.g. steps to reproduce). |
-| `blocked` | [search](https://github.com/arsenetar/dupeguru/issues?q=is%3Aopen+is%3Aissue+label%3Ablocked) | Issue blocked by other issues. |
-| `beginner` | [search](https://github.com/arsenetar/dupeguru/issues?q=is%3Aopen+is%3Aissue+label%3Abeginner) | Less complex issues for users who want to start contributing. |
+| `enhancement` | [search](https://github.com/haggyroth/dupeguru/issues?q=is%3Aopen+is%3Aissue+label%3Aenhancement) | Feature requests and enhancements. |
+| `bug` | [search](https://github.com/haggyroth/dupeguru/issues?q=is%3Aopen+is%3Aissue+label%3Abug) | Bug reports. |
+| `duplicate` | [search](https://github.com/haggyroth/dupeguru/issues?q=is%3Aopen+is%3Aissue+label%3Aduplicate) | Issue is a duplicate of existing issue. |
+| `needs-reproduction` | [search](https://github.com/haggyroth/dupeguru/issues?q=is%3Aopen+is%3Aissue+label%3Aneeds-reproduction) | A bug that has not been able to be reproduced. |
+| `needs-information` | [search](https://github.com/haggyroth/dupeguru/issues?q=is%3Aopen+is%3Aissue+label%3Aneeds-information) | More information needs to be collected about these problems or feature requests (e.g. steps to reproduce). |
+| `blocked` | [search](https://github.com/haggyroth/dupeguru/issues?q=is%3Aopen+is%3Aissue+label%3Ablocked) | Issue blocked by other issues. |
+| `beginner` | [search](https://github.com/haggyroth/dupeguru/issues?q=is%3Aopen+is%3Aissue+label%3Abeginner) | Less complex issues for users who want to start contributing. |
 
 #### Category Labels
 | Label name | Search | Description |
 |------------|--------|-------------|
-| `3rd party` | [search](https://github.com/arsenetar/dupeguru/issues?q=is%3Aopen+is%3Aissue+label%3A%223rd%20party%22)  | Related to a 3rd party dependency. |
-| `crash` | [search](https://github.com/arsenetar/dupeguru/issues?q=is%3Aopen+is%3Aissue+label%3Acrash) | Related to crashes (complete, or unhandled). |
-| `documentation` | [search](https://github.com/arsenetar/dupeguru/issues?q=is%3Aopen+is%3Aissue+label%3Adocumentation) | Related to any documentation. |
-| `linux` | [search](https://github.com/arsenetar/dupeguru/issues?q=is%3Aopen+is%3Aissue+label%3linux) | Related to running on Linux. |
-| `mac` | [search](https://github.com/arsenetar/dupeguru/issues?q=is%3Aopen+is%3Aissue+label%3Amac) | Related to running on macOS. |
-| `performance` | [search](https://github.com/arsenetar/dupeguru/issues?q=is%3Aopen+is%3Aissue+label%3Aperformance) | Related to the performance. |
-| `ui` | [search](https://github.com/arsenetar/dupeguru/issues?q=is%3Aopen+is%3Aissue+label%3Aui)| Related to the visual design. |
-| `windows` | [search](https://github.com/arsenetar/dupeguru/issues?q=is%3Aopen+is%3Aissue+label%3Awindows) | Related to running on Windows. |
+| `3rd party` | [search](https://github.com/haggyroth/dupeguru/issues?q=is%3Aopen+is%3Aissue+label%3A%223rd%20party%22)  | Related to a 3rd party dependency. |
+| `crash` | [search](https://github.com/haggyroth/dupeguru/issues?q=is%3Aopen+is%3Aissue+label%3Acrash) | Related to crashes (complete, or unhandled). |
+| `documentation` | [search](https://github.com/haggyroth/dupeguru/issues?q=is%3Aopen+is%3Aissue+label%3Adocumentation) | Related to any documentation. |
+| `linux` | [search](https://github.com/haggyroth/dupeguru/issues?q=is%3Aopen+is%3Aissue+label%3linux) | Related to running on Linux. |
+| `mac` | [search](https://github.com/haggyroth/dupeguru/issues?q=is%3Aopen+is%3Aissue+label%3Amac) | Related to running on macOS. |
+| `performance` | [search](https://github.com/haggyroth/dupeguru/issues?q=is%3Aopen+is%3Aissue+label%3Aperformance) | Related to the performance. |
+| `ui` | [search](https://github.com/haggyroth/dupeguru/issues?q=is%3Aopen+is%3Aissue+label%3Aui)| Related to the visual design. |
+| `windows` | [search](https://github.com/haggyroth/dupeguru/issues?q=is%3Aopen+is%3Aissue+label%3Awindows) | Related to running on Windows. |
 
 #### Pull Request Labels
 None at this time, if the volume of Pull Requests increase labels may be added to manage.

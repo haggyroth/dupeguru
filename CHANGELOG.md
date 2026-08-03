@@ -8,6 +8,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Dependabot** (`.github/dependabot.yml`): weekly update checks for the `pip` and
+  `github-actions` ecosystems, with minor/patch updates grouped into a single PR.
+- **Coverage in CI** (`.github/workflows/default.yml`): the test job now runs under
+  `pytest-cov` and uploads `coverage.xml` as a build artifact. `pytest-cov` added to
+  `requirements-extra.txt`.
+- **CLI documentation** (`README.md`): usage, output formats, exit codes, and deletion
+  semantics for `dupeguru-scan`, which previously had no coverage in the docs.
+
+### Changed
+
+- **Fork identity**: this repository no longer points users at the upstream project.
+  - `run.py`: the crash-report dialog now links to this fork's issue tracker instead of
+    `arsenetar/dupeguru/issues`.
+  - `core/util.py`: `check_for_update` now queries this fork's releases. It previously
+    offered upstream releases as updates to a build that is not upstream.
+  - `setup.nsi`: installer `HELPURL` repointed to this fork.
+  - `setup.cfg`: project `url` and `Bug Reports` repointed to this fork; upstream retained as
+    a separate `Upstream` project URL for attribution.
+  - `README.md`, `CONTRIBUTING.md`: fork status stated explicitly, issue links repointed.
+
+### Removed
+
+- **`.github/workflows/tx-push.yml`**: pushed `locale/*.pot` to the upstream Transifex project
+  (`voltaicideas/dupeguru-1`) on every push to `master`. A live write path into an upstream
+  resource has no place in a fork.
+- **`.github/FUNDING.yml`**: routed sponsorship for this fork to the upstream author.
+
 ### Security
 
 - **Shell injection fix** (`core/app.py`): `invoke_custom_command` now uses `shlex.split` +

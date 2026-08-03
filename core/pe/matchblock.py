@@ -14,7 +14,6 @@ from hscommon.trans import tr
 from hscommon.jobprogress import job
 
 from core.engine import Match
-from core.pe.block import NoBlocksError
 from core.pe.bktree import BKTree
 from core.pe.cache_sqlite import SqliteCache
 
@@ -173,8 +172,7 @@ def getmatches(pictures, cache_path, threshold, match_scaled=False, match_rotate
                 try:
                     candidates = tree.find(query_blocks, limit)
                 except Exception as exc:
-                    logging.warning("BKTree.find failed for %s orient %d: %s",
-                                    p.unicode_path, orientation, exc)
+                    logging.warning("BKTree.find failed for %s orient %d: %s", p.unicode_path, orientation, exc)
                     continue
                 for cand_id, distance in candidates:
                     if cand_id == p.cache_id:
@@ -198,7 +196,7 @@ def getmatches(pictures, cache_path, threshold, match_scaled=False, match_rotate
     for (id1, id2), pct in pair_best.items():
         ref = id2picture[id1]
         other = id2picture[id2]
-        ref.dimensions    # pre-read for display in results table
+        ref.dimensions  # pre-read for display in results table
         other.dimensions
         result.append(get_match(ref, other, pct))
 

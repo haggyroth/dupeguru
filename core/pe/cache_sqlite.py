@@ -197,6 +197,7 @@ class SqliteCache:
 
         # Build a per-directory mtime map via scandir (one syscall per dir, free stat on Linux).
         from collections import defaultdict
+
         dir_to_rows = defaultdict(list)
         for rowid, path_str, mtime_ns in rows:
             dir_to_rows[op.dirname(path_str)].append((rowid, path_str, mtime_ns))

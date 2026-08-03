@@ -4,10 +4,9 @@
 # which should be included with this package. The terms are also available at
 # http://www.gnu.org/licenses/gpl-3.0.html
 
-import os
 import sys
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from hscommon.jobprogress import job
 from pathlib import Path
@@ -672,6 +671,7 @@ def test_remove_dupe_paths_samefile_receives_original_path(monkeypatch):
         return True
 
     import os.path as _op
+
     monkeypatch.setattr(_op, "samefile", fake_samefile)
 
     f1 = no("Foo.txt", path="dir")
@@ -688,9 +688,9 @@ def test_remove_dupe_paths_samefile_receives_original_path(monkeypatch):
     # not the lowercased normalised form.
     expected_a = str(f2.path)
     lowercased_a = str(f2.path).lower()
-    assert a == expected_a, (
-        f"samefile first arg is {a!r}; expected original path {expected_a!r}, not lowercased {lowercased_a!r}"
-    )
+    assert (
+        a == expected_a
+    ), f"samefile first arg is {a!r}; expected original path {expected_a!r}, not lowercased {lowercased_a!r}"
 
 
 def _fs_is_case_sensitive(tmpdir):
@@ -720,9 +720,7 @@ def test_remove_dupe_paths_case_sensitive_fs_keeps_both_files(tmpdir):
     f2.path = lower
 
     result = remove_dupe_paths([f1, f2])
-    assert len(result) == 2, (
-        "Both files should survive on a case-sensitive FS, but got: " + repr(result)
-    )
+    assert len(result) == 2, "Both files should survive on a case-sensitive FS, but got: " + repr(result)
 
 
 # --- _apply_digest / big-file sampling tests
@@ -730,6 +728,7 @@ def test_remove_dupe_paths_case_sensitive_fs_keeps_both_files(tmpdir):
 
 class _FakeFile:
     """Minimal stand-in for fs.File with the three digest attributes unset."""
+
     digest = None
     digest_partial = None
     digest_samples = None
@@ -803,6 +802,7 @@ def test_parallel_hasher_preserves_big_file_sampling(fake_fileexists):
 
 class _StatResult:
     """Minimal os.stat_result stand-in."""
+
     def __init__(self, size, mtime_ns):
         self.st_size = size
         self.st_mtime_ns = mtime_ns
@@ -827,6 +827,7 @@ def test_parallel_hasher_failed_worker_retried_sequentially(tmp_path):
         digest = None
         digest_partial = None
         digest_samples = None
+
         def __init__(self, path, size=100):
             self.path = path
             self.size = size
@@ -846,12 +847,11 @@ def test_parallel_hasher_failed_worker_retried_sequentially(tmp_path):
             return (path_str, RETRY_HASH)
         return (path_str, GOOD_HASH)
 
-    import concurrent.futures
-
     class _FakePoolFuture:
         def __init__(self, path_str, exc=None):
             self._path = path_str
             self._exc = exc
+
         def result(self):
             if self._exc:
                 raise self._exc
@@ -867,15 +867,17 @@ def test_parallel_hasher_failed_worker_retried_sequentially(tmp_path):
         return list(fmap.keys())
 
     from core import hash_cache as hc_module
-    import core.scanner as scanner_module
 
     class _FakePool:
         def __init__(self, max_workers):
             pass
+
         def __enter__(self):
             return self
+
         def __exit__(self, *a):
             return False
+
         def submit(self, fn, path_str):
             for fut, meta in fake_futures.items():
                 f_obj, _, _ = meta
@@ -883,19 +885,21 @@ def test_parallel_hasher_failed_worker_retried_sequentially(tmp_path):
                     return fut
             raise KeyError(path_str)
 
-    with patch.object(hc_module.hashcachedb, "get", return_value=None), \
-         patch.object(hc_module.hashcachedb, "set_batch"), \
-         patch.object(hc_module.hashcachedb, "conn", new=object()), \
-         patch("core.scanner.ProcessPoolExecutor", _FakePool), \
-         patch("core.scanner.as_completed", fake_as_completed), \
-         patch("core.scanner.hash_file_worker", fake_hash_file_worker):
+    with patch.object(hc_module.hashcachedb, "get", return_value=None), patch.object(
+        hc_module.hashcachedb, "set_batch"
+    ), patch.object(hc_module.hashcachedb, "conn", new=object()), patch(
+        "core.scanner.ProcessPoolExecutor", _FakePool
+    ), patch(
+        "core.scanner.as_completed", fake_as_completed
+    ), patch(
+        "core.scanner.hash_file_worker", fake_hash_file_worker
+    ):
 
         scanner._hash_files_parallel([f_good, f_bad], job.nulljob)
 
     assert f_good.digest == GOOD_HASH, "Successful parallel result must be applied"
     assert f_bad.digest == RETRY_HASH, "Failed worker must be retried sequentially"
-    assert hashed_sequentially == [str(bad_path)], \
-        "Only the failed file should be passed to sequential fallback"
+    assert hashed_sequentially == [str(bad_path)], "Only the failed file should be passed to sequential fallback"
 
 
 def test_parallel_pool_failure_falls_back_to_sequential(tmp_path):
@@ -912,6 +916,7 @@ def test_parallel_pool_failure_falls_back_to_sequential(tmp_path):
         digest = None
         digest_partial = None
         digest_samples = None
+
         def __init__(self, path, size=50):
             self.path = path
             self.size = size
@@ -932,25 +937,31 @@ def test_parallel_pool_failure_falls_back_to_sequential(tmp_path):
     class _CrashingPool:
         def __init__(self, max_workers):
             pass
+
         def __enter__(self):
             raise RuntimeError("pool spawn failed")
+
         def __exit__(self, *a):
             return False
 
     from core import hash_cache as hc_module
 
-    with patch.object(hc_module.hashcachedb, "get", return_value=None), \
-         patch.object(hc_module.hashcachedb, "set_batch"), \
-         patch.object(hc_module.hashcachedb, "conn", new=object()), \
-         patch("core.scanner.ProcessPoolExecutor", _CrashingPool), \
-         patch("core.scanner.hash_file_worker", fake_hash_file_worker):
+    with patch.object(hc_module.hashcachedb, "get", return_value=None), patch.object(
+        hc_module.hashcachedb, "set_batch"
+    ), patch.object(hc_module.hashcachedb, "conn", new=object()), patch(
+        "core.scanner.ProcessPoolExecutor", _CrashingPool
+    ), patch(
+        "core.scanner.hash_file_worker", fake_hash_file_worker
+    ):
 
         scanner._hash_files_parallel([f_a, f_b], job.nulljob)
 
     assert f_a.digest == FALLBACK_HASH
     assert f_b.digest == FALLBACK_HASH
-    assert set(sequentially_hashed) == {str(path_a), str(path_b)}, \
-        "All cache-miss files must be retried after pool-level failure"
+    assert set(sequentially_hashed) == {
+        str(path_a),
+        str(path_b),
+    }, "All cache-miss files must be retried after pool-level failure"
 
 
 def test_parallel_pool_mid_crash_skips_already_completed_files(tmp_path):
@@ -968,6 +979,7 @@ def test_parallel_pool_mid_crash_skips_already_completed_files(tmp_path):
         digest = None
         digest_partial = None
         digest_samples = None
+
         def __init__(self, path, size=50):
             self.path = path
             self.size = size
@@ -993,14 +1005,15 @@ def test_parallel_pool_mid_crash_skips_already_completed_files(tmp_path):
     class _MidCrashPool:
         def __init__(self, max_workers):
             pass
+
         def __enter__(self):
             return self
+
         def __exit__(self, *a):
             return False
+
         def submit(self, fn, path_str):
             return _GoodFuture()
-
-    fake_futures_map = {_GoodFuture(): (f_done, 50, 1000)}
 
     def fake_as_completed_mid_crash(fmap):
         # Yield the one good future, then blow up (simulating pool crash mid-loop).
@@ -1009,16 +1022,18 @@ def test_parallel_pool_mid_crash_skips_already_completed_files(tmp_path):
 
     from core import hash_cache as hc_module
 
-    with patch.object(hc_module.hashcachedb, "get", return_value=None), \
-         patch.object(hc_module.hashcachedb, "set_batch"), \
-         patch.object(hc_module.hashcachedb, "conn", new=object()), \
-         patch("core.scanner.ProcessPoolExecutor", _MidCrashPool), \
-         patch("core.scanner.as_completed", fake_as_completed_mid_crash), \
-         patch("core.scanner.hash_file_worker", fake_hash_file_worker):
+    with patch.object(hc_module.hashcachedb, "get", return_value=None), patch.object(
+        hc_module.hashcachedb, "set_batch"
+    ), patch.object(hc_module.hashcachedb, "conn", new=object()), patch(
+        "core.scanner.ProcessPoolExecutor", _MidCrashPool
+    ), patch(
+        "core.scanner.as_completed", fake_as_completed_mid_crash
+    ), patch(
+        "core.scanner.hash_file_worker", fake_hash_file_worker
+    ):
 
         # We need future_to_meta to map the yielded future to f_done.
         # Patch submit so the yielded future matches what as_completed returns.
-        orig_submit = _MidCrashPool.submit
         yielded = _GoodFuture()
 
         def patched_submit(self_pool, fn, path_str):
@@ -1033,13 +1048,15 @@ def test_parallel_pool_mid_crash_skips_already_completed_files(tmp_path):
                 yield yielded
             raise RuntimeError("pool crashed after first result")
 
-        with patch.object(_MidCrashPool, "submit", patched_submit), \
-             patch("core.scanner.as_completed", patched_as_completed):
+        with patch.object(_MidCrashPool, "submit", patched_submit), patch(
+            "core.scanner.as_completed", patched_as_completed
+        ):
 
             scanner._hash_files_parallel([f_done, f_pending], job.nulljob)
 
     assert f_done.digest == DONE_HASH, "Completed parallel result must be preserved"
     assert f_pending.digest == FALLBACK_HASH, "Unfinished file must be retried sequentially"
-    assert str(done_path) not in sequentially_hashed, \
-        "File that completed in parallel must not be re-hashed sequentially"
+    assert (
+        str(done_path) not in sequentially_hashed
+    ), "File that completed in parallel must not be re-hashed sequentially"
     assert str(pending_path) in sequentially_hashed

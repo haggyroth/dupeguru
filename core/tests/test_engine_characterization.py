@@ -4,6 +4,7 @@ These tests capture current behavior as a regression safety net before any engin
 replacement work begins (Phase 1 of the CLAUDE.md phased plan). They must pass
 against the unmodified engine and continue passing after Phase 2/3 changes.
 """
+
 import pytest
 
 from hscommon.jobprogress import job
@@ -366,8 +367,7 @@ class TestGetMatchesSQLitePairs:
         b = _named_file(tmp_path, "foo bar copy.txt")
         matches = getmatches([a, b], min_match_percentage=0)
         pair_keys = [
-            (min(str(m.first.path), str(m.second.path)), max(str(m.first.path), str(m.second.path)))
-            for m in matches
+            (min(str(m.first.path), str(m.second.path)), max(str(m.first.path), str(m.second.path))) for m in matches
         ]
         assert len(pair_keys) == len(set(pair_keys)), "Same pair compared more than once"
 
@@ -384,13 +384,14 @@ class TestGetMatchesSQLitePairs:
         files = [_named_file(tmp_path, f"episode {i}.txt") for i in range(20)]
         matches = getmatches(files, min_match_percentage=0)
         pair_keys = [
-            (min(str(m.first.path), str(m.second.path)), max(str(m.first.path), str(m.second.path)))
-            for m in matches
+            (min(str(m.first.path), str(m.second.path)), max(str(m.first.path), str(m.second.path))) for m in matches
         ]
         assert len(pair_keys) == len(set(pair_keys))
 
     def test_temp_db_cleaned_up_after_call(self, tmp_path):
-        import glob, tempfile
+        import glob
+        import tempfile
+
         before = set(glob.glob(tempfile.gettempdir() + "/*_seen_pairs.db"))
         a = _named_file(tmp_path, "foo.txt")
         b = _named_file(tmp_path, "foo copy.txt")

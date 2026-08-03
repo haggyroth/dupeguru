@@ -7,7 +7,6 @@
 import os
 import os.path as op
 import logging
-import subprocess
 import tempfile
 from unittest.mock import patch, MagicMock
 
@@ -494,6 +493,7 @@ class TestCaseDupeGuruWithResults:
         # mark_by_criterion should promote the file that best matches the criterion
         # to the reference position, then mark all others in each group.
         from core.prioritize import SizeCategory, NumericalCategory
+
         cat = SizeCategory(self.app.results)
         largest_crit = next(c for c in cat.criteria_list() if c.value == NumericalCategory.HIGHEST)
         self.app.mark_by_criterion(largest_crit.sort_key)
@@ -507,6 +507,7 @@ class TestCaseDupeGuruWithResults:
         # Files whose is_ref=True (inside a reference folder) must never be marked,
         # even after mark_by_criterion runs.
         from core.prioritize import SizeCategory, NumericalCategory
+
         groups = self.app.results.groups
         # Simulate the current ref belonging to a reference folder.
         groups[0].ref.is_ref = True
@@ -520,6 +521,7 @@ class TestCaseDupeGuruWithResults:
     def test_mark_by_criterion_clears_previous_marks(self, do_setup):
         # Running mark_by_criterion replaces whatever was marked before.
         from core.prioritize import SizeCategory, NumericalCategory
+
         self.app.results.mark_all()
         previous_count = self.app.results.mark_count
         cat = SizeCategory(self.app.results)
@@ -635,9 +637,9 @@ class TestCaseInvokeCustomCommand:
         assert isinstance(call["argv"], list), "argv must be a list when shell=False"
         # The dupe path (with ';') must appear as one unbroken token, not split by shell
         dupe_path = str(dupe.path)
-        assert any(dupe_path in token for token in call["argv"]), (
-            f"dupe path {dupe_path!r} not found in argv {call['argv']!r}"
-        )
+        assert any(
+            dupe_path in token for token in call["argv"]
+        ), f"dupe path {dupe_path!r} not found in argv {call['argv']!r}"
 
     def test_no_shell_injection_ampersand(self, monkeypatch):
         popen_calls = []

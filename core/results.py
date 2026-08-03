@@ -227,7 +227,7 @@ class Results(Markable):
 
         def do_match(dupes, group):
             for i, ref in enumerate(dupes[:-1]):
-                for other in dupes[i + 1:]:
+                for other in dupes[i + 1 :]:
                     group.add_match(engine.get_match(ref, other))
 
         self.apply_filter(None)
@@ -312,6 +312,17 @@ class Results(Markable):
             self.mark_none()
             for dupe, _ in self.problems:
                 self.mark(dupe)
+
+    def has_marked_partial_matches(self) -> bool:
+        """Return True if any marked duplicate was matched only by a partial (sampled) hash."""
+        for dupe in self.dupes:
+            if self.is_marked(dupe):
+                group = self.get_group_of_duplicate(dupe)
+                if group:
+                    match = group.get_match_of(dupe)
+                    if match and getattr(match, "partial", False):
+                        return True
+        return False
 
     def remove_duplicates(self, dupes):
         """Remove ``dupes`` from their respective :class:`~core.engine.Group`.

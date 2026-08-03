@@ -305,6 +305,7 @@ class TestCaseMergeSimilarWords:
         import time
         import string
         import random
+
         rng = random.Random(42)
         words = set()
         while len(words) < 2000:

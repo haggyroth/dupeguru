@@ -11,7 +11,6 @@ inserting many rows in a single commit.
 """
 
 import logging
-import os
 import sqlite3
 from os import PathLike
 from pathlib import Path

@@ -232,7 +232,9 @@ class TestCaseListEmpty:
         # Only applies to non-union mode; in union mode _excluded_compiled is never populated
         # directly (the union is rebuilt on demand).
         if self.exclude_list._use_union:
-            import pytest; pytest.skip("not applicable in union mode")
+            import pytest
+
+            pytest.skip("not applicable in union mode")
         short = r"^a"
         long_ = r"^abc"
         self.exclude_list.add(short)
@@ -244,9 +246,7 @@ class TestCaseListEmpty:
         self.exclude_list.unmark(short)
 
         compiled_patterns = {p.pattern for p in self.exclude_list._excluded_compiled}
-        assert long_ in compiled_patterns, (
-            f"Unmarking {short!r} incorrectly removed {long_!r} from compiled set"
-        )
+        assert long_ in compiled_patterns, f"Unmarking {short!r} incorrectly removed {long_!r} from compiled set"
         assert short not in compiled_patterns
         # The surviving pattern must still work
         assert self.exclude_list._excluded_compiled.pop().match("abcdef") is not None

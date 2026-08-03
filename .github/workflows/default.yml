@@ -23,7 +23,10 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest]
-        python-version: [3.8, 3.9, "3.10", "3.11", "3.12", "3.13", "3.14"]
+        # 3.10 is the floor: core/hash_cache.py uses PEP 604 unions (X | None) in
+        # function signatures that are evaluated at import time on Python <= 3.13,
+        # so 3.8 and 3.9 cannot import the package at all. See issue #22.
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
         include:
           - os: windows-latest
             python-version: "3.12"
@@ -46,7 +49,13 @@ jobs:
           python build.py --modules
       - name: Run tests
         run: |
-          pytest core hscommon
+          pytest core hscommon --cov=core --cov=hscommon --cov=cli --cov-report=term-missing --cov-report=xml
+      - name: Upload coverage report
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: coverage-xml
+          path: coverage.xml
       - name: Upload Artifacts
         if: matrix.os == 'ubuntu-latest'
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0

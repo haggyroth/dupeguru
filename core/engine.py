@@ -197,7 +197,7 @@ def reduce_common_words(word_dict, threshold):
 # http://stackoverflow.com/questions/1606436/adding-docstrings-to-namedtuples-in-python
 
 
-class Match(namedtuple("Match", "first second percentage")):
+class Match(namedtuple("Match", "first second percentage partial")):
     """Represents a match between two :class:`~core.fs.File`.
 
     Regarless of the matching method, when two files are determined to match, a Match pair is created,
@@ -215,9 +215,18 @@ class Match(namedtuple("Match", "first second percentage")):
 
         their match level according to the scan method which found the match. int from 1 to 100. For
         exact scan methods, such as Contents scans, this will always be 100.
+
+    .. attribute:: partial
+
+        True when the match was confirmed only by a partial hash (digest_samples), not a full
+        digest. These are probable duplicates — the chance of a false positive is very low but
+        non-zero. The UI surfaces this as "~100%" instead of "100%".
     """
 
     __slots__ = ()
+
+    def __new__(cls, first, second, percentage, partial=False):
+        return super().__new__(cls, first, second, percentage, partial)
 
 
 def get_match(first, second, flags=()):
@@ -272,9 +281,7 @@ def getmatches(
         _pairs_conn.execute("PRAGMA journal_mode=OFF")
         _pairs_conn.execute("PRAGMA synchronous=OFF")
         _pairs_conn.execute("PRAGMA cache_size=-65536")  # 64 MB page cache
-        _pairs_conn.execute(
-            "CREATE TABLE seen (file TEXT, partner TEXT, PRIMARY KEY(file,partner)) WITHOUT ROWID"
-        )
+        _pairs_conn.execute("CREATE TABLE seen (file TEXT, partner TEXT, PRIMARY KEY(file,partner)) WITHOUT ROWID")
 
         # Older SQLite versions cap bind variables at 999; leave one slot for the file param.
         _CHUNK = 998
@@ -372,7 +379,8 @@ def getmatches_by_contents(files, bigsize=0, j=job.nulljob):
                 if first.digest_partial is not None and first.digest_partial == second.digest_partial:
                     if bigsize > 0 and first.size > bigsize:
                         if first.digest_samples is not None and first.digest_samples == second.digest_samples:
-                            result.append(Match(first, second, 100))
+                            # Matched by sampled digest only — probable duplicate, not confirmed.
+                            result.append(Match(first, second, 100, partial=True))
                     else:
                         if first.digest is not None and first.digest == second.digest:
                             result.append(Match(first, second, 100))
@@ -465,7 +473,7 @@ class Group:
         if match in self.matches:
             return
         self.matches.add(match)
-        first, second, _ = match
+        first, second, *_ = match
         if first not in self.unordered:
             add_candidate(first, second)
         if second not in self.unordered:
@@ -572,7 +580,7 @@ def get_groups(matches):
     groups = []
     try:
         for match in matches:
-            first, second, _ = match
+            first, second, *_ = match
             first_group = dupe2group.get(first)
             second_group = dupe2group.get(second)
             if first_group:
@@ -615,7 +623,7 @@ def get_groups(matches):
         extra_groups = []
         extra_dupe2group = {}
         for match in sorted(pending, key=lambda m: -m.percentage):
-            first, second, _ = match
+            first, second, *_ = match
             fg = extra_dupe2group.get(first)
             sg = extra_dupe2group.get(second)
             if fg and sg:
@@ -641,8 +649,6 @@ def get_groups(matches):
         pending = []
         for group in extra_groups:
             pending += {
-                m
-                for m in group.discard_matches()
-                if not any(obj in extra_files for obj in [m.first, m.second])
+                m for m in group.discard_matches() if not any(obj in extra_files for obj in [m.first, m.second])
             }
     return groups
