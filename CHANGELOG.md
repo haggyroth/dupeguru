@@ -29,6 +29,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - `setup.cfg`: project `url` and `Bug Reports` repointed to this fork; upstream retained as
     a separate `Upstream` project URL for attribution.
   - `README.md`, `CONTRIBUTING.md`: fork status stated explicitly, issue links repointed.
+- **Lint backlog cleared**: `black` applied across 19 files and all 43 `flake8` errors fixed
+  (dead imports, unused locals, ambiguous `l` loop variables). The `pre-commit` CI job gates
+  the `test` job via `needs:`, so this was blocking the entire pipeline. `pre-commit run
+  --all-files` now passes all six hooks.
+- **CI matrix trimmed to Python 3.10+** (`.github/workflows/default.yml`): 3.8 and 3.9 were
+  listed but cannot import the package — `core/hash_cache.py` uses PEP 604 unions
+  (`tuple[str, bytes] | None`) in function signatures that evaluate eagerly on Python <= 3.13,
+  with no `from __future__ import annotations`. Note `setup.cfg` and `tox.ini` still declare
+  3.7; reconciling them is tracked in issue #22.
+- **First green CI**: Actions had never executed on this fork (zero runs). The full matrix and
+  CodeQL now pass, with no open code-scanning alerts.
 
 ### Removed
 
