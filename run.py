@@ -73,7 +73,7 @@ def main():
     app.setWindowIcon(QIcon(QPixmap(f":/{DupeGuru.LOGO_NAME}")))
     global dgapp
     dgapp = DupeGuru()
-    install_excepthook("https://github.com/arsenetar/dupeguru/issues")
+    install_excepthook("https://github.com/haggyroth/dupeguru/issues")
     result = app.exec()
     # I was getting weird crashes when quitting under Windows, and manually deleting main app
     # references with gc.collect() in between seems to fix the problem.

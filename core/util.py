@@ -74,7 +74,7 @@ def executable_folder():
 
 def check_for_update(current_version: str, include_prerelease: bool = False) -> Union[None, dict]:
     request = urllib.request.Request(
-        "https://api.github.com/repos/arsenetar/dupeguru/releases",
+        "https://api.github.com/repos/haggyroth/dupeguru/releases",
         headers={"Accept": "application/vnd.github.v3+json"},
     )
     try:
