@@ -16,6 +16,7 @@ from cli import main, EXIT_OK, EXIT_DUPES_FOUND, EXIT_BAD_ARGS, EXIT_SCAN_ERROR
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _write_files(directory: Path, names_and_contents: dict) -> None:
     """Create files in *directory* with the given content strings."""
     for name, content in names_and_contents.items():
@@ -25,6 +26,7 @@ def _write_files(directory: Path, names_and_contents: dict) -> None:
 # ---------------------------------------------------------------------------
 # Argument parsing / validation
 # ---------------------------------------------------------------------------
+
 
 class TestArgValidation:
     def test_missing_folder_exits_bad_args(self, capsys):
@@ -67,6 +69,7 @@ class TestArgValidation:
 # Scan outcomes
 # ---------------------------------------------------------------------------
 
+
 class TestScanOutcomes:
     def test_no_duplicates_returns_exit_ok(self, tmp_path):
         """A folder with unique files should exit 0."""
@@ -88,6 +91,7 @@ class TestScanOutcomes:
 # ---------------------------------------------------------------------------
 # JSON output structure
 # ---------------------------------------------------------------------------
+
 
 class TestJsonOutput:
     def test_json_written_to_stdout(self, tmp_path, capsys):
@@ -153,6 +157,7 @@ class TestJsonOutput:
 # Reference folder
 # ---------------------------------------------------------------------------
 
+
 class TestRefFolder:
     def test_ref_folder_files_not_marked_as_dupes(self, tmp_path):
         """Files in a ref folder appear as reference in groups, never as dupes."""
@@ -175,6 +180,7 @@ def _capture_json(tmp_path, ref_dir, scan_dir):
     """Run main() with ref and scan dirs; return (exit_code, parsed_json)."""
     import io
     from contextlib import redirect_stdout
+
     buf = io.StringIO()
     with redirect_stdout(buf):
         rc = main([str(ref_dir), str(scan_dir), "--ref", str(ref_dir)])
@@ -184,6 +190,7 @@ def _capture_json(tmp_path, ref_dir, scan_dir):
 # ---------------------------------------------------------------------------
 # Verbose flag
 # ---------------------------------------------------------------------------
+
 
 class TestVerboseFlag:
     def test_verbose_writes_to_stderr(self, tmp_path, capsys):
@@ -203,6 +210,7 @@ class TestVerboseFlag:
 # ---------------------------------------------------------------------------
 # NDJSON output
 # ---------------------------------------------------------------------------
+
 
 class TestNdjsonOutput:
     def test_ndjson_each_line_is_valid_json(self, tmp_path, capsys):
@@ -236,8 +244,9 @@ class TestNdjsonOutput:
         rc = main([str(tmp_path), "--ndjson"])
         assert rc == EXIT_OK
         lines = [json.loads(l) for l in capsys.readouterr().out.splitlines() if l.strip()]
-        assert lines == [{"type": "stats", "groups": 0, "total_duplicates": 0,
-                          "total_duplicate_size_bytes": 0, "discarded_files": 0}]
+        assert lines == [
+            {"type": "stats", "groups": 0, "total_duplicates": 0, "total_duplicate_size_bytes": 0, "discarded_files": 0}
+        ]
 
     def test_ndjson_written_to_output_file(self, tmp_path):
         _write_files(tmp_path, {"a.txt": b"same", "b.txt": b"same"})
@@ -251,6 +260,7 @@ class TestNdjsonOutput:
 # ---------------------------------------------------------------------------
 # Machine-readable progress
 # ---------------------------------------------------------------------------
+
 
 class TestProgressJson:
     def test_progress_json_emits_json_to_stderr(self, tmp_path, capsys):
@@ -279,6 +289,7 @@ class TestProgressJson:
 # ---------------------------------------------------------------------------
 # Scanner knobs
 # ---------------------------------------------------------------------------
+
 
 class TestScannerKnobs:
     def test_min_match_accepted(self, tmp_path, capsys):
@@ -313,15 +324,29 @@ class TestScannerKnobs:
         captured_options = {}
 
         original_run = cli._run_scan
+
         def _capture_run(app, verbose, progress_json=False):
             captured_options.update(app.options)
             return original_run(app, verbose, progress_json)
 
         import unittest.mock as mock
+
         with mock.patch("cli._run_scan", side_effect=_capture_run):
-            main([str(tmp_path), "--min-match", "42", "--word-weighting",
-                  "--min-size", "5", "--max-size", "100",
-                  "--partial-hash-threshold", "200", "--rehash-ignore-mtime"])
+            main(
+                [
+                    str(tmp_path),
+                    "--min-match",
+                    "42",
+                    "--word-weighting",
+                    "--min-size",
+                    "5",
+                    "--max-size",
+                    "100",
+                    "--partial-hash-threshold",
+                    "200",
+                    "--rehash-ignore-mtime",
+                ]
+            )
 
         assert captured_options["min_match_percentage"] == 42
         assert captured_options["word_weighting"] is True
@@ -334,6 +359,7 @@ class TestScannerKnobs:
 # ---------------------------------------------------------------------------
 # Deletion (--delete / --direct-delete)
 # ---------------------------------------------------------------------------
+
 
 class TestDelete:
     def test_delete_without_yes_returns_bad_args(self, tmp_path, capsys):
@@ -365,6 +391,7 @@ class TestDelete:
 # ---------------------------------------------------------------------------
 # --from-results
 # ---------------------------------------------------------------------------
+
 
 class TestFromResults:
     def _scan_and_save(self, tmp_path, out_file):
@@ -445,6 +472,7 @@ class TestFromResults:
 # ---------------------------------------------------------------------------
 # Headless view shim
 # ---------------------------------------------------------------------------
+
 
 class TestHeadlessView:
     def test_show_message_prints_to_stderr(self, capsys):

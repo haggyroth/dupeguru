@@ -77,6 +77,7 @@ _MODE_MAP = {
 
 # --- Headless view shim ----------------------------------------------------
 
+
 class _HeadlessView:
     """Minimal view that satisfies DupeGuru's view interface without any GUI."""
 
@@ -120,6 +121,7 @@ class _HeadlessView:
 
 # --- Synchronous scan ------------------------------------------------------
 
+
 def _run_scan(app: DupeGuru, verbose: bool, progress_json: bool = False) -> None:
     """Run the scan synchronously on the calling thread (no Qt event loop needed)."""
     scanner = app.SCANNER_CLASS()
@@ -161,6 +163,7 @@ def _run_scan(app: DupeGuru, verbose: bool, progress_json: bool = False) -> None
 
     fs.filesdb.commit()
     from core.hash_cache import hashcachedb
+
     hashcachedb.commit()
 
     if verbose and not progress_json:
@@ -168,6 +171,7 @@ def _run_scan(app: DupeGuru, verbose: bool, progress_json: bool = False) -> None
 
 
 # --- Result serialisation --------------------------------------------------
+
 
 def _group_to_dict(group) -> dict:
     """Serialise a single duplicate group to a plain dict."""
@@ -243,6 +247,7 @@ def _emit_ndjson(app: DupeGuru, out) -> tuple[int, int, int]:
 
 # --- Deletion helpers -------------------------------------------------------
 
+
 def _delete_dupes(app: DupeGuru, direct_delete: bool, verbose: bool) -> list[tuple]:
     """Mark all dupes in results then delete them. Returns list of (path, error) problems."""
     app.results.mark_all()
@@ -266,6 +271,7 @@ def _delete_dupes(app: DupeGuru, direct_delete: bool, verbose: bool) -> list[tup
 
 
 # --- Load saved results (--from-results) ------------------------------------
+
 
 def _load_results_json(path: str) -> list[dict]:
     """Parse a prior JSON or NDJSON results file into a flat list of group dicts."""
@@ -322,11 +328,13 @@ def _delete_from_saved_results(
                 if direct_delete:
                     if p.is_dir():
                         import shutil
+
                         shutil.rmtree(str(p))
                     else:
                         p.unlink()
                 else:
                     from send2trash import send2trash
+
                     send2trash(str(p))
                 deleted += 1
                 if verbose:
@@ -338,6 +346,7 @@ def _delete_from_saved_results(
 
 
 # --- Argument parser -------------------------------------------------------
+
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -529,6 +538,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 # --- Main ------------------------------------------------------------------
 
+
 def main(argv=None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -568,23 +578,34 @@ def main(argv=None) -> int:
             if args.ndjson:
                 for g in groups:
                     print(json.dumps({"type": "group", **g}, ensure_ascii=False))
-                print(json.dumps({"type": "stats", "groups": group_count,
-                                  "total_duplicates": dupe_count,
-                                  "total_duplicate_size_bytes": sum(
-                                      d["size"] for g in groups for d in g.get("duplicates", [])
-                                  ), "discarded_files": 0}, ensure_ascii=False))
+                print(
+                    json.dumps(
+                        {
+                            "type": "stats",
+                            "groups": group_count,
+                            "total_duplicates": dupe_count,
+                            "total_duplicate_size_bytes": sum(
+                                d["size"] for g in groups for d in g.get("duplicates", [])
+                            ),
+                            "discarded_files": 0,
+                        },
+                        ensure_ascii=False,
+                    )
+                )
             else:
                 total_size = sum(d["size"] for g in groups for d in g.get("duplicates", []))
                 result = {
                     "groups": groups,
-                    "stats": {"groups": group_count, "total_duplicates": dupe_count,
-                              "total_duplicate_size_bytes": total_size, "discarded_files": 0},
+                    "stats": {
+                        "groups": group_count,
+                        "total_duplicates": dupe_count,
+                        "total_duplicate_size_bytes": total_size,
+                        "discarded_files": 0,
+                    },
                 }
                 if args.output:
                     try:
-                        Path(args.output).write_text(
-                            json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8"
-                        )
+                        Path(args.output).write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
                     except OSError as exc:
                         print(f"error writing output file: {exc}", file=sys.stderr)
                         return EXIT_SCAN_ERROR
@@ -690,8 +711,7 @@ def main(argv=None) -> int:
         _reverse_scan_type = {v: k for k, v in _SCAN_TYPE_MAP.items()}
         scan_type_name = args.scan_type or _reverse_scan_type.get(scan_type, str(scan_type))
         print(
-            f"Scanning {len(folders)} folder(s)  mode={args.mode}  "
-            f"scan-type={scan_type_name}",
+            f"Scanning {len(folders)} folder(s)  mode={args.mode}  " f"scan-type={scan_type_name}",
             file=sys.stderr,
         )
 
@@ -710,7 +730,8 @@ def main(argv=None) -> int:
         discarded = app.discarded_file_count
         print(
             f"Found {group_count} duplicate group(s)"
-            + (f" ({discarded} file(s) discarded)" if discarded else "") + ".",
+            + (f" ({discarded} file(s) discarded)" if discarded else "")
+            + ".",
             file=sys.stderr,
         )
 

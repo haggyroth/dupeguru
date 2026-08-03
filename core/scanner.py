@@ -140,10 +140,7 @@ class Scanner:
 
         try:
             with ProcessPoolExecutor(max_workers=workers) as pool:
-                future_to_meta = {
-                    pool.submit(hash_file_worker, str(f.path)): (f, sz, mt)
-                    for f, sz, mt in cache_misses
-                }
+                future_to_meta = {pool.submit(hash_file_worker, str(f.path)): (f, sz, mt) for f, sz, mt in cache_misses}
                 for future in as_completed(future_to_meta):
                     f, sz, mt = future_to_meta[future]
                     try:
@@ -169,9 +166,7 @@ class Scanner:
         except Exception as exc:
             logging.warning("Parallel hashing pool failed (%s), falling back to sequential", exc)
             # Pool-level failure: queue every cache miss not already finished.
-            failed_entries = [
-                (f, sz, mt) for f, sz, mt in cache_misses if str(f.path) not in completed_paths
-            ]
+            failed_entries = [(f, sz, mt) for f, sz, mt in cache_misses if str(f.path) not in completed_paths]
 
         if failed_entries:
             for seq_done, (f, sz, mt) in enumerate(failed_entries, 1):

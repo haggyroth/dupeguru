@@ -281,9 +281,7 @@ def getmatches(
         _pairs_conn.execute("PRAGMA journal_mode=OFF")
         _pairs_conn.execute("PRAGMA synchronous=OFF")
         _pairs_conn.execute("PRAGMA cache_size=-65536")  # 64 MB page cache
-        _pairs_conn.execute(
-            "CREATE TABLE seen (file TEXT, partner TEXT, PRIMARY KEY(file,partner)) WITHOUT ROWID"
-        )
+        _pairs_conn.execute("CREATE TABLE seen (file TEXT, partner TEXT, PRIMARY KEY(file,partner)) WITHOUT ROWID")
 
         # Older SQLite versions cap bind variables at 999; leave one slot for the file param.
         _CHUNK = 998
@@ -651,8 +649,6 @@ def get_groups(matches):
         pending = []
         for group in extra_groups:
             pending += {
-                m
-                for m in group.discard_matches()
-                if not any(obj in extra_files for obj in [m.first, m.second])
+                m for m in group.discard_matches() if not any(obj in extra_files for obj in [m.first, m.second])
             }
     return groups

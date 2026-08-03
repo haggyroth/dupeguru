@@ -149,6 +149,7 @@ class DupeGuru(Broadcaster):
         hash_cache_file = op.join(self.appdata, "hash_cache.db")
         fs.filesdb.connect(hash_cache_file)
         from core.hash_cache import hashcachedb
+
         hashcachedb.connect(op.join(self.appdata, "hash_cache2.db"))
         self.directories = directories.Directories(self.exclude_list)
         self.results = results.Results(self)
@@ -260,18 +261,14 @@ class DupeGuru(Broadcaster):
         # Symlinks are excluded from scans; if the path is now a symlink it was replaced
         # after the scan and we refuse to act on it.
         if dupe.path.is_symlink():
-            raise OSError(
-                tr("'{}' is a symlink. Deletion through symlinks is not permitted.").format(str(dupe.path))
-            )
+            raise OSError(tr("'{}' is a symlink. Deletion through symlinks is not permitted.").format(str(dupe.path)))
         # Re-validate size and mtime against values recorded at scan time.  A mismatch
         # means the file changed between scan and delete; skipping prevents deleting
         # something the user never actually reviewed as a duplicate.
         try:
             st = dupe.path.stat()
         except OSError as e:
-            raise OSError(
-                tr("Could not verify '{}' before deletion: {}").format(str(dupe.path), e)
-            ) from e
+            raise OSError(tr("Could not verify '{}' before deletion: {}").format(str(dupe.path), e)) from e
         size_changed = st.st_size != dupe.size
         # 2-second tolerance covers FAT32's 2-second mtime resolution and NTFS rounding.
         mtime_changed = abs(st.st_mtime - dupe.mtime) > 2
@@ -358,6 +355,7 @@ class DupeGuru(Broadcaster):
             self._results_changed()
             fs.filesdb.commit()
             from core.hash_cache import hashcachedb
+
             hashcachedb.commit()
             if not self.results.groups:
                 self.view.show_message(tr("No duplicates found."))
@@ -620,10 +618,7 @@ class DupeGuru(Broadcaster):
             self.view.show_message(tr("Custom command could not be parsed: {}").format(e))
             return
         for dupe, ref in zip(dupes, refs):
-            argv = [
-                token.replace("%d", str(dupe.path)).replace("%r", str(ref.path))
-                for token in cmd_tokens
-            ]
+            argv = [token.replace("%d", str(dupe.path)).replace("%r", str(ref.path)) for token in cmd_tokens]
             p = subprocess.Popen(argv, shell=False, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             output = p.stdout.read()
             rc = p.wait()
@@ -852,6 +847,7 @@ class DupeGuru(Broadcaster):
     def close(self):
         fs.filesdb.close()
         from core.hash_cache import hashcachedb
+
         hashcachedb.close()
 
     def save_as(self, filename):

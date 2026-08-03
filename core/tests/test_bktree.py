@@ -33,6 +33,7 @@ class _IntTree:
         # Store ints as single-element lists so BKTree accepts them,
         # but override the _dist function via the module.
         import core.pe.bktree as bktree_mod
+
         self._orig_dist = bktree_mod._dist
         bktree_mod._dist = lambda a, b: _int_dist(a[0], b[0])
         self._tree = BKTree(key, [value])
@@ -143,6 +144,7 @@ class TestBKTreePython:
 
 try:
     from core.pe.block import avgdiff as _avgdiff_check
+
     _HAS_BLOCK_EXT = True
 except ImportError:
     _HAS_BLOCK_EXT = False
@@ -154,8 +156,8 @@ _block_skip = pytest.mark.skipif(
 
 BLACK = (0, 0, 0)
 RED = (255, 0, 0)
-GREY10 = (10, 10, 10)   # avgdiff from BLACK = 30
-GREY20 = (20, 20, 20)   # avgdiff from BLACK = 60
+GREY10 = (10, 10, 10)  # avgdiff from BLACK = 30
+GREY20 = (20, 20, 20)  # avgdiff from BLACK = 60
 
 _N = 225  # 15 × 15 blocks
 
@@ -193,8 +195,7 @@ class TestBKTreeWithBlocks:
         rng = random.Random(77777)
 
         def _rand_blocks():
-            return [(rng.randint(0, 255), rng.randint(0, 255), rng.randint(0, 255))
-                    for _ in range(_N)]
+            return [(rng.randint(0, 255), rng.randint(0, 255), rng.randint(0, 255)) for _ in range(_N)]
 
         items = {i: _rand_blocks() for i in range(30)}
         keys = list(items)
@@ -203,6 +204,7 @@ class TestBKTreeWithBlocks:
             t.insert(k, items[k])
 
         from core.pe.bktree import _dist
+
         query = _rand_blocks()
         radius = 40
         bf = {k for k, v in items.items() if _dist(v, query) <= radius}

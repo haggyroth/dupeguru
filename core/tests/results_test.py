@@ -840,8 +840,7 @@ class TestCaseResultsHugeGroup:
             r.load_from_xml(buf, get_file)
         except RecursionError:
             raise AssertionError(
-                "load_from_xml raised RecursionError on a group with "
-                f"{n} dupes — do_match must be iterative"
+                "load_from_xml raised RecursionError on a group with " f"{n} dupes — do_match must be iterative"
             )
         assert len(r.groups) == 1
         assert len(r.groups[0]) == n

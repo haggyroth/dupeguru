@@ -20,6 +20,7 @@ Implementation notes:
 * Test files are written into a 'files/' sub-directory of tmp_path so that the SQLite
   DB files that live directly in tmp_path are never picked up by the scanner.
 """
+
 import time
 import pytest
 from threading import Lock
@@ -262,17 +263,13 @@ class TestHashCache:
         app.start_scanning()
         _wait_for_scan(app)
 
-        row_count_after_first = hashcachedb.conn.execute(
-            "SELECT COUNT(*) FROM hash_cache"
-        ).fetchone()[0]
+        row_count_after_first = hashcachedb.conn.execute("SELECT COUNT(*) FROM hash_cache").fetchone()[0]
         assert row_count_after_first > 0
 
         app.start_scanning()
         _wait_for_scan(app)
 
-        row_count_after_second = hashcachedb.conn.execute(
-            "SELECT COUNT(*) FROM hash_cache"
-        ).fetchone()[0]
+        row_count_after_second = hashcachedb.conn.execute("SELECT COUNT(*) FROM hash_cache").fetchone()[0]
         assert row_count_after_second == row_count_after_first
 
     def test_contents_scan_option_wired(self, tmp_path):

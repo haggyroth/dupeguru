@@ -227,7 +227,7 @@ class Results(Markable):
 
         def do_match(dupes, group):
             for i, ref in enumerate(dupes[:-1]):
-                for other in dupes[i + 1:]:
+                for other in dupes[i + 1 :]:
                     group.add_match(engine.get_match(ref, other))
 
         self.apply_filter(None)

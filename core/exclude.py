@@ -40,8 +40,6 @@ def timer(func):
     return wrapper_timer
 
 
-
-
 class AlreadyThereException(Exception):
     """Expression already in the list"""
 
