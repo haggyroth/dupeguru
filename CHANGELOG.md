@@ -9,6 +9,29 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **"Clear Cache" now clears the cache scans actually use** (`core/hash_cache.py`,
+  `core/app.py`, issue #11): `clear_hash_cache()` cleared only `fs.filesdb`, while the
+  content-scan fast path in `core/scanner.py` reads `hashcachedb` (`hash_cache2.db`). That
+  second cache had no `clear()` method at all, so clearing to work around a suspect digest did
+  nothing to it.
+- **The scan hash cache no longer grows without bound** (`core/hash_cache.py`, issue #11): it
+  had no purge of any kind, so every file ever hashed stayed forever, including files deleted
+  long ago. `HashCache` gains `purge_missing()`, `purge_old_entries()` and a throttled
+  `purge_if_stale()` mirroring `FilesDB`, now called from both the GUI and CLI scan paths.
+
+### Added
+
+- **`HashCache` schema versioning** (`core/hash_cache.py`): an `entry_dt` column was needed for
+  age-based purging, so the table now carries a schema version in a `meta` table and is dropped
+  and rebuilt on mismatch. Rebuilding costs one rehash, which is cheaper than a migration for a
+  cache. This also gives issue #13 the mechanism it needs to record which hash algorithm
+  produced a digest.
+- **`core/tests/hash_cache_test.py`**: `HashCache` previously had no tests — `cache_test.py`
+  covers the picture cache, not this one. 19 tests covering the round trip, clear, all three
+  purge paths, throttling, and schema rebuild.
+
 ## [4.4.1] - 2026-08-03
 
 Patch release carrying a single fix, cut promptly because 4.4.0 shipped with the bug live: any
