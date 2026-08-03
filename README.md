@@ -132,11 +132,21 @@ Deletion from the CLI requires an explicit `--yes`; `--delete` alone will refuse
 Files are re-validated against their recorded size and modification time immediately before
 removal, and anything that changed since the scan is skipped and reported.
 
+Add `--dry-run` to see what would be removed without removing it. It takes precedence over
+`--delete`, does not require `--yes`, and still emits the normal results on stdout:
+
+    $ dupeguru-scan /data --delete --yes --dry-run
+    DRY RUN: no files have been deleted.
+      would send to trash 412 file(s), reclaiming 3.71 GB
+      re-run without --dry-run to execute.
+
+If any marked file was matched on a partial (sampled) hash rather than full content — only
+possible when `--partial-hash-threshold` is in use — `--delete` refuses and exits 2. Those are
+probable duplicates, not confirmed ones. Pass `--allow-partial-matches` to delete them anyway,
+or drop `--partial-hash-threshold` to compare full contents.
+
 Run `dupeguru-scan --help` for the full option list, including the scanner knobs
 (`--min-match`, `--min-size`, `--max-size`, `--partial-hash-threshold`, and others).
-
-> **Note:** `--dry-run` does not currently prevent deletion — see
-> [issue #7][issue-dryrun]. Until that is fixed, do not rely on it as a safety net.
 
 ## Running tests
 
@@ -167,7 +177,6 @@ run before each commit:
 [upstream]: https://github.com/arsenetar/dupeguru
 [fork]: https://github.com/haggyroth/dupeguru
 [fork-issues]: https://github.com/haggyroth/dupeguru/issues
-[issue-dryrun]: https://github.com/haggyroth/dupeguru/issues/7
 [issue-invocation]: https://github.com/haggyroth/dupeguru/issues/30
 [cross-toolkit]: http://www.hardcoded.net/articles/cross-toolkit-software
 [documentation]: http://dupeguru.voltaicideas.net/help/en/

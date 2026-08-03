@@ -386,6 +386,122 @@ class TestDelete:
 
 
 # ---------------------------------------------------------------------------
+# --dry-run must prevent deletion (issue #7)
+# ---------------------------------------------------------------------------
+
+
+class TestDryRun:
+    def test_dry_run_with_direct_delete_and_yes_deletes_nothing(self, tmp_path, capsys):
+        """The regression from #7: --dry-run was ignored entirely by the delete path."""
+        _write_files(tmp_path, {"a.txt": b"same", "b.txt": b"same"})
+        rc = main([str(tmp_path), "--direct-delete", "--yes", "--dry-run"])
+        assert rc == EXIT_DUPES_FOUND
+        assert len(list(tmp_path.iterdir())) == 2, "--dry-run must not delete anything"
+        err = capsys.readouterr().err
+        assert "DRY RUN" in err
+        assert "would permanently delete 1 file(s)" in err
+
+    def test_dry_run_with_trash_delete_deletes_nothing(self, tmp_path, capsys):
+        _write_files(tmp_path, {"a.txt": b"same", "b.txt": b"same"})
+        rc = main([str(tmp_path), "--delete", "--yes", "--dry-run"])
+        assert rc == EXIT_DUPES_FOUND
+        assert len(list(tmp_path.iterdir())) == 2
+        assert "would send to trash" in capsys.readouterr().err
+
+    def test_dry_run_does_not_require_yes(self, tmp_path):
+        """A dry run is safe, so it should not be gated behind the --yes confirmation."""
+        _write_files(tmp_path, {"a.txt": b"same", "b.txt": b"same"})
+        rc = main([str(tmp_path), "--delete", "--dry-run"])
+        assert rc == EXIT_DUPES_FOUND
+        assert len(list(tmp_path.iterdir())) == 2
+
+    def test_dry_run_still_emits_results_json(self, tmp_path, capsys):
+        """Dry run falls through to normal output so pipelines keep working."""
+        _write_files(tmp_path, {"a.txt": b"same", "b.txt": b"same"})
+        main([str(tmp_path), "--delete", "--yes", "--dry-run"])
+        data = json.loads(capsys.readouterr().out)
+        assert data["stats"]["groups"] == 1
+
+    def test_dry_run_leaves_marking_state_untouched(self, tmp_path, capsys):
+        """_deletion_plan marks and unmarks; it must not leave results marked."""
+        _write_files(tmp_path, {"a.txt": b"same", "b.txt": b"same"})
+        main([str(tmp_path), "--delete", "--yes", "--dry-run"])
+        data = json.loads(capsys.readouterr().out)
+        # Results are still serialisable and complete after the plan ran.
+        assert len(data["groups"][0]["duplicates"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# Partial-hash matches must not be deleted silently (issue #9)
+# ---------------------------------------------------------------------------
+
+# Engine flags a Match partial=True only when bigsize > 0 and the file exceeds it
+# (core/engine.py, getmatches_by_contents). --partial-hash-threshold is in MiB, so
+# the smallest usable threshold is 1 MiB and the files must be larger than that.
+_PARTIAL_THRESHOLD_MIB = 1
+_BIG_FILE = b"x" * (1536 * 1024)  # 1.5 MiB, comfortably over the 1 MiB threshold
+
+
+class TestPartialMatchGate:
+    def test_partial_match_blocks_delete_without_optin(self, tmp_path, capsys):
+        """The regression from #9: the CLI deleted partial-hash matches with no warning."""
+        _write_files(tmp_path, {"big_a.bin": _BIG_FILE, "big_b.bin": _BIG_FILE})
+        rc = main(
+            [
+                str(tmp_path),
+                "--partial-hash-threshold",
+                str(_PARTIAL_THRESHOLD_MIB),
+                "--direct-delete",
+                "--yes",
+            ]
+        )
+        assert rc == EXIT_BAD_ARGS
+        assert len(list(tmp_path.iterdir())) == 2, "nothing may be deleted when the gate refuses"
+        err = capsys.readouterr().err
+        assert "partial (sampled)" in err
+        assert "--allow-partial-matches" in err
+
+    def test_partial_match_deleted_with_optin(self, tmp_path):
+        _write_files(tmp_path, {"big_a.bin": _BIG_FILE, "big_b.bin": _BIG_FILE})
+        rc = main(
+            [
+                str(tmp_path),
+                "--partial-hash-threshold",
+                str(_PARTIAL_THRESHOLD_MIB),
+                "--direct-delete",
+                "--yes",
+                "--allow-partial-matches",
+            ]
+        )
+        assert rc == EXIT_DUPES_FOUND
+        assert len(list(tmp_path.iterdir())) == 1
+
+    def test_dry_run_reports_partial_match_count(self, tmp_path, capsys):
+        _write_files(tmp_path, {"big_a.bin": _BIG_FILE, "big_b.bin": _BIG_FILE})
+        rc = main(
+            [
+                str(tmp_path),
+                "--partial-hash-threshold",
+                str(_PARTIAL_THRESHOLD_MIB),
+                "--direct-delete",
+                "--yes",
+                "--dry-run",
+            ]
+        )
+        assert rc == EXIT_DUPES_FOUND
+        assert len(list(tmp_path.iterdir())) == 2
+        err = capsys.readouterr().err
+        assert "matched on a partial (sampled) hash only" in err
+
+    def test_full_content_match_is_not_gated(self, tmp_path):
+        """Without --partial-hash-threshold nothing is a partial match, so no gate fires."""
+        _write_files(tmp_path, {"a.txt": b"same", "b.txt": b"same"})
+        rc = main([str(tmp_path), "--direct-delete", "--yes"])
+        assert rc == EXIT_DUPES_FOUND
+        assert len(list(tmp_path.iterdir())) == 1
+
+
+# ---------------------------------------------------------------------------
 # --from-results
 # ---------------------------------------------------------------------------
 
@@ -408,6 +524,21 @@ class TestFromResults:
         assert rc == EXIT_DUPES_FOUND
         data = json.loads(capsys.readouterr().out)
         assert data["stats"]["groups"] >= 1
+
+    def test_from_results_dry_run_deletes_nothing(self, tmp_path, capsys):
+        """#7 applies to the --from-results deletion path too, not just the scan path."""
+        out = tmp_path / "results.json"
+        scan_dir = tmp_path / "scan"
+        scan_dir.mkdir()
+        self._scan_and_save(scan_dir, out)
+        capsys.readouterr()
+
+        rc = main(["--from-results", str(out), "--direct-delete", "--yes", "--dry-run"])
+        assert rc == EXIT_DUPES_FOUND
+        assert len(list(scan_dir.iterdir())) == 2, "--dry-run must not delete anything"
+        err = capsys.readouterr().err
+        assert "DRY RUN" in err
+        assert "do not record partial-hash matches" in err
 
     def test_from_results_ndjson(self, tmp_path, capsys):
         out = tmp_path / "results.json"
@@ -483,6 +614,13 @@ class TestHeadlessView:
         assert v.get_default("missing_key", "fallback") == "fallback"
         assert v.get_default("missing_key") is None
 
-    def test_ask_yes_no_returns_true(self):
+    def test_ask_yes_no_fails_closed(self, capsys):
+        """A confirmation nobody can answer must be a "no".
+
+        Auto-confirming would silently accept any safety prompt core adds later
+        (partial-hash warnings, cross-device scan warnings) without the user ever
+        seeing it. Deliberate confirmation goes through explicit flags instead.
+        """
         v = cli._HeadlessView()
-        assert v.ask_yes_no("are you sure?") is True
+        assert v.ask_yes_no("are you sure?") is False
+        assert "declined" in capsys.readouterr().err

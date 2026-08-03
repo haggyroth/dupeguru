@@ -27,6 +27,11 @@ Deletion:
                      Requires --yes to confirm, or the flag is a no-op.
     --yes            Skip the interactive deletion confirmation prompt.
     --direct-delete  Permanently delete instead of sending to trash (use with care).
+    --dry-run        Never delete. With --delete, reports what would be removed and exits
+                     without removing it. Takes precedence over --delete.
+    --allow-partial-matches
+                     Permit deleting files matched only on a partial (sampled) hash.
+                     Without it, --delete refuses when any such match is marked.
     --from-results F Re-use a prior JSON/NDJSON output instead of rescanning. Validates each
                      file's size and mtime before deleting; skips any that changed since the
                      prior scan. Combine with --delete --yes to act on saved results.
@@ -43,6 +48,7 @@ from core.app import AppMode, DupeGuru
 from core.directories import AlreadyThereError, DirectoryState, InvalidPathError
 from core.scanner import ScanType
 from hscommon.jobprogress.job import Job
+from hscommon.util import format_size
 
 EXIT_OK = 0
 EXIT_DUPES_FOUND = 1
@@ -100,8 +106,13 @@ class _HeadlessView:
         pass
 
     def ask_yes_no(self, prompt):
-        # Non-interactive: auto-confirm (callers can check stderr messages).
-        return True
+        # Non-interactive, so fail closed: a confirmation nobody can answer is a "no".
+        # Auto-confirming would silently accept any safety prompt core adds in future
+        # (partial-hash warnings, cross-device scan warnings) without the user ever
+        # seeing it. Deliberate confirmation is expressed by explicit flags such as
+        # --yes and --allow-partial-matches instead.
+        print(f"{prompt} [declined: non-interactive]", file=sys.stderr)
+        return False
 
     def create_results_window(self):
         pass
@@ -248,6 +259,44 @@ def _emit_ndjson(app: DupeGuru, out) -> tuple[int, int, int]:
 # --- Deletion helpers -------------------------------------------------------
 
 
+def _deletion_plan(app: DupeGuru) -> tuple[int, int, int]:
+    """Return (file_count, total_bytes, partial_match_count) for what --delete would remove.
+
+    Marks and then unmarks, leaving the results in their original state, so this is safe
+    to call before either a dry run or a real deletion.
+    """
+    app.results.mark_all()
+    count = 0
+    total_bytes = 0
+    partial = 0
+    for dupe in app.results.dupes:
+        if not app.results.is_marked(dupe):
+            continue
+        count += 1
+        total_bytes += dupe.size
+        group = app.results.get_group_of_duplicate(dupe)
+        if group is not None:
+            match = group.get_match_of(dupe)
+            if match is not None and getattr(match, "partial", False):
+                partial += 1
+    app.results.mark_none()
+    return count, total_bytes, partial
+
+
+def _report_deletion_plan(count: int, total_bytes: int, partial: int, direct_delete: bool) -> None:
+    """Print what a deletion would do, for --dry-run. Writes to stderr only."""
+    verb = "permanently delete" if direct_delete else "send to trash"
+    print("DRY RUN: no files have been deleted.", file=sys.stderr)
+    print(f"  would {verb} {count} file(s), reclaiming {format_size(total_bytes, 2)}", file=sys.stderr)
+    if partial:
+        print(
+            f"  {partial} of those matched on a partial (sampled) hash only and would be "
+            "refused without --allow-partial-matches",
+            file=sys.stderr,
+        )
+    print("  re-run without --dry-run to execute.", file=sys.stderr)
+
+
 def _delete_dupes(app: DupeGuru, direct_delete: bool, verbose: bool) -> list[tuple]:
     """Mark all dupes in results then delete them. Returns list of (path, error) problems."""
     app.results.mark_all()
@@ -372,7 +421,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Scan and report without modifying or deleting anything (default behaviour; flag is a reminder).",
+        help=(
+            "Never modify or delete anything. Scanning without --delete already does nothing, "
+            "but when combined with --delete this reports what would be removed and then "
+            "exits without removing it."
+        ),
     )
     parser.add_argument(
         "--mode",
@@ -507,6 +560,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Confirm deletion without an interactive prompt.",
     )
     deletion.add_argument(
+        "--allow-partial-matches",
+        action="store_true",
+        help=(
+            "Permit deleting files that were matched on a partial (sampled) hash rather than "
+            "full content. Without this, --delete refuses when any such match is marked. "
+            "Only relevant when --partial-hash-threshold is in use."
+        ),
+    )
+    deletion.add_argument(
         "--from-results",
         metavar="FILE",
         help=(
@@ -613,6 +675,19 @@ def main(argv=None) -> int:
             return EXIT_DUPES_FOUND if group_count > 0 else EXIT_OK
 
         # Deletion from saved results
+        if args.dry_run:
+            # --dry-run wins over --delete. Saved results carry no partial-match flag
+            # (see issue #26), so the partial count is reported as unknown rather than
+            # as zero, which would be a false reassurance.
+            plan_bytes = sum(d["size"] for g in groups for d in g.get("duplicates", []) if not d.get("is_ref_folder"))
+            plan_count = sum(1 for g in groups for d in g.get("duplicates", []) if not d.get("is_ref_folder"))
+            _report_deletion_plan(plan_count, plan_bytes, 0, args.direct_delete)
+            print(
+                "  note: saved results do not record partial-hash matches, so none can be " "reported here",
+                file=sys.stderr,
+            )
+            return EXIT_DUPES_FOUND if plan_count > 0 else EXIT_OK
+
         if not args.yes:
             print(
                 f"error: --delete requires --yes to confirm deletion of {dupe_count} file(s). "
@@ -735,13 +810,30 @@ def main(argv=None) -> int:
         )
 
     # Deletion (scan path) ------------------------------------------------
-    if wants_delete:
+    if wants_delete and args.dry_run:
+        # --dry-run wins over --delete: report the plan, remove nothing, then fall
+        # through to the normal results emission below.
+        plan_count, plan_bytes, plan_partial = _deletion_plan(app)
+        _report_deletion_plan(plan_count, plan_bytes, plan_partial, args.direct_delete)
+    elif wants_delete:
         if not args.yes:
-            dupe_count = app.results.mark_count  # not yet marked; use len of all dupes
             dupe_count = sum(len(g.dupes) for g in app.results.groups)
             print(
                 f"error: --delete requires --yes to confirm deletion of {dupe_count} file(s). "
                 "Re-run with --yes to proceed.",
+                file=sys.stderr,
+            )
+            app.close()
+            return EXIT_BAD_ARGS
+
+        _, _, partial_count = _deletion_plan(app)
+        if partial_count and not args.allow_partial_matches:
+            print(
+                f"error: {partial_count} marked file(s) were matched on a partial (sampled) "
+                "hash, not a full content comparison. They are probable duplicates, but a "
+                "false positive is possible.\n"
+                "Re-run with --allow-partial-matches to delete them anyway, or without "
+                "--partial-hash-threshold to compare full contents.",
                 file=sys.stderr,
             )
             app.close()
