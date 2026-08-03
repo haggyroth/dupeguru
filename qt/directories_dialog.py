@@ -187,7 +187,8 @@ class DirectoriesDialog(QMainWindow):
         self.verticalLayout.addLayout(hl)
         self.promptLabel = QLabel(
             tr(
-                'Add folders below, then press "Scan". Click the State column to mark a folder as Reference (files never deleted) or Excluded.'
+                'Add folders below, then press "Scan". Click the State column to mark a folder '
+                "as Reference (files never deleted) or Excluded."
             ),
             self.centralwidget,
         )

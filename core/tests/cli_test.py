@@ -1,10 +1,7 @@
 """Tests for the dupeGuru command-line interface (cli.py)."""
 
 import json
-import os
-import tempfile
 from pathlib import Path
-from unittest.mock import patch, MagicMock
 
 import pytest
 
@@ -96,7 +93,7 @@ class TestScanOutcomes:
 class TestJsonOutput:
     def test_json_written_to_stdout(self, tmp_path, capsys):
         _write_files(tmp_path, {"a.txt": b"same", "b.txt": b"same"})
-        rc = main([str(tmp_path)])
+        main([str(tmp_path)])
         captured = capsys.readouterr()
         data = json.loads(captured.out)
         assert "groups" in data
@@ -216,7 +213,7 @@ class TestNdjsonOutput:
     def test_ndjson_each_line_is_valid_json(self, tmp_path, capsys):
         _write_files(tmp_path, {"a.txt": b"same", "b.txt": b"same"})
         main([str(tmp_path), "--ndjson"])
-        lines = [l for l in capsys.readouterr().out.splitlines() if l.strip()]
+        lines = [ln for ln in capsys.readouterr().out.splitlines() if ln.strip()]
         assert len(lines) >= 2  # at least one group + stats
         for line in lines:
             json.loads(line)  # must not raise
@@ -224,8 +221,8 @@ class TestNdjsonOutput:
     def test_ndjson_group_lines_have_type_group(self, tmp_path, capsys):
         _write_files(tmp_path, {"a.txt": b"same", "b.txt": b"same"})
         main([str(tmp_path), "--ndjson"])
-        lines = [json.loads(l) for l in capsys.readouterr().out.splitlines() if l.strip()]
-        group_lines = [l for l in lines if l.get("type") == "group"]
+        lines = [json.loads(ln) for ln in capsys.readouterr().out.splitlines() if ln.strip()]
+        group_lines = [ln for ln in lines if ln.get("type") == "group"]
         assert len(group_lines) >= 1
         assert "reference" in group_lines[0]
         assert "duplicates" in group_lines[0]
@@ -233,7 +230,7 @@ class TestNdjsonOutput:
     def test_ndjson_last_line_is_stats(self, tmp_path, capsys):
         _write_files(tmp_path, {"a.txt": b"same", "b.txt": b"same"})
         main([str(tmp_path), "--ndjson"])
-        lines = [json.loads(l) for l in capsys.readouterr().out.splitlines() if l.strip()]
+        lines = [json.loads(ln) for ln in capsys.readouterr().out.splitlines() if ln.strip()]
         stats = lines[-1]
         assert stats["type"] == "stats"
         assert "groups" in stats
@@ -243,7 +240,7 @@ class TestNdjsonOutput:
         _write_files(tmp_path, {"a.txt": "unique A", "b.txt": "unique B"})
         rc = main([str(tmp_path), "--ndjson"])
         assert rc == EXIT_OK
-        lines = [json.loads(l) for l in capsys.readouterr().out.splitlines() if l.strip()]
+        lines = [json.loads(ln) for ln in capsys.readouterr().out.splitlines() if ln.strip()]
         assert lines == [
             {"type": "stats", "groups": 0, "total_duplicates": 0, "total_duplicate_size_bytes": 0, "discarded_files": 0}
         ]
@@ -253,7 +250,7 @@ class TestNdjsonOutput:
         out_file = tmp_path / "results.ndjson"
         rc = main([str(tmp_path), "--ndjson", "--output", str(out_file)])
         assert rc == EXIT_DUPES_FOUND
-        lines = [json.loads(l) for l in out_file.read_text().splitlines() if l.strip()]
+        lines = [json.loads(ln) for ln in out_file.read_text().splitlines() if ln.strip()]
         assert lines[-1]["type"] == "stats"
 
 
@@ -266,7 +263,7 @@ class TestProgressJson:
     def test_progress_json_emits_json_to_stderr(self, tmp_path, capsys):
         _write_files(tmp_path, {"a.txt": b"same", "b.txt": b"same"})
         main([str(tmp_path), "--progress-json"])
-        err_lines = [l for l in capsys.readouterr().err.splitlines() if l.strip()]
+        err_lines = [ln for ln in capsys.readouterr().err.splitlines() if ln.strip()]
         assert len(err_lines) >= 1
         for line in err_lines:
             obj = json.loads(line)
@@ -421,7 +418,7 @@ class TestFromResults:
 
         rc = main(["--from-results", str(out), "--ndjson"])
         assert rc == EXIT_DUPES_FOUND
-        lines = [json.loads(l) for l in capsys.readouterr().out.splitlines() if l.strip()]
+        lines = [json.loads(ln) for ln in capsys.readouterr().out.splitlines() if ln.strip()]
         assert lines[-1]["type"] == "stats"
 
     def test_from_results_with_folders_returns_bad_args(self, tmp_path, capsys):

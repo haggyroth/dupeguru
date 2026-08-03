@@ -4,10 +4,9 @@
 # which should be included with this package. The terms are also available at
 # http://www.gnu.org/licenses/gpl-3.0.html
 
-import os
 import sys
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from hscommon.jobprogress import job
 from pathlib import Path
@@ -848,8 +847,6 @@ def test_parallel_hasher_failed_worker_retried_sequentially(tmp_path):
             return (path_str, RETRY_HASH)
         return (path_str, GOOD_HASH)
 
-    import concurrent.futures
-
     class _FakePoolFuture:
         def __init__(self, path_str, exc=None):
             self._path = path_str
@@ -870,7 +867,6 @@ def test_parallel_hasher_failed_worker_retried_sequentially(tmp_path):
         return list(fmap.keys())
 
     from core import hash_cache as hc_module
-    import core.scanner as scanner_module
 
     class _FakePool:
         def __init__(self, max_workers):
@@ -1019,8 +1015,6 @@ def test_parallel_pool_mid_crash_skips_already_completed_files(tmp_path):
         def submit(self, fn, path_str):
             return _GoodFuture()
 
-    fake_futures_map = {_GoodFuture(): (f_done, 50, 1000)}
-
     def fake_as_completed_mid_crash(fmap):
         # Yield the one good future, then blow up (simulating pool crash mid-loop).
         yield _GoodFuture()
@@ -1040,7 +1034,6 @@ def test_parallel_pool_mid_crash_skips_already_completed_files(tmp_path):
 
         # We need future_to_meta to map the yielded future to f_done.
         # Patch submit so the yielded future matches what as_completed returns.
-        orig_submit = _MidCrashPool.submit
         yielded = _GoodFuture()
 
         def patched_submit(self_pool, fn, path_str):

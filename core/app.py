@@ -13,7 +13,6 @@ import logging
 import shlex
 import subprocess
 import sys
-import re
 import shutil
 from pathlib import Path
 

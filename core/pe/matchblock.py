@@ -14,7 +14,6 @@ from hscommon.trans import tr
 from hscommon.jobprogress import job
 
 from core.engine import Match
-from core.pe.block import NoBlocksError
 from core.pe.bktree import BKTree
 from core.pe.cache_sqlite import SqliteCache
 

@@ -261,7 +261,6 @@ def _delete_dupes(app: DupeGuru, direct_delete: bool, verbose: bool) -> list[tup
     problems = list(app.results.problems)
 
     if verbose:
-        deleted = sum(1 for g in app.results.groups for _ in g.dupes)  # remaining (not deleted)
         print(
             f"Deleted duplicates. {len(problems)} problem(s) encountered.",
             file=sys.stderr,

@@ -389,7 +389,8 @@ class TestGetMatchesSQLitePairs:
         assert len(pair_keys) == len(set(pair_keys))
 
     def test_temp_db_cleaned_up_after_call(self, tmp_path):
-        import glob, tempfile
+        import glob
+        import tempfile
 
         before = set(glob.glob(tempfile.gettempdir() + "/*_seen_pairs.db"))
         a = _named_file(tmp_path, "foo.txt")

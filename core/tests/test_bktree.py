@@ -143,7 +143,7 @@ class TestBKTreePython:
 # ---------------------------------------------------------------------------
 
 try:
-    from core.pe.block import avgdiff as _avgdiff_check
+    from core.pe.block import avgdiff as _avgdiff_check  # noqa: F401  (import is the probe)
 
     _HAS_BLOCK_EXT = True
 except ImportError:

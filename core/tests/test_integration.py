@@ -25,7 +25,6 @@ import time
 import pytest
 from threading import Lock
 
-from hscommon.jobprogress import job
 
 from core import fs
 from core.hash_cache import hashcachedb
