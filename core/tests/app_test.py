@@ -44,6 +44,26 @@ class TestCaseDupeGuru:
         dgapp.clear_hash_cache()
         eq_(sorted(cleared), ["filesdb", "hashcachedb"])
 
+    def test_load_directories_keeps_the_exclusion_list(self, tmpdir):
+        """Issue #12: this called directories.__init__(), whose exclude_list defaults to None.
+
+        Every scan after a directory load then ignored the user's exclusions, with nothing
+        in the UI to say so, until the app was restarted.
+        """
+        dgapp = TestApp().app
+        exclude_list = dgapp.exclude_list
+        assert dgapp.directories._exclude_list is exclude_list
+
+        p = Path(str(tmpdir))
+        dgapp.directories.add_path(p)
+        xmlpath = str(tmpdir.join("directories.xml"))
+        dgapp.directories.save_to_file(xmlpath)
+
+        dgapp.load_directories(xmlpath)
+
+        assert dgapp.directories._exclude_list is exclude_list
+        eq_(len(dgapp.directories), 1)
+
     def test_apply_filter_calls_results_apply_filter(self, monkeypatch):
         dgapp = TestApp().app
         monkeypatch.setattr(dgapp.results, "apply_filter", log_calls(dgapp.results.apply_filter))

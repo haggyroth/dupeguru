@@ -763,3 +763,56 @@ def test_ordinary_directory_is_still_traversed(tmpdir):
     names = {f.path.name for f in d.get_files()}
 
     eq_(names, {"top.txt", "nested.txt"})
+
+
+# ---------------------------------------------------------------------------
+# clear() must preserve the exclusion list (issue #12)
+# ---------------------------------------------------------------------------
+
+
+def test_clear_empties_selection_but_keeps_exclude_list(tmpdir):
+    exclude_list = ExcludeList()
+    d = Directories(exclude_list=exclude_list)
+    p = Path(str(tmpdir))
+    d.add_path(p)
+    d.set_state(p, DirectoryState.REFERENCE)
+    eq_(len(d), 1)
+
+    d.clear()
+
+    eq_(len(d), 0)
+    eq_(d.states, {})
+    assert d._exclude_list is exclude_list, "clear() must not drop the exclusion list"
+
+
+def test_clear_on_a_directories_without_exclude_list_is_harmless():
+    d = Directories()
+    d.clear()
+    eq_(len(d), 0)
+    assert d._exclude_list is None
+
+
+def test_exclusions_still_apply_after_clear(tmpdir):
+    """The user-visible consequence of #12: exclusions stopped filtering after a load."""
+    root = Path(str(tmpdir))
+    keep = root.joinpath("keep")
+    junk = root.joinpath("node_modules")
+    keep.mkdir()
+    junk.mkdir()
+    keep.joinpath("wanted.txt").open("wt").write("data")
+    junk.joinpath("unwanted.txt").open("wt").write("data")
+
+    exclude_list = ExcludeList()
+    exclude_list.add(r"node_modules")
+    exclude_list.mark(r"node_modules")
+    d = Directories(exclude_list=exclude_list)
+
+    d.add_path(root)
+    before = {f.path.name for f in d.get_files()}
+
+    d.clear()
+    d.add_path(root)
+    after = {f.path.name for f in d.get_files()}
+
+    eq_(before, {"wanted.txt"})
+    eq_(after, before)

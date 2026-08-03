@@ -649,8 +649,10 @@ class DupeGuru(Broadcaster):
         self.exclude_list_dialog.refresh()
 
     def load_directories(self, filepath):
-        # Clear out previous entries
-        self.directories.__init__()
+        # Clear out previous entries. Note this used to call self.directories.__init__(),
+        # which reset _exclude_list to None because that is the parameter's default, so
+        # every scan after a directory load silently ignored the user's exclusions.
+        self.directories.clear()
         self.directories.load_from_file(filepath)
         self.notify("directories_changed")
 

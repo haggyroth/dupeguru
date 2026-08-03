@@ -11,6 +11,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Loading a directory list no longer discards the exclusion list** (`core/app.py`,
+  `core/directories.py`, issue #12): `load_directories()` reset the selection by calling
+  `self.directories.__init__()`. `Directories.__init__` takes `exclude_list` as an argument
+  defaulting to `None`, so calling it with no arguments replaced the configured exclusion list
+  with nothing. Every scan afterwards ignored the user's exclusions — no error, no UI
+  indication — until the app was restarted. Replaced with an explicit `Directories.clear()`
+  that resets the selection and states while leaving the exclusion list alone.
+
 - **"Clear Cache" now clears the cache scans actually use** (`core/hash_cache.py`,
   `core/app.py`, issue #11): `clear_hash_cache()` cleared only `fs.filesdb`, while the
   content-scan fast path in `core/scanner.py` reads `hashcachedb` (`hash_cache2.db`). That
