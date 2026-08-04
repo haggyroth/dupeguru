@@ -22,8 +22,8 @@ it renders links for *historical* upstream ticket numbers in `help/changelog`. D
 | Branch | `master` (not `main`) |
 | Version | 4.5.0, released |
 | Releases | v4.4.0, v4.4.1, v4.5.0 |
-| Issues | 21 closed, 5 open |
-| Tests | 787 passing on Windows; expect **788 passing, 6 skipped** on macOS (see below) |
+| Issues | 22 closed, 4 open |
+| Tests | **800 passing, 6 skipped** on macOS as of #47. Windows/Linux counts differ (see below) |
 | CI | green on Python 3.10–3.14 (Linux) plus Windows and macOS |
 
 Work is tracked as GitHub issues on the fork. Don't keep a parallel roadmap file — check the
@@ -35,15 +35,36 @@ tracker.
 git clone https://github.com/haggyroth/dupeguru.git
 cd dupeguru
 python3 -m venv env && source env/bin/activate
-pip install -r requirements.txt -r requirements-extra.txt
+pip install -r requirements.txt
+pip install setuptools               # not seeded in 3.12+ venvs; build.py needs it
+pip install pytest'>=7,<8' pytest-cov flake8 black
 pip install pre-commit && pre-commit install
-python build.py --modules      # builds the C extensions
+python build.py --modules            # builds the C extensions
 pytest core hscommon
 ```
 
 Python **3.10+** is required — `core/hash_cache.py` uses PEP 604 unions in signatures that
 are evaluated at import time, so 3.8 and 3.9 cannot import the package at all. `macos.md` has
 the Qt/Homebrew setup if you need to run the GUI rather than just the CLI and tests.
+
+Two things the old one-line install got wrong, both found setting this machine up on Python
+3.14 (Homebrew's current default):
+
+- **Don't `pip install -r requirements-extra.txt` on 3.14.** It pins
+  `pyinstaller>=5.6,<6.0`, and no release in that range has a 3.14 build, so the whole
+  install aborts — including the pytest/flake8/black that the same file provides. Install
+  those four directly, as above. The pin is only needed for packaging, which nothing here
+  currently does. Don't "fix" it by widening the pin to 6.x on its own: PyInstaller majors
+  change frozen-build behaviour, that's untestable without an actual packaging run, and it
+  would land squarely on the unverified-fix trap that issue #10 exists to avoid. Pair it
+  with #10 and real packaging work.
+- **`python build.py --modules` needs `setuptools` installed explicitly.** It shells out to
+  `setup.py build_ext`, and venvs stopped seeding setuptools in 3.12. Without it the build
+  fails with a bare `ModuleNotFoundError: No module named 'setuptools'` several lines above
+  the traceback that actually names `build.py`, which is easy to misread as a C toolchain
+  problem. It isn't.
+
+`requirements.txt` itself, PyQt5 included, installs cleanly on 3.14.
 
 ## What changes when you move to macOS
 
@@ -56,7 +77,11 @@ move and a green run looks different.
 | 3 Windows junction tests | run | **skip** | **skip** |
 | 1 case-sensitivity test | skip | skip (APFS is case-insensitive) | run |
 | 2 exclude union-mode tests | skip | skip | skip |
-| **Totals** | 787 / 7 skipped | **788 / 6 skipped** | 789 / 5 skipped |
+| **Totals** | 799 / 7 skipped | **800 / 6 skipped** | 801 / 5 skipped |
+
+806 tests collected in total. Only the macOS column has been measured directly since #47; the
+other two are that number less the tests their platform skips. If a count is off by a little,
+check which group changed rather than assuming the suite broke.
 
 Consequences worth knowing:
 
@@ -115,11 +140,11 @@ nobody is running 4.4.0.
   Writing the fix without a PyInstaller run to test it would mean shipping something
   unverified and calling it done. Pair it with actual packaging work. Note macOS packaging
   differs from Windows, so a fix verified on one doesn't prove the other.
-- **[#25](https://github.com/haggyroth/dupeguru/issues/25)** — `--plan` mode. Cheap now:
-  `--dry-run` already computes a deletion plan, this is mostly surfacing more of it.
-- **[#26](https://github.com/haggyroth/dupeguru/issues/26)** — surface partial-hash matches in
-  output. Also cheap: `Match.partial` already exists and is already gated on for deletion, it
-  just isn't serialised.
+- **[#25](https://github.com/haggyroth/dupeguru/issues/25)** — `--plan` mode. Cheapest of the
+  remaining work, and unblocked now that #26 has landed. **The issue text is stale**: it was
+  written when `--dry-run` was still a no-op and says so. `--dry-run` now computes and prints
+  a real plan (`_deletion_plan` / `_report_deletion_plan` in `cli.py`), and the per-file
+  partial-match flag it asks for already exists. Re-read the code before the issue.
 - **[#27](https://github.com/haggyroth/dupeguru/issues/27)** — PyQt6 alongside PyQt5. A real
   project. Relevant on macOS, where Homebrew increasingly prefers PyQt6.
 - **[#28](https://github.com/haggyroth/dupeguru/issues/28)** — resumable scans. The largest
