@@ -14,4 +14,7 @@ if __name__ == "__main__":
     # The guard matters beyond style: content scans use a ProcessPoolExecutor, and on
     # spawn platforms each worker re-imports the main module. Calling main() at import
     # time, as this file used to, would make every worker re-run the whole CLI.
+    import multiprocessing
+
+    multiprocessing.freeze_support()
     sys.exit(main())

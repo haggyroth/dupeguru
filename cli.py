@@ -1380,4 +1380,8 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
+    # See run.py: required before anything else in a frozen entry point.
+    import multiprocessing
+
+    multiprocessing.freeze_support()
     sys.exit(main())

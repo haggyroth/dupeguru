@@ -7,7 +7,6 @@
 # http://www.gnu.org/licenses/gpl-3.0.html
 
 import logging
-import multiprocessing
 from collections import defaultdict
 
 from hscommon.trans import tr
@@ -201,6 +200,3 @@ def getmatches(pictures, cache_path, threshold, match_scaled=False, match_rotate
         result.append(get_match(ref, other, pct))
 
     return result
-
-
-multiprocessing.freeze_support()
