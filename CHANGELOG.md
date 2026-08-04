@@ -9,6 +9,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [4.6.0] - 2026-08-04
+
 ### Added
 
 - **`--plan` reports what a deletion would do** (`cli.py`, `core/app.py`, issue #25): there
@@ -437,7 +439,8 @@ fork no longer routes anyone or anything upstream, and CI runs for the first tim
 
 See `git log` for changes prior to this changelog.
 
-[Unreleased]: https://github.com/haggyroth/dupeguru/compare/v4.5.0...HEAD
+[Unreleased]: https://github.com/haggyroth/dupeguru/compare/v4.6.0...HEAD
+[4.6.0]: https://github.com/haggyroth/dupeguru/compare/v4.5.0...v4.6.0
 [4.5.0]: https://github.com/haggyroth/dupeguru/compare/v4.4.1...v4.5.0
 [4.4.1]: https://github.com/haggyroth/dupeguru/compare/v4.4.0...v4.4.1
 [4.4.0]: https://github.com/haggyroth/dupeguru/releases/tag/v4.4.0

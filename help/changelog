@@ -1,3 +1,11 @@
+=== 4.6.0 (2026-08-04)
+* Add --plan, reporting exactly what a deletion would remove and what it would skip
+* Add --full-verify, re-reading partial-hash matches and discarding false positives
+* Expose partial-match verification in the preferences dialog, not just the CLI
+* Record partial-hash matches in CLI output and in saved results
+* Fix deletions from a saved results file bypassing the partial-match confirmation
+* Fix a missing pyrcc5 producing a GUI with no icons while reporting a successful build
+
 === 4.5.0 (2026-08-03)
 * Fix delete-and-replace-with-link destroying the file when the link could not be created
 * Fix the hash caches serving digests made by a different algorithm after an xxhash change
