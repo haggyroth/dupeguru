@@ -11,6 +11,17 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Partial-hash matches are recorded and can be verified** (`cli.py`, `core/scanner.py`,
+  `core/results.py`, issue #26): `--partial-hash-threshold` matches large files on three
+  sampled chunks, which can produce false positives, but the result set did not carry the
+  distinction — a sampled match and a full-content match both scored 100%. Each duplicate
+  entry now carries `partial_match`, and each stats record a `partial_matches` count, in
+  both JSON and NDJSON. New `--full-verify` re-reads only the files involved in partial
+  matches, compares them in full, drops any pair that does not actually match, and clears
+  the `partial` flag on those that do — so verified matches need no `--allow-partial-matches`
+  to delete. The results XML written by the GUI now round-trips the flag as well; it was
+  previously dropped on save, which silently promoted probable duplicates to confirmed ones
+  across a save/load cycle.
 - **CLI exclusions and ignore list** (`cli.py`, issue #24): the CLI had no way to express
   either, so a scripted scan walked `node_modules`, `.venv`, `__pycache__` and every OS
   metadata directory, with `.git` skipped only by an incidental dot-prefix fallback. New
@@ -28,6 +39,13 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **`--from-results` deletions now honour the partial-match gate** (`cli.py`, issue #26):
+  the scan path refuses to delete files matched only on a sampled hash unless
+  `--allow-partial-matches` is passed, but routing the same deletion through
+  `--from-results` bypassed that check entirely, because the flag was never serialised.
+  A results file written before this change cannot be checked at all; deleting from one
+  now warns explicitly rather than reporting zero partial matches, which would have been
+  indistinguishable from a genuinely clean result.
 - **`Scanner._getmatches` no longer rewrites `self.scan_type`** (`core/scanner.py`, issue #14):
   it assigned `self.scan_type = ScanType.FIELDS` to smuggle a `no_field_order` flag through,
   permanently. A second `get_dupe_groups()` call on the same `Scanner` therefore did an

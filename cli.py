@@ -34,7 +34,11 @@ Deletion:
                      without removing it. Takes precedence over --delete.
     --allow-partial-matches
                      Permit deleting files matched only on a partial (sampled) hash.
-                     Without it, --delete refuses when any such match is marked.
+                     Without it, --delete refuses when any such match is marked. This
+                     applies to --from-results deletions too.
+    --full-verify    Re-read partial-hash matches and compare full content, discarding
+                     any that turn out not to match. Removes the need for
+                     --allow-partial-matches by making the matches certain.
     --from-results F Re-use a prior JSON/NDJSON output instead of rescanning. Validates each
                      file's size and mtime before deleting; skips any that changed since the
                      prior scan. Combine with --delete --yes to act on saved results.
@@ -177,6 +181,8 @@ def _run_scan(app: DupeGuru, verbose: bool, progress_json: bool = False) -> None
 
     app.results.groups = scanner.get_dupe_groups(files, app.ignore_list, j)
     app.discarded_file_count = scanner.discarded_file_count
+    app.discarded_partial_count = scanner.discarded_partial_count
+    app.verified_partial_count = scanner.verified_partial_count
 
     fs.filesdb.commit()
     from core.hash_cache import hashcachedb
@@ -209,6 +215,10 @@ def _group_to_dict(group) -> dict:
                 "mtime": dupe.mtime,
                 "is_ref_folder": bool(dupe.is_ref),
                 "match_percentage": match.percentage if match else 0,
+                # A partial match was confirmed by sampled chunks, not a full content
+                # comparison. match_percentage is 100 either way, so this flag is the
+                # only thing distinguishing a probable duplicate from a certain one.
+                "partial_match": bool(getattr(match, "partial", False)) if match else False,
             }
         )
     return {"reference": ref_entry, "duplicates": dupes_out}
@@ -219,12 +229,14 @@ def _serialise_results(app: DupeGuru) -> dict:
     groups_out = []
     total_dupe_count = 0
     total_dupe_size = 0
+    total_partial = 0
 
     for group in app.results.groups:
         g = _group_to_dict(group)
         groups_out.append(g)
         total_dupe_count += len(g["duplicates"])
         total_dupe_size += sum(d["size"] for d in g["duplicates"])
+        total_partial += sum(1 for d in g["duplicates"] if d["partial_match"])
 
     return {
         "groups": groups_out,
@@ -232,6 +244,7 @@ def _serialise_results(app: DupeGuru) -> dict:
             "groups": len(groups_out),
             "total_duplicates": total_dupe_count,
             "total_duplicate_size_bytes": total_dupe_size,
+            "partial_matches": total_partial,
             "discarded_files": app.discarded_file_count,
         },
     }
@@ -241,6 +254,7 @@ def _emit_ndjson(app: DupeGuru, out) -> tuple[int, int, int]:
     """Write one JSON line per group then a stats line; return (groups, dupes, dupe_bytes)."""
     total_dupe_count = 0
     total_dupe_size = 0
+    total_partial = 0
     group_count = 0
 
     for group in app.results.groups:
@@ -248,6 +262,7 @@ def _emit_ndjson(app: DupeGuru, out) -> tuple[int, int, int]:
         dupe_size = sum(d["size"] for d in g["duplicates"])
         total_dupe_count += len(g["duplicates"])
         total_dupe_size += dupe_size
+        total_partial += sum(1 for d in g["duplicates"] if d["partial_match"])
         group_count += 1
         print(json.dumps({"type": "group", **g}, ensure_ascii=False), file=out)
 
@@ -256,6 +271,7 @@ def _emit_ndjson(app: DupeGuru, out) -> tuple[int, int, int]:
         "groups": group_count,
         "total_duplicates": total_dupe_count,
         "total_duplicate_size_bytes": total_dupe_size,
+        "partial_matches": total_partial,
         "discarded_files": app.discarded_file_count,
     }
     print(json.dumps(stats, ensure_ascii=False), file=out)
@@ -346,6 +362,26 @@ def _load_results_json(path: str) -> list[dict]:
         if obj.get("type") == "group":
             groups.append({"reference": obj["reference"], "duplicates": obj["duplicates"]})
     return groups
+
+
+def _saved_partial_counts(groups: list[dict]) -> tuple[int, bool]:
+    """Return (partial_count, recorded) for the deletable entries in saved results.
+
+    ``recorded`` is False when any entry predates the ``partial_match`` field. The count
+    is then meaningless and must not be presented as a confirmed zero: a results file
+    written before the field existed looks identical to one with no partial matches.
+    """
+    count = 0
+    recorded = True
+    for group in groups:
+        for dupe in group.get("duplicates", []):
+            if dupe.get("is_ref_folder"):
+                continue
+            if "partial_match" not in dupe:
+                recorded = False
+            elif dupe["partial_match"]:
+                count += 1
+    return count, recorded
 
 
 def _delete_from_saved_results(
@@ -574,6 +610,15 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     knobs.add_argument(
+        "--full-verify",
+        action="store_true",
+        help=(
+            "Re-read and fully hash the files in partial-hash matches, discarding any that "
+            "do not match on full content. Only affects scans using "
+            "--partial-hash-threshold, and costs a second read of just those files."
+        ),
+    )
+    knobs.add_argument(
         "--trust-cache-ignore-mtime",
         "--rehash-ignore-mtime",  # old spelling, kept so existing scripts keep working
         dest="trust_cache_ignore_mtime",
@@ -789,17 +834,19 @@ def main(argv=None) -> int:
             return EXIT_DUPES_FOUND if group_count > 0 else EXIT_OK
 
         # Deletion from saved results
+        plan_partial, partial_recorded = _saved_partial_counts(groups)
+
         if args.dry_run:
-            # --dry-run wins over --delete. Saved results carry no partial-match flag
-            # (see issue #26), so the partial count is reported as unknown rather than
-            # as zero, which would be a false reassurance.
+            # --dry-run wins over --delete.
             plan_bytes = sum(d["size"] for g in groups for d in g.get("duplicates", []) if not d.get("is_ref_folder"))
             plan_count = sum(1 for g in groups for d in g.get("duplicates", []) if not d.get("is_ref_folder"))
-            _report_deletion_plan(plan_count, plan_bytes, 0, args.direct_delete)
-            print(
-                "  note: saved results do not record partial-hash matches, so none can be " "reported here",
-                file=sys.stderr,
-            )
+            _report_deletion_plan(plan_count, plan_bytes, plan_partial, args.direct_delete)
+            if not partial_recorded:
+                print(
+                    "  note: these saved results predate partial-match recording, so partial "
+                    "matches cannot be reported here. Re-scan to get them.",
+                    file=sys.stderr,
+                )
             return EXIT_DUPES_FOUND if plan_count > 0 else EXIT_OK
 
         if not args.yes:
@@ -809,6 +856,24 @@ def main(argv=None) -> int:
                 file=sys.stderr,
             )
             return EXIT_BAD_ARGS
+
+        # Mirror the scan path's refusal to delete probable-only duplicates. Without this,
+        # routing a deletion through --from-results silently bypassed the gate entirely.
+        if plan_partial and not args.allow_partial_matches:
+            print(
+                f"error: {plan_partial} file(s) in these saved results were matched on a "
+                "partial (sampled) hash, not a full content comparison. They are probable "
+                "duplicates, but a false positive is possible.\n"
+                "Re-run with --allow-partial-matches to delete them anyway.",
+                file=sys.stderr,
+            )
+            return EXIT_BAD_ARGS
+        if not partial_recorded:
+            print(
+                "warning: these saved results predate partial-match recording, so any "
+                "partial matches in them cannot be detected or refused.",
+                file=sys.stderr,
+            )
 
         deleted, problems = _delete_from_saved_results(groups, args.direct_delete, args.verbose)
 
@@ -880,6 +945,7 @@ def main(argv=None) -> int:
     app.options["size_threshold"] = args.min_size * 1024  # KB -> bytes
     app.options["large_size_threshold"] = args.max_size * 1024 * 1024  # MB -> bytes
     app.options["big_file_size_threshold"] = args.partial_hash_threshold * 1024 * 1024  # MiB -> bytes
+    app.options["full_verify"] = args.full_verify
     # The core option keeps its original name; only the CLI spelling changed.
     app.options["rehash_ignore_mtime"] = args.trust_cache_ignore_mtime
 
@@ -965,6 +1031,20 @@ def main(argv=None) -> int:
             + ".",
             file=sys.stderr,
         )
+
+    # Report full verification unconditionally: a discarded pair means partial hashing
+    # produced a false positive, which the user needs to know even without --verbose.
+    if args.full_verify:
+        verified = app.verified_partial_count
+        rejected = app.discarded_partial_count
+        if verified or rejected:
+            print(
+                f"Full verification: {verified} partial match(es) confirmed on full content, "
+                f"{rejected} discarded as false positive(s).",
+                file=sys.stderr,
+            )
+        elif args.verbose:
+            print("Full verification: no partial matches to verify.", file=sys.stderr)
 
     # Deletion (scan path) ------------------------------------------------
     if wants_delete and args.dry_run:

@@ -144,6 +144,9 @@ class DupeGuru(Broadcaster):
             os.makedirs(self.appdata)
         self.app_mode = AppMode.STANDARD
         self.discarded_file_count = 0
+        # Set by the scanner when the full_verify option is on; both stay 0 otherwise.
+        self.discarded_partial_count = 0
+        self.verified_partial_count = 0
         self.exclude_list = ExcludeList()
         hash_cache_file = op.join(self.appdata, "hash_cache.db")
         fs.filesdb.connect(hash_cache_file)
@@ -973,6 +976,8 @@ class DupeGuru(Broadcaster):
             logging.info("Scanning %d files" % len(files))
             self.results.groups = scanner.get_dupe_groups(files, self.ignore_list, j)
             self.discarded_file_count = scanner.discarded_file_count
+            self.discarded_partial_count = getattr(scanner, "discarded_partial_count", 0)
+            self.verified_partial_count = getattr(scanner, "verified_partial_count", 0)
             if profile_scan:
                 pr.disable()
                 pr.dump_stats(op.join(self.appdata, f"{datetime.datetime.now():%Y-%m-%d_%H-%M-%S}.profile"))

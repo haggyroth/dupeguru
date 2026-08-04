@@ -164,7 +164,32 @@ Add `--dry-run` to see what would be removed without removing it. It takes prece
 If any marked file was matched on a partial (sampled) hash rather than full content — only
 possible when `--partial-hash-threshold` is in use — `--delete` refuses and exits 2. Those are
 probable duplicates, not confirmed ones. Pass `--allow-partial-matches` to delete them anyway,
-or drop `--partial-hash-threshold` to compare full contents.
+or drop `--partial-hash-threshold` to compare full contents. The same refusal applies when
+deleting from a saved results file with `--from-results`.
+
+### Partial (sampled) matches
+
+`--partial-hash-threshold` speeds up scans by comparing three sampled chunks of a large file
+instead of its full contents. That is a real trade: two different files can agree on every
+sampled chunk. Because such a pair still scores 100%, the match percentage alone cannot tell
+you which results are certain, so every duplicate entry carries a `partial_match` flag and
+each stats record carries a `partial_matches` count:
+
+    $ dupeguru-scan /data --partial-hash-threshold 64 | jq '.stats.partial_matches'
+    21
+
+To resolve them rather than just see them, `--full-verify` re-reads only the files involved in
+partial matches, compares them in full, and discards any pair that turns out not to match:
+
+    $ dupeguru-scan /data --partial-hash-threshold 64 --full-verify
+    Full verification: 20 partial match(es) confirmed on full content, 1 discarded as false positive(s).
+
+Verified matches are no longer partial, so `--delete` accepts them without
+`--allow-partial-matches`. The cost is one extra read of just those files, which is far less
+than scanning without a threshold at all.
+
+Results saved before this fork recorded `partial_match` cannot be checked. Deleting from such
+a file warns and proceeds rather than reporting a false zero; re-scan if you need the flag.
 
 Run `dupeguru-scan --help` for the full option list, including the scanner knobs
 (`--min-match`, `--min-size`, `--max-size`, `--partial-hash-threshold`, and others).
