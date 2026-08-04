@@ -245,7 +245,14 @@ class TestNdjsonOutput:
         assert rc == EXIT_OK
         lines = [json.loads(ln) for ln in capsys.readouterr().out.splitlines() if ln.strip()]
         assert lines == [
-            {"type": "stats", "groups": 0, "total_duplicates": 0, "total_duplicate_size_bytes": 0, "discarded_files": 0}
+            {
+                "type": "stats",
+                "groups": 0,
+                "total_duplicates": 0,
+                "total_duplicate_size_bytes": 0,
+                "partial_matches": 0,
+                "discarded_files": 0,
+            }
         ]
 
     def test_ndjson_written_to_output_file(self, tmp_path):
@@ -505,6 +512,157 @@ class TestPartialMatchGate:
 
 
 # ---------------------------------------------------------------------------
+# Partial matches are recorded in the output (issue #26)
+# ---------------------------------------------------------------------------
+
+
+def _sampled_twin_pair() -> tuple[bytes, bytes]:
+    """Two 4 MiB payloads that agree on every sampled region but differ in full content.
+
+    This is a genuine partial-hash false positive, not merely a pair flagged as partial.
+    digest_partial covers bytes [0x4000, 0x8000); digest_samples covers 1 MiB chunks at
+    25%, 60% and the tail. Byte 0x30000 (192 KiB) falls outside all of them, so the pair
+    is indistinguishable to sampled hashing while genuinely differing on full content.
+    """
+    size = 4 * 1024 * 1024
+    a = bytearray(size)
+    # Non-uniform content, so agreement on a sample means something.
+    for i in range(0, size, 4096):
+        a[i] = (i // 4096) % 251
+    b = bytearray(a)
+    b[0x30000] ^= 0xFF
+    return bytes(a), bytes(b)
+
+
+class TestPartialMatchSerialisation:
+    def test_partial_match_recorded_in_json(self, tmp_path, capsys):
+        """match_percentage is 100 either way, so partial_match is the only signal."""
+        _write_files(tmp_path, {"big_a.bin": _BIG_FILE, "big_b.bin": _BIG_FILE})
+        rc = main([str(tmp_path), "--partial-hash-threshold", str(_PARTIAL_THRESHOLD_MIB)])
+        assert rc == EXIT_DUPES_FOUND
+        data = json.loads(capsys.readouterr().out)
+        dupes = data["groups"][0]["duplicates"]
+        assert [d["partial_match"] for d in dupes] == [True]
+        assert data["stats"]["partial_matches"] == 1
+
+    def test_full_content_match_recorded_as_not_partial(self, tmp_path, capsys):
+        _write_files(tmp_path, {"a.txt": b"same", "b.txt": b"same"})
+        rc = main([str(tmp_path)])
+        assert rc == EXIT_DUPES_FOUND
+        data = json.loads(capsys.readouterr().out)
+        assert [d["partial_match"] for d in data["groups"][0]["duplicates"]] == [False]
+        assert data["stats"]["partial_matches"] == 0
+
+    def test_partial_match_recorded_in_ndjson_stats(self, tmp_path, capsys):
+        _write_files(tmp_path, {"big_a.bin": _BIG_FILE, "big_b.bin": _BIG_FILE})
+        rc = main([str(tmp_path), "--ndjson", "--partial-hash-threshold", str(_PARTIAL_THRESHOLD_MIB)])
+        assert rc == EXIT_DUPES_FOUND
+        lines = [json.loads(ln) for ln in capsys.readouterr().out.splitlines() if ln.strip()]
+        stats = [line for line in lines if line["type"] == "stats"][0]
+        assert stats["partial_matches"] == 1
+
+
+class TestFromResultsPartialGate:
+    """Routing a deletion through --from-results must not bypass the partial-match gate."""
+
+    def _save_partial_results(self, scan_dir, out_file):
+        _write_files(scan_dir, {"big_a.bin": _BIG_FILE, "big_b.bin": _BIG_FILE})
+        rc = main([str(scan_dir), "--output", str(out_file), "--partial-hash-threshold", str(_PARTIAL_THRESHOLD_MIB)])
+        assert rc == EXIT_DUPES_FOUND
+        return out_file
+
+    def test_saved_partial_match_blocks_delete_without_optin(self, tmp_path, capsys):
+        scan_dir = tmp_path / "scan"
+        scan_dir.mkdir()
+        out = self._save_partial_results(scan_dir, tmp_path / "results.json")
+        capsys.readouterr()
+
+        rc = main(["--from-results", str(out), "--direct-delete", "--yes"])
+        assert rc == EXIT_BAD_ARGS
+        assert len(list(scan_dir.iterdir())) == 2, "nothing may be deleted when the gate refuses"
+        assert "--allow-partial-matches" in capsys.readouterr().err
+
+    def test_saved_partial_match_deleted_with_optin(self, tmp_path, capsys):
+        scan_dir = tmp_path / "scan"
+        scan_dir.mkdir()
+        out = self._save_partial_results(scan_dir, tmp_path / "results.json")
+        capsys.readouterr()
+
+        rc = main(["--from-results", str(out), "--direct-delete", "--yes", "--allow-partial-matches"])
+        assert rc == EXIT_DUPES_FOUND
+        assert len(list(scan_dir.iterdir())) == 1
+
+    def test_legacy_results_without_flag_warn_but_proceed(self, tmp_path, capsys):
+        """A file predating partial_match cannot be checked; say so rather than imply zero."""
+        scan_dir = tmp_path / "scan"
+        scan_dir.mkdir()
+        out = self._save_partial_results(scan_dir, tmp_path / "results.json")
+        data = json.loads(out.read_text())
+        for group in data["groups"]:
+            for dupe in group["duplicates"]:
+                del dupe["partial_match"]
+        out.write_text(json.dumps(data))
+        capsys.readouterr()
+
+        rc = main(["--from-results", str(out), "--direct-delete", "--yes"])
+        assert rc == EXIT_DUPES_FOUND
+        assert "cannot be detected or refused" in capsys.readouterr().err
+        assert len(list(scan_dir.iterdir())) == 1, "a legacy file must warn, not block"
+
+
+class TestFullVerify:
+    def test_full_verify_discards_sampled_false_positive(self, tmp_path, capsys):
+        """The payoff: a pair that sampling calls identical but that genuinely differs."""
+        payload_a, payload_b = _sampled_twin_pair()
+        _write_files(tmp_path, {"twin_a.bin": payload_a, "twin_b.bin": payload_b})
+
+        # Without verification, sampled hashing reports these as a duplicate pair.
+        rc = main([str(tmp_path), "--partial-hash-threshold", str(_PARTIAL_THRESHOLD_MIB)])
+        assert rc == EXIT_DUPES_FOUND, "fixture is wrong: these must match on sampled hashes"
+        data = json.loads(capsys.readouterr().out)
+        assert data["stats"]["partial_matches"] == 1
+
+        rc = main([str(tmp_path), "--partial-hash-threshold", str(_PARTIAL_THRESHOLD_MIB), "--full-verify"])
+        assert rc == EXIT_OK, "full verification must reject the false positive"
+        out, err = capsys.readouterr()
+        assert json.loads(out)["stats"]["groups"] == 0
+        assert "1 discarded as false positive" in err
+
+    def test_full_verify_keeps_and_confirms_true_duplicates(self, tmp_path, capsys):
+        _write_files(tmp_path, {"big_a.bin": _BIG_FILE, "big_b.bin": _BIG_FILE})
+        rc = main([str(tmp_path), "--partial-hash-threshold", str(_PARTIAL_THRESHOLD_MIB), "--full-verify"])
+        assert rc == EXIT_DUPES_FOUND
+        out, err = capsys.readouterr()
+        data = json.loads(out)
+        assert data["stats"]["groups"] == 1
+        # Verified matches are no longer partial, so nothing is left to warn about.
+        assert data["stats"]["partial_matches"] == 0
+        assert "1 partial match(es) confirmed" in err
+
+    def test_full_verify_removes_need_for_allow_partial_matches(self, tmp_path):
+        """Verification makes the match certain, so the deletion gate has nothing to refuse."""
+        _write_files(tmp_path, {"big_a.bin": _BIG_FILE, "big_b.bin": _BIG_FILE})
+        rc = main(
+            [
+                str(tmp_path),
+                "--partial-hash-threshold",
+                str(_PARTIAL_THRESHOLD_MIB),
+                "--full-verify",
+                "--direct-delete",
+                "--yes",
+            ]
+        )
+        assert rc == EXIT_DUPES_FOUND
+        assert len(list(tmp_path.iterdir())) == 1
+
+    def test_full_verify_is_a_noop_without_partial_matches(self, tmp_path, capsys):
+        _write_files(tmp_path, {"a.txt": b"same", "b.txt": b"same"})
+        rc = main([str(tmp_path), "--full-verify"])
+        assert rc == EXIT_DUPES_FOUND
+        assert json.loads(capsys.readouterr().out)["stats"]["groups"] == 1
+
+
+# ---------------------------------------------------------------------------
 # --from-results
 # ---------------------------------------------------------------------------
 
@@ -541,7 +699,9 @@ class TestFromResults:
         assert len(list(scan_dir.iterdir())) == 2, "--dry-run must not delete anything"
         err = capsys.readouterr().err
         assert "DRY RUN" in err
-        assert "do not record partial-hash matches" in err
+        # These results were written by this version, so the partial-match flag is present
+        # and the "predates partial-match recording" caveat must not appear.
+        assert "predate partial-match recording" not in err
 
     def test_from_results_ndjson(self, tmp_path, capsys):
         out = tmp_path / "results.json"

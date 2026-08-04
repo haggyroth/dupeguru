@@ -652,6 +652,42 @@ class TestCaseResultsXML:
         match = group.get_match_of(d3)  # d2 - d3
         eq_(46, match[2])
 
+    def test_remember_partial_flag(self):
+        """A reloaded partial match must stay partial: it gates deletion (issue #26).
+
+        percentage is 100 for a sampled match and for a full-content one, so dropping this
+        flag on save silently promoted probable duplicates to confirmed ones.
+        """
+        group = self.groups[0]
+        d1, d2, d3 = group
+        group.matches = {
+            engine.Match(d1, d2, 100, partial=True),
+            engine.Match(d1, d3, 100),
+            engine.Match(d2, d3, 100, partial=True),
+        }
+        f = io.BytesIO()
+        self.results.save_to_xml(f)
+        f.seek(0)
+        results = Results(DupeGuru())
+        results.load_from_xml(f, self.get_file)
+        group = results.groups[0]
+        d1, d2, d3 = group
+        assert group.get_match_of(d2).partial is True
+        assert group.get_match_of(d3).partial is False
+
+    def test_load_xml_without_partial_attribute_defaults_to_false(self):
+        """Results saved before the attribute existed must load as fully-confirmed."""
+        group = self.groups[0]
+        d1, d2, d3 = group
+        group.matches = {engine.Match(d1, d2, 100, partial=True)}
+        f = io.BytesIO()
+        self.results.save_to_xml(f)
+        legacy = f.getvalue().replace(b'partial="y"', b"")
+        results = Results(DupeGuru())
+        results.load_from_xml(io.BytesIO(legacy), self.get_file)
+        group = results.groups[0]
+        assert group.get_match_of(group[1]).partial is False
+
     def test_save_and_load(self):
         # previously, when reloading matches, they wouldn't be reloaded as namedtuples
         f = io.BytesIO()

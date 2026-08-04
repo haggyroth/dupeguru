@@ -95,6 +95,9 @@ class Scanner:
     def __init__(self):
         self.discarded_file_count = 0
         self.parallel_scan = (os.cpu_count() or 1) > 1
+        # Populated by _verify_partial_matches when full_verify is on.
+        self.discarded_partial_count = 0
+        self.verified_partial_count = 0
 
     def _hash_files_parallel(self, candidates, j, bigsize=0):
         """Pre-populate File.digest for content-scan candidates using the hash cache
@@ -187,6 +190,45 @@ class Scanner:
             hashcachedb.set_batch(new_rows)
         j.set_progress(total)
 
+    def _verify_partial_matches(self, matches, j):
+        """Re-compare sampled-hash matches on full content, dropping any that disagree.
+
+        Partial matching confirms a pair on three sampled chunks, so two files of equal
+        size that happen to agree at those offsets match without ever being compared in
+        full. This re-reads only the files involved in such pairs. A pair whose full
+        digests agree loses its ``partial`` flag and is thereafter indistinguishable from
+        a normally-confirmed match; a pair that disagrees was a false positive and is
+        removed before grouping.
+
+        A file whose digest could not be read yields an empty digest. Two of those must
+        not be treated as equal, so an empty digest always fails verification.
+        """
+        partial_indexes = [i for i, m in enumerate(matches) if m.partial]
+        if not partial_indexes:
+            return matches
+        total = len(partial_indexes)
+        logging.info("Full-verifying %d partial match(es)", total)
+        verified = list(matches)
+        discarded = 0
+        for done, i in enumerate(partial_indexes, 1):
+            m = matches[i]
+            first_digest = m.first.digest
+            if first_digest and first_digest == m.second.digest:
+                verified[i] = engine.Match(m.first, m.second, m.percentage)
+            else:
+                verified[i] = None
+                discarded += 1
+            if done % 10 == 0 or done == total:
+                j.set_progress(
+                    done * 100 // total,
+                    tr("Verifying partial matches %d/%d") % (done, total),
+                )
+        if discarded:
+            logging.info("Full verification discarded %d false positive(s)", discarded)
+        self.discarded_partial_count = discarded
+        self.verified_partial_count = total - discarded
+        return [m for m in verified if m is not None]
+
     def _getmatches(self, files, j):
         if (
             self.size_threshold
@@ -274,6 +316,10 @@ class Scanner:
         logging.info("Getting matches. Scan type: %d", self.scan_type)
         matches = self._getmatches(files, j)
         logging.info("Found %d matches" % len(matches))
+        if self.full_verify:
+            # Before any grouping, so a discarded false positive can't drag unrelated
+            # files into a group with it.
+            matches = self._verify_partial_matches(matches, j)
         j.set_progress(100, tr("Almost done! Fiddling with results..."))
         # In removing what we call here "false matches", we first want to remove, if we scan by
         # folders, we want to remove folder matches for which the parent is also in a match (they're
@@ -337,5 +383,6 @@ class Scanner:
     size_threshold = 0
     large_size_threshold = 0
     big_file_size_threshold = 0
+    full_verify = False
     word_weighting = False
     include_exists_check = True

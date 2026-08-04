@@ -257,7 +257,10 @@ class Results(Markable):
                     first_file = dupes[int(attrs["first"])]
                     second_file = dupes[int(attrs["second"])]
                     percentage = int(attrs["percentage"])
-                    group.add_match(engine.Match(first_file, second_file, percentage))
+                    # Absent in results saved before partial matches were recorded; those
+                    # predate partial hashing being surfaced at all, so False is correct.
+                    partial = attrs.get("partial") == "y"
+                    group.add_match(engine.Match(first_file, second_file, percentage, partial))
                 except (IndexError, KeyError, ValueError):
                     # Covers missing attr, non-int values and indexes out of bounds
                     pass
@@ -397,6 +400,7 @@ class Results(Markable):
                                     "first": str(dupe2index[match.first]),
                                     "second": str(dupe2index[match.second]),
                                     "percentage": str(int(match.percentage)),
+                                    "partial": "y" if match.partial else "n",
                                 },
                             )
                             gen.endElement("match")
