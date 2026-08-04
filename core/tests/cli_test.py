@@ -772,3 +772,147 @@ class TestScannerFlagSemantics:
         monkeypatch.setattr(cli, "_run_scan", _capture)
         main([str(tmp_path), "--trust-cache-ignore-mtime"])
         eq_(captured["ignore_mtime"], True)
+
+
+# ---------------------------------------------------------------------------
+# Exclusions and ignore list (issue #24)
+# ---------------------------------------------------------------------------
+
+
+def _paths_in(data) -> set:
+    out = set()
+    for group in data["groups"]:
+        out.add(group["reference"]["path"])
+        for dupe in group["duplicates"]:
+            out.add(dupe["path"])
+    return out
+
+
+def _tree_with_junk(root: Path) -> None:
+    """keep/ has two identical files; node_modules/ and .hidden/ each hold a third copy."""
+    for sub in ("keep", "node_modules", ".hidden"):
+        (root / sub).mkdir()
+    _write_files(root / "keep", {"a.txt": b"same", "b.txt": b"same"})
+    _write_files(root / "node_modules", {"c.txt": b"same"})
+    _write_files(root / ".hidden", {"d.txt": b"same"})
+
+
+class TestExclusions:
+    def test_without_exclusions_junk_folders_are_scanned(self, tmp_path, capsys):
+        """The gap #24 describes: a scripted run walks node_modules and everything else."""
+        _tree_with_junk(tmp_path)
+        main([str(tmp_path)])
+        paths = _paths_in(json.loads(capsys.readouterr().out))
+        assert any("node_modules" in p for p in paths)
+
+    def test_exclude_keeps_a_folder_out(self, tmp_path, capsys):
+        _tree_with_junk(tmp_path)
+        main([str(tmp_path), "--exclude", "^node_modules$"])
+        paths = _paths_in(json.loads(capsys.readouterr().out))
+        assert not any("node_modules" in p for p in paths)
+        assert any("keep" in p for p in paths)
+
+    def test_exclude_alone_disables_the_dotfile_fallback(self, tmp_path, capsys):
+        """Surprising but real, and the reason --exclude's help says so.
+
+        Directories._default_state_for_path only falls back to "skip names starting with
+        a dot" while the exclude list is empty. Marking any pattern replaces that branch
+        outright, so adding one exclusion *widens* the scan.
+        """
+        _tree_with_junk(tmp_path)
+
+        main([str(tmp_path)])
+        without = _paths_in(json.loads(capsys.readouterr().out))
+
+        main([str(tmp_path), "--exclude", "^node_modules$"])
+        with_exclusion = _paths_in(json.loads(capsys.readouterr().out))
+
+        assert not any(".hidden" in p for p in without)
+        assert any(".hidden" in p for p in with_exclusion)
+
+    def test_exclude_defaults_restores_hidden_folder_skipping(self, tmp_path, capsys):
+        _tree_with_junk(tmp_path)
+        main([str(tmp_path), "--exclude", "^node_modules$", "--exclude-defaults"])
+        paths = _paths_in(json.loads(capsys.readouterr().out))
+        assert not any(".hidden" in p for p in paths)
+        assert not any("node_modules" in p for p in paths)
+
+    def test_exclude_defaults_alone_skips_hidden_folders(self, tmp_path, capsys):
+        _tree_with_junk(tmp_path)
+        main([str(tmp_path), "--exclude-defaults"])
+        paths = _paths_in(json.loads(capsys.readouterr().out))
+        assert not any(".hidden" in p for p in paths)
+
+    def test_exclude_can_be_repeated(self, tmp_path, capsys):
+        _tree_with_junk(tmp_path)
+        main([str(tmp_path), "--exclude", "^node_modules$", "--exclude", r"^\.hidden$"])
+        paths = _paths_in(json.loads(capsys.readouterr().out))
+        assert not any("node_modules" in p for p in paths)
+        assert not any(".hidden" in p for p in paths)
+
+    def test_exclude_from_file(self, tmp_path, capsys):
+        _tree_with_junk(tmp_path)
+        listfile = tmp_path / "excludes.txt"
+        listfile.write_text("# junk directories\n\n^node_modules$\n\n  ^\\.hidden$  \n", encoding="utf-8")
+        main([str(tmp_path), "--exclude-from", str(listfile)])
+        paths = _paths_in(json.loads(capsys.readouterr().out))
+        assert not any("node_modules" in p for p in paths)
+        assert not any(".hidden" in p for p in paths)
+
+    def test_exclude_from_missing_file_is_a_bad_arg(self, tmp_path, capsys):
+        _tree_with_junk(tmp_path)
+        rc = main([str(tmp_path), "--exclude-from", str(tmp_path / "nope.txt")])
+        eq_(rc, EXIT_BAD_ARGS)
+        assert "error reading exclude file" in capsys.readouterr().err
+
+    def test_invalid_regex_is_a_bad_arg(self, tmp_path, capsys):
+        _tree_with_junk(tmp_path)
+        rc = main([str(tmp_path), "--exclude", "*unclosed["])
+        eq_(rc, EXIT_BAD_ARGS)
+        assert "cannot use exclusion" in capsys.readouterr().err
+
+    def test_forbidden_overbroad_regex_is_rejected(self, tmp_path, capsys):
+        """core.exclude refuses patterns like .* that would exclude everything."""
+        _tree_with_junk(tmp_path)
+        rc = main([str(tmp_path), "--exclude", ".*"])
+        eq_(rc, EXIT_BAD_ARGS)
+        assert "cannot use exclusion" in capsys.readouterr().err
+
+    def test_duplicate_exclusion_is_not_an_error(self, tmp_path, capsys):
+        """Adding the same pattern twice must still leave it marked, not raise."""
+        _tree_with_junk(tmp_path)
+        rc = main([str(tmp_path), "--exclude", "^node_modules$", "--exclude", "^node_modules$"])
+        assert rc in (EXIT_OK, EXIT_DUPES_FOUND)
+        paths = _paths_in(json.loads(capsys.readouterr().out))
+        assert not any("node_modules" in p for p in paths)
+
+
+class TestIgnoreList:
+    def _write_ignore_list(self, tmp_path, first, second):
+        from core.ignore import IgnoreList
+
+        ignore = IgnoreList()
+        ignore.ignore(str(first), str(second))
+        dest = tmp_path / "ignore_list.xml"
+        ignore.save_to_xml(str(dest))
+        return dest
+
+    def test_ignore_list_suppresses_a_recorded_pair(self, tmp_path, capsys):
+        scan = tmp_path / "scan"
+        scan.mkdir()
+        _write_files(scan, {"a.txt": b"same", "b.txt": b"same"})
+
+        main([str(scan)])
+        eq_(len(json.loads(capsys.readouterr().out)["groups"]), 1)
+
+        listfile = self._write_ignore_list(tmp_path, scan / "a.txt", scan / "b.txt")
+        main([str(scan), "--ignore-list", str(listfile)])
+        eq_(len(json.loads(capsys.readouterr().out)["groups"]), 0)
+
+    def test_ignore_list_missing_file_is_a_bad_arg(self, tmp_path, capsys):
+        scan = tmp_path / "scan"
+        scan.mkdir()
+        _write_files(scan, {"a.txt": b"same", "b.txt": b"same"})
+        rc = main([str(scan), "--ignore-list", str(tmp_path / "nope.xml")])
+        eq_(rc, EXIT_BAD_ARGS)
+        assert "error reading ignore list" in capsys.readouterr().err

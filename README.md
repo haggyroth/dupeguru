@@ -112,6 +112,28 @@ Re-use a previous scan instead of rescanning:
 
     $ dupeguru-scan --from-results results.json
 
+### Exclusions
+
+Without exclusions the scan walks everything under the given folders, `node_modules` and
+`.venv` included:
+
+    $ dupeguru-scan ~/code --exclude '^node_modules$' --exclude '^\.venv$'
+    $ dupeguru-scan ~/code --exclude-from excludes.txt
+
+Patterns are regexes matched against the file or folder name, or against the full path when
+the pattern contains a path separator. `--exclude-from` reads one per line, ignoring blank
+lines and `#` comments.
+
+> **Careful:** adding any exclusion replaces the built-in "skip folders whose name starts with
+> a dot" fallback, so `--exclude '^node_modules$'` on its own will start descending into
+> `.git`. Pass `--exclude-defaults` alongside it to keep that behaviour — it applies the same
+> set as the GUI's Restore Defaults button (OS metadata, trash folders, dot-prefixed names).
+
+An ignore list saved by the GUI can be loaded too; pairs recorded in it are never reported as
+matching each other:
+
+    $ dupeguru-scan ~/Photos --ignore-list ~/.local/share/dupeguru/ignore_list.xml
+
 ### Exit codes
 
 | Code | Meaning |
