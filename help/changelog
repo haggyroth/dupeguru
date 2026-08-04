@@ -1,3 +1,9 @@
+=== 4.8.0 (2026-08-04)
+* Add a preview pane to standard mode: images side by side, icon and details for other files
+* Fix packaging steps reporting success when they had produced nothing
+* Fix the installer step failing without the build noticing
+* Always rebuild frozen applications from scratch, so a stale cache cannot be shipped
+
 === 4.7.1 (2026-08-04)
 * Fix the Windows uninstaller leaving the whole application behind, Qt runtime included
 * Fix packaged builds bundling the fallback Qt binding instead of the default one
