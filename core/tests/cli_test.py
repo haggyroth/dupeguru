@@ -1076,3 +1076,140 @@ class TestIgnoreList:
         rc = main([str(scan), "--ignore-list", str(tmp_path / "nope.xml")])
         eq_(rc, EXIT_BAD_ARGS)
         assert "error reading ignore list" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# --plan (issue #25)
+# ---------------------------------------------------------------------------
+
+
+class TestPlanMode:
+    def test_plan_needs_no_delete_and_removes_nothing(self, tmp_path, capsys):
+        _write_files(tmp_path, {"a.txt": b"same", "b.txt": b"same"})
+        rc = main([str(tmp_path), "--plan"])
+        assert rc == EXIT_DUPES_FOUND
+        assert len(list(tmp_path.iterdir())) == 2, "--plan must never delete"
+        out, err = capsys.readouterr()
+        assert "DELETION PLAN" in err
+        assert "nothing has been deleted" in err
+        payload = json.loads(out)
+        assert payload["stats"]["would_delete"] == 1
+        assert payload["stats"]["groups"] == 1
+
+    def test_plan_emits_verdict_and_confidence_per_file(self, tmp_path, capsys):
+        _write_files(tmp_path, {"a.txt": b"same", "b.txt": b"same"})
+        rc = main([str(tmp_path), "--plan"])
+        assert rc == EXIT_DUPES_FOUND
+        entry = json.loads(capsys.readouterr().out)["plan"][0]["duplicates"][0]
+        assert entry["would_delete"] is True
+        assert entry["match_confidence"] == "full"
+        assert "blocked_reason" not in entry
+
+    def test_plan_marks_partial_matches_as_such(self, tmp_path, capsys):
+        _write_files(tmp_path, {"big_a.bin": _BIG_FILE, "big_b.bin": _BIG_FILE})
+        rc = main([str(tmp_path), "--plan", "--partial-hash-threshold", str(_PARTIAL_THRESHOLD_MIB)])
+        assert rc == EXIT_DUPES_FOUND
+        out, err = capsys.readouterr()
+        payload = json.loads(out)
+        assert payload["plan"][0]["duplicates"][0]["match_confidence"] == "partial"
+        assert payload["stats"]["partial_matches"] == 1
+        assert payload["stats"]["full_content_matches"] == 0
+        assert "refused without --allow-partial-matches" in err
+
+    def test_plan_writes_to_output_file(self, tmp_path, capsys):
+        scan = tmp_path / "scan"
+        scan.mkdir()
+        _write_files(scan, {"a.txt": b"same", "b.txt": b"same"})
+        out_file = tmp_path / "plan.json"
+        rc = main([str(scan), "--plan", "--output", str(out_file)])
+        assert rc == EXIT_DUPES_FOUND
+        assert capsys.readouterr().out == "", "the plan went to --output, not stdout"
+        assert json.loads(out_file.read_text())["stats"]["would_delete"] == 1
+
+    def test_plan_reports_no_duplicates_cleanly(self, tmp_path, capsys):
+        _write_files(tmp_path, {"a.txt": b"unique A", "b.txt": b"unique B"})
+        rc = main([str(tmp_path), "--plan"])
+        assert rc == EXIT_OK
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["plan"] == []
+        assert payload["stats"]["would_delete"] == 0
+
+
+class TestPlanRevalidation:
+    """The plan must re-check each file, not assume every match is still deletable."""
+
+    def _save(self, scan_dir, out_file):
+        _write_files(scan_dir, {"a.txt": b"same", "b.txt": b"same", "c.txt": b"dup", "d.txt": b"dup"})
+        assert main([str(scan_dir), "--output", str(out_file)]) == EXIT_DUPES_FOUND
+        return json.loads(out_file.read_text())
+
+    def test_changed_and_missing_files_are_reported_as_blocked(self, tmp_path, capsys):
+        scan = tmp_path / "scan"
+        scan.mkdir()
+        out = tmp_path / "results.json"
+        self._save(scan, out)
+        capsys.readouterr()
+
+        # Break both non-reference files underneath the saved results.
+        for group in json.loads(out.read_text())["groups"]:
+            dupe = Path(group["duplicates"][0]["path"])
+            if dupe.name in ("b.txt", "d.txt"):
+                dupe.write_bytes(b"totally different content now")
+            else:
+                dupe.unlink()
+
+        rc = main(["--from-results", str(out), "--plan"])
+        assert rc == EXIT_OK, "nothing is deletable, so nothing would be reclaimed"
+        out_text, err = capsys.readouterr()
+        stats = json.loads(out_text)["stats"]
+        assert stats["would_delete"] == 0
+        assert stats["reclaimed_bytes"] == 0
+        assert sum(stats["blocked"].values()) == 2
+        assert stats["blocked_bytes"] > 0
+        assert "would be skipped" in err
+        # The prefix used to be baked into the reason as well, doubling the word.
+        assert "skipped: skipped:" not in err
+
+    def test_plan_and_deletion_cannot_disagree(self, tmp_path, capsys):
+        """The point of the issue: the plan is computed by the deletion's own predicate."""
+        scan = tmp_path / "scan"
+        scan.mkdir()
+        out = tmp_path / "results.json"
+        self._save(scan, out)
+        capsys.readouterr()
+
+        # Change exactly one duplicate so the plan must refuse it and keep the other.
+        changed = None
+        for group in json.loads(out.read_text())["groups"]:
+            dupe = Path(group["duplicates"][0]["path"])
+            if changed is None:
+                dupe.write_bytes(b"changed since the scan")
+                changed = dupe
+        assert changed is not None
+
+        rc = main(["--from-results", str(out), "--plan"])
+        assert rc == EXIT_DUPES_FOUND
+        plan = json.loads(capsys.readouterr().out)
+        predicted_delete = {e["path"] for g in plan["plan"] for e in g["duplicates"] if e["would_delete"]}
+        predicted_keep = {e["path"] for g in plan["plan"] for e in g["duplicates"] if not e["would_delete"]}
+        assert predicted_keep == {str(changed)}
+        assert len(predicted_delete) == 1
+
+        # Now actually delete, and confirm reality matches the prediction exactly.
+        rc = main(["--from-results", str(out), "--direct-delete", "--yes"])
+        assert rc in (EXIT_DUPES_FOUND, EXIT_SCAN_ERROR)
+        for path in predicted_delete:
+            assert not Path(path).exists(), f"plan said this would go: {path}"
+        for path in predicted_keep:
+            assert Path(path).exists(), f"plan said this would be skipped: {path}"
+
+
+class TestDryRunSummary:
+    def test_dry_run_reports_group_and_confidence_counts(self, tmp_path, capsys):
+        _write_files(tmp_path, {"a.txt": b"same", "b.txt": b"same"})
+        rc = main([str(tmp_path), "--delete", "--yes", "--dry-run"])
+        assert rc == EXIT_DUPES_FOUND
+        assert len(list(tmp_path.iterdir())) == 2
+        err = capsys.readouterr().err
+        assert "1 file(s) in 1 group(s)" in err
+        assert "1 matched on full content" in err

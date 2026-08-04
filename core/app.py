@@ -85,6 +85,64 @@ JOBID2TITLE = {
 }
 
 
+class DeleteStatus:
+    """Outcome of re-validating a file just before deleting it.
+
+    OK and GONE both mean "no problem to report"; the rest are refusals.
+    """
+
+    OK = "ok"  # present and unchanged since the scan
+    GONE = "gone"  # path no longer exists; deleting it is a no-op, not an error
+    SYMLINK = "symlink"  # path is now a symlink, which scans exclude
+    UNREADABLE = "unreadable"  # stat() failed
+    CHANGED = "changed"  # size or mtime differs from what the scan recorded
+
+
+# 2-second tolerance covers FAT32's 2-second mtime resolution and NTFS rounding.
+_MTIME_TOLERANCE = 2
+
+
+def check_deletable(path, expected_size, expected_mtime):
+    """Decide whether *path* can still be deleted, without deleting anything.
+
+    Returns ``(status, message)`` where status is a :class:`DeleteStatus` value and message
+    is a human-readable explanation (empty when the status is OK or GONE).
+
+    This is the single source of truth for "would this deletion actually happen". The
+    deleter raises on whatever this refuses, and the planner reports the same statuses
+    without touching the filesystem, so a plan cannot disagree with the deletion it
+    predicts -- a plan computed by different logic than the deletion is worse than no plan.
+    """
+    if not path.exists():
+        return DeleteStatus.GONE, ""
+    # Symlinks are excluded from scans; if the path is now a symlink it was replaced
+    # after the scan and we refuse to act on it.
+    if path.is_symlink():
+        return (
+            DeleteStatus.SYMLINK,
+            tr("'{}' is a symlink. Deletion through symlinks is not permitted.").format(str(path)),
+        )
+    # Re-validate size and mtime against values recorded at scan time. A mismatch means the
+    # file changed between scan and delete; refusing prevents deleting something the user
+    # never actually reviewed as a duplicate.
+    try:
+        st = path.stat()
+    except OSError as e:
+        return (
+            DeleteStatus.UNREADABLE,
+            tr("Could not verify '{}' before deletion: {}").format(str(path), e),
+        )
+    if st.st_size != expected_size or abs(st.st_mtime - expected_mtime) > _MTIME_TOLERANCE:
+        return (
+            DeleteStatus.CHANGED,
+            tr(
+                "'{}' was skipped: the file changed since the last scan (size or modification "
+                "time differs). Re-scan to refresh results."
+            ).format(str(path)),
+        )
+    return DeleteStatus.OK, ""
+
+
 class DupeGuru(Broadcaster):
     """Holds everything together.
 
@@ -258,29 +316,12 @@ class DupeGuru(Broadcaster):
         return False
 
     def _do_delete_dupe(self, dupe, link_deleted, use_hardlinks, direct_deletion):
-        if not dupe.path.exists():
+        # Shared with the planner: see check_deletable. Keep the decision there, not here.
+        status, message = check_deletable(dupe.path, dupe.size, dupe.mtime)
+        if status == DeleteStatus.GONE:
             return
-        # Symlinks are excluded from scans; if the path is now a symlink it was replaced
-        # after the scan and we refuse to act on it.
-        if dupe.path.is_symlink():
-            raise OSError(tr("'{}' is a symlink. Deletion through symlinks is not permitted.").format(str(dupe.path)))
-        # Re-validate size and mtime against values recorded at scan time.  A mismatch
-        # means the file changed between scan and delete; skipping prevents deleting
-        # something the user never actually reviewed as a duplicate.
-        try:
-            st = dupe.path.stat()
-        except OSError as e:
-            raise OSError(tr("Could not verify '{}' before deletion: {}").format(str(dupe.path), e)) from e
-        size_changed = st.st_size != dupe.size
-        # 2-second tolerance covers FAT32's 2-second mtime resolution and NTFS rounding.
-        mtime_changed = abs(st.st_mtime - dupe.mtime) > 2
-        if size_changed or mtime_changed:
-            raise OSError(
-                tr(
-                    "'{}' was skipped: the file changed since the last scan (size or modification "
-                    "time differs). Re-scan to refresh results."
-                ).format(str(dupe.path))
-            )
+        if status != DeleteStatus.OK:
+            raise OSError(message)
         str_path = str(dupe.path)
         link_tmp = None
         if link_deleted:

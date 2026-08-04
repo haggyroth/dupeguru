@@ -158,8 +158,44 @@ Add `--dry-run` to see what would be removed without removing it. It takes prece
 
     $ dupeguru-scan /data --delete --yes --dry-run
     DRY RUN: no files have been deleted.
-      would send to trash 412 file(s), reclaiming 3.71 GB
+      would send to trash 412 file(s) in 198 group(s), reclaiming 3.71 GB
+      412 matched on full content
       re-run without --dry-run to execute.
+
+### Planning a deletion
+
+`--plan` answers a different question from the results: not "what matched" but "what would
+actually be removed, and what would not". It implies no mutation, needs no `--delete`, and
+writes a per-file plan as JSON to stdout (or `--output`) in place of the normal results:
+
+    $ dupeguru-scan /data --plan
+    DELETION PLAN: no files have been deleted.
+      would send to trash 3,881 file(s) in 1,284 group(s), reclaiming 41.2 GB
+      3,860 matched on full content
+      21 matched on a partial (sampled) hash only and would be refused without --allow-partial-matches
+      4 would be skipped: file changed since last scan
+      512.00 MB would not be reclaimed because of those skips
+      2 are on a different volume from their reference (hardlink replacement would fail)
+      nothing has been deleted. Re-run with --delete --yes to execute.
+
+Every candidate carries a verdict:
+
+```json
+{"path": "/data/b.txt", "size": 9, "mtime": 1785821371.97,
+ "would_delete": false, "match_confidence": "full",
+ "blocked_reason": "file changed since last scan"}
+```
+
+`match_confidence` is `"full"` or `"partial"` — see [partial matches](#partial-sampled-matches).
+`blocked_reason` appears only when `would_delete` is false.
+
+The plan is not an estimate. Each file is re-validated with the same predicate the deletion
+itself uses, so a file that changed since the scan is reported as skipped rather than counted
+as reclaimable — and the set of paths the plan says will go is exactly the set the subsequent
+`--delete` removes. `--plan` works against a saved results file too, which is where it earns
+its keep: results from last week may describe a directory that has moved on.
+
+    $ dupeguru-scan --from-results results.json --plan
 
 If any marked file was matched on a partial (sampled) hash rather than full content — only
 possible when `--partial-hash-threshold` is in use — `--delete` refuses and exits 2. Those are
