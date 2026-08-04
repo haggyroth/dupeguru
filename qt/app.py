@@ -93,7 +93,9 @@ class DupeGuru(QObject):
             )
         else:
             self.ignoreListDialog = IgnoreListDialog(parent=parent_window, model=self.model.ignore_list_dialog)
-            self.excludeDialog = ExcludeListDialog(app=self, parent=parent_window, model=self.model.exclude_list_dialog)
+            self.excludeListDialog = ExcludeListDialog(
+                app=self, parent=parent_window, model=self.model.exclude_list_dialog
+            )
 
         self.deletionOptions = DeletionOptions(parent=parent_window, model=self.model.deletion_options)
         self.about_box = AboutBox(parent_window, self)

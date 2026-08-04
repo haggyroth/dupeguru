@@ -163,3 +163,51 @@ class TestResources:
 
         with pytest.raises(KeyError):
             resources.data("no_such_resource")
+
+
+class TestDialogAttributeNaming:
+    """`_setup`'s floating-window branch is unreachable and untestable, so guard it here.
+
+    `use_tabs` is hardcoded True, so the branch never runs; and it cannot be exercised by
+    constructing a second DupeGuru, because two of them in one process abort inside Qt's
+    widget teardown -- attempted, and it crashed the interpreter rather than failing.
+
+    That combination is precisely how the defect this guards survived: the branch assigned
+    `self.excludeDialog` while every reader -- `qt/app.py:excludeListTriggered` and
+    `qt/tabbed_window.py` -- looks for `self.excludeListDialog`, so switching `use_tabs` off
+    would have raised AttributeError. Its sibling `ignoreListDialog` is spelled consistently
+    in both branches, which is the pattern this asserts.
+
+    A source-level check is weak, but it is the only kind available here, and it is the
+    difference between catching a reintroduction and not.
+    """
+
+    def test_old_exclude_dialog_spelling_is_gone(self):
+        from pathlib import Path
+
+        qt_dir = Path(__file__).resolve().parents[1]
+        offenders = []
+        for path in sorted(qt_dir.rglob("*.py")):
+            if path.name in ("resources_data.py",) or "tests" in path.parts:
+                continue
+            for i, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                # The old name, not as a prefix of the correct one.
+                if "excludeDialog" in line:
+                    offenders.append(f"{path.relative_to(qt_dir.parent)}:{i}")
+        assert not offenders, (
+            "'excludeDialog' is the old misspelling of 'excludeListDialog'; every reader "
+            f"expects the latter: {offenders}"
+        )
+
+    def test_both_setup_branches_assign_the_same_dialog_attributes(self):
+        """Whatever the tab branch binds, the floating branch must bind under the same name."""
+        import inspect
+
+        from qt.app import DupeGuru
+
+        source = inspect.getsource(DupeGuru._setup)
+        for name in ("ignoreListDialog", "excludeListDialog"):
+            assigned = source.count(f"self.{name} = ")
+            assert assigned == 2, (
+                f"expected self.{name} to be assigned in both _setup branches, " f"found {assigned} assignment(s)"
+            )

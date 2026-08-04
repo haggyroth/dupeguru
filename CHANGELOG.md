@@ -9,6 +9,17 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The floating-window branch bound the exclusion dialog under the wrong name**
+  (`qt/app.py`): `_setup` assigned `self.excludeDialog`, while every reader —
+  `excludeListTriggered` and `qt/tabbed_window.py` — looks for `self.excludeListDialog`.
+  Switching `use_tabs` off would therefore have raised `AttributeError`. Latent rather than
+  live, since `use_tabs` is hardcoded `True`, so the branch never runs; its sibling
+  `ignoreListDialog` is spelled consistently in both branches, which is what this now
+  matches. Guarded by source-level tests: the branch cannot be exercised by constructing a
+  second `DupeGuru`, because two in one process abort inside Qt's widget teardown.
+
 ## [4.7.1] - 2026-08-04
 
 ### Added
