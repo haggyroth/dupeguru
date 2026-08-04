@@ -9,6 +9,23 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **CLI exclusions and ignore list** (`cli.py`, issue #24): the CLI had no way to express
+  either, so a scripted scan walked `node_modules`, `.venv`, `__pycache__` and every OS
+  metadata directory, with `.git` skipped only by an incidental dot-prefix fallback. New
+  `--exclude REGEX` (repeatable), `--exclude-from FILE` (one regex per line, `#` comments
+  ignored), `--exclude-defaults` (the same set as the GUI's Restore Defaults), and
+  `--ignore-list FILE` to load an `ignore_list.xml` saved by the GUI. All four drive the
+  existing `ExcludeList` and `IgnoreList`, so matching behaves identically to the GUI.
+  Invalid regexes, over-broad patterns that `core.exclude` forbids, and unreadable files are
+  reported and exit 2 rather than being silently skipped — `IgnoreList.load_from_xml`
+  swallows every exception and returns silently, so the CLI validates the path itself and
+  warns when a list loads no entries.
+  **Note:** adding any exclusion replaces the built-in "skip dot-prefixed folders" fallback,
+  so `--exclude` on its own *widens* the scan. `--exclude-defaults` restores it. This is
+  documented in `--exclude`'s help text and covered by a test.
+
 ### Fixed
 
 - **`Scanner._getmatches` no longer rewrites `self.scan_type`** (`core/scanner.py`, issue #14):

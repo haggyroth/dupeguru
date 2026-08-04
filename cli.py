@@ -476,6 +476,49 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Include hardlinked file pairs in results (the default).",
     )
 
+    # --- Exclusions ----------------------------------------------------------
+    excl = parser.add_argument_group(
+        "exclusions",
+        "Keep files and folders out of the scan. Without any of these the scan walks "
+        "everything under the given folders, including node_modules, .venv and the like.",
+    )
+    excl.add_argument(
+        "--exclude",
+        action="append",
+        default=[],
+        metavar="REGEX",
+        dest="exclude",
+        help=(
+            "Exclude files and folders matching REGEX. Matched against the file or folder "
+            "name, or against the full path when the pattern contains a path separator. "
+            "May be repeated. NOTE: adding any exclusion replaces the built-in "
+            '"skip folders whose name starts with a dot" fallback, so pass '
+            "--exclude-defaults alongside it to keep that behaviour."
+        ),
+    )
+    excl.add_argument(
+        "--exclude-from",
+        metavar="FILE",
+        help="Read exclusion regexes from FILE, one per line. Blank lines and # comments are ignored.",
+    )
+    excl.add_argument(
+        "--exclude-defaults",
+        action="store_true",
+        help=(
+            "Apply the same default exclusions as the GUI's Restore Defaults button: OS "
+            "metadata (Thumbs.db, desktop.ini, .DS_Store), trash and recycle folders, and "
+            "anything whose name starts with a dot."
+        ),
+    )
+    excl.add_argument(
+        "--ignore-list",
+        metavar="FILE",
+        help=(
+            "Load an ignore_list.xml saved by the GUI. Pairs recorded there are never "
+            "reported as matches with each other."
+        ),
+    )
+
     # --- Scanner knobs -------------------------------------------------------
     knobs = parser.add_argument_group(
         "scanner knobs",
@@ -614,6 +657,42 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 # --- Main ------------------------------------------------------------------
+
+
+def _read_exclude_file(path: str) -> list[str]:
+    """Read one exclusion regex per line. Blank lines and # comments are skipped."""
+    patterns = []
+    for line in Path(path).read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line and not line.startswith("#"):
+            patterns.append(line)
+    return patterns
+
+
+def _apply_exclusions(app: DupeGuru, patterns: list[str], use_defaults: bool) -> list[tuple[str, str]]:
+    """Add and mark exclusion regexes. Returns [(regex, reason), ...] for any rejected.
+
+    A regex has to be *marked* as well as added: Directories consults
+    ``exclude_list.mark_count`` and iterates only the marked patterns, so an added but
+    unmarked regex silently does nothing.
+    """
+    from core.exclude import AlreadyThereException
+
+    if use_defaults:
+        app.exclude_list.restore_defaults()
+
+    problems = []
+    for regex in patterns:
+        try:
+            app.exclude_list.add(regex)
+        except AlreadyThereException:
+            pass  # already present, but it still needs marking below
+        except Exception as exc:
+            # ValueError for the forbidden over-broad patterns, re.error for bad syntax.
+            problems.append((regex, str(exc) or type(exc).__name__))
+            continue
+        app.exclude_list.mark(regex)
+    return problems
 
 
 def _make_streams_utf8() -> None:
@@ -803,6 +882,48 @@ def main(argv=None) -> int:
     app.options["big_file_size_threshold"] = args.partial_hash_threshold * 1024 * 1024  # MiB -> bytes
     # The core option keeps its original name; only the CLI spelling changed.
     app.options["rehash_ignore_mtime"] = args.trust_cache_ignore_mtime
+
+    # Exclusions ----------------------------------------------------------
+    # Applied before the directories are added, because Directories consults the
+    # exclude list while walking rather than filtering afterwards.
+    exclude_patterns = list(args.exclude)
+    if args.exclude_from:
+        try:
+            exclude_patterns.extend(_read_exclude_file(args.exclude_from))
+        except OSError as exc:
+            print(f"error reading exclude file: {exc}", file=sys.stderr)
+            app.close()
+            return EXIT_BAD_ARGS
+
+    rejected = _apply_exclusions(app, exclude_patterns, args.exclude_defaults)
+    if rejected:
+        for regex, reason in rejected:
+            print(f"error: cannot use exclusion {regex!r}: {reason}", file=sys.stderr)
+        app.close()
+        return EXIT_BAD_ARGS
+
+    if args.ignore_list:
+        # IgnoreList.load_from_xml swallows every exception and returns silently, so a
+        # missing or malformed file would leave the user believing their list applied.
+        # Check it here instead of trusting the loader to complain.
+        ignore_path = Path(args.ignore_list)
+        if not ignore_path.is_file():
+            print(f"error reading ignore list: no such file: {args.ignore_list}", file=sys.stderr)
+            app.close()
+            return EXIT_BAD_ARGS
+        app.ignore_list.load_from_xml(str(ignore_path))
+        if not len(app.ignore_list):
+            print(
+                f"warning: ignore list {args.ignore_list} loaded no entries; "
+                "it may be empty or not an ignore_list.xml",
+                file=sys.stderr,
+            )
+
+    if args.verbose and (exclude_patterns or args.exclude_defaults):
+        print(
+            f"Exclusions active: {app.exclude_list.mark_count} pattern(s)",
+            file=sys.stderr,
+        )
 
     # Add directories -----------------------------------------------------
     for folder in folders:
