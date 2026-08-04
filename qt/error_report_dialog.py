@@ -32,7 +32,7 @@ tr = trget("ui")
 
 class ErrorReportDialog(QDialog):
     def __init__(self, parent, github_url, error, **kwargs):
-        flags = Qt.CustomizeWindowHint | Qt.WindowTitleHint | Qt.WindowSystemMenuHint
+        flags = Qt.WindowType.CustomizeWindowHint | Qt.WindowType.WindowTitleHint | Qt.WindowType.WindowSystemMenuHint
         super().__init__(parent, flags, **kwargs)
         self._setupUi()
         name = QCoreApplication.applicationName()

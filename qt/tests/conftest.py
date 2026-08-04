@@ -54,8 +54,8 @@ def qapp(tmp_path_factory):
     QStandardPaths.setTestModeEnabled(True)
     # create_qsettings() falls through to a bare QSettings() off Windows, so it picks up
     # the default format and path set here.
-    QSettings.setDefaultFormat(QSettings.IniFormat)
-    QSettings.setPath(QSettings.IniFormat, QSettings.UserScope, str(settings_dir))
+    QSettings.setDefaultFormat(QSettings.Format.IniFormat)
+    QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(settings_dir))
 
     app = QApplication.instance() or QApplication([])
     yield app

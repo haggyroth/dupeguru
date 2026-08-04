@@ -140,9 +140,16 @@ nobody is running 4.4.0.
   Writing the fix without a PyInstaller run to test it would mean shipping something
   unverified and calling it done. Pair it with actual packaging work. Note macOS packaging
   differs from Windows, so a fix verified on one doesn't prove the other.
-- **[#27](https://github.com/haggyroth/dupeguru/issues/27)** — PyQt6 alongside PyQt5. A real
-  project. Relevant on macOS, where Homebrew increasingly prefers PyQt6. Note `qt/` has no
-  automated coverage at all (see below), so this one is hand-testing from the start.
+- **[#27](https://github.com/haggyroth/dupeguru/issues/27)** — PyQt6 alongside PyQt5, with
+  PyQt6 as the default and PyQt5 as the fallback. Phased: **phase 0** (Qt smoke tests, #52)
+  and **phase 1** (Qt6-compatible spellings while still on PyQt5, #53) are done. Remaining:
+  **phase 2**, replacing the `pyrcc5` resource step, which has no PyQt6 equivalent — prefer
+  generating an embedded Python module over loading from disk, so frozen builds keep working
+  without bundling `images/`; **phase 3**, the binding switch, which will use **qtpy** rather
+  than a hand-rolled shim (decided); **phase 4**, requirements and CI legs.
+  The one Qt5-only spelling deliberately left in the tree is `from PyQt5.QtWidgets import
+  QAction` in `qt/recent.py` — `QAction` moved to `QtGui` in Qt6 and no single import works
+  on both, so it needs the shim. Note phase 4's packaging half is unverifiable here; see #10.
 - **[#28](https://github.com/haggyroth/dupeguru/issues/28)** — resumable scans. The largest
   item; the hash cache already delivers most of the practical benefit.
 
@@ -151,22 +158,29 @@ world that had already moved by the time they were picked up — #25 still asser
 was a no-op long after it was fixed, and half of #26's GUI ask was already implemented. The
 tracker is the roadmap, but it is not a description of the present.
 
-## The Qt layer is untested
+## The Qt layer has smoke coverage only
 
-CI runs `pytest core hscommon`. **`qt/` is never imported by a test**, and `requirements.txt`
-excludes PyQt5 on Linux (`sys_platform != 'linux'`), so the Linux matrix could not run one
-anyway. Two consequences:
+Since #52, CI runs `pytest core hscommon qt` and `qt/tests/` exists. It is **smoke coverage**:
+the widgets construct, preferences reach the scan options, and resources resolve. Nothing
+asserts layout or behaviour, so a change that renders wrongly still passes. Treat a green run
+as "it did not explode", not "it works".
 
-- Anything wired only through `qt/` is verified by hand or not at all. Check it by driving
-  the objects offscreen: `QT_QPA_PLATFORM=offscreen`, construct `qt.app.DupeGuru`, and
-  exercise the dialog directly. `PreferencesDialog.save()` only mutates the in-memory prefs
-  object — `Preferences.save()` syncs QSettings and runs on app quit — so poking at it in a
-  throwaway script will not corrupt real settings.
+- `requirements.txt` excludes PyQt5 on Linux (`sys_platform != 'linux'`), so the Linux legs
+  skip `qt/tests/` entirely. Real Qt coverage runs only on the Windows and macOS legs. If you
+  break Qt and only watch Linux, you will not see it.
+- The tests need `qt/dg_rc.py`, which `build.py --modules` does *not* generate. CI has a
+  separate resource-build step gated on `runner.os != 'Linux'`. Locally, run the full
+  `build.py` (with the venv's `bin` on PATH) or the resource tests skip and guard nothing.
+- To check something by hand, drive the objects offscreen: `QT_QPA_PLATFORM=offscreen`,
+  construct `qt.app.DupeGuru`, exercise the dialog. `PreferencesDialog.save()` only mutates
+  the in-memory prefs object — `Preferences.save()` syncs QSettings and runs on app quit — so
+  a throwaway script will not corrupt real settings. `qt/tests/conftest.py` goes further and
+  sandboxes both settings and appdata via `QStandardPaths.setTestModeEnabled`.
 - Options reach the scanner through `if hasattr(scanner, k): setattr(scanner, k, v)` in
   `DupeGuru.start_scanning`. An option name the scanner does not declare is dropped **with no
   error anywhere**, which is exactly how a feature gets wired into the GUI and never fires.
-  `test_scanner_declares_the_options_the_front_ends_set` guards that; extend it when you add
-  an option.
+  `test_scanner_declares_the_options_the_front_ends_set` and its Qt-side counterpart guard
+  that; extend both when you add an option.
 
 Also: `build.py` must find `pyrcc5`. It now errors if it cannot, but before #50 it wrote an
 empty `qt/dg_rc.py` and reported success, giving a GUI with no icons and no explanation.

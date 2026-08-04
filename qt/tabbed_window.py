@@ -54,7 +54,7 @@ class TabWindow(QMainWindow):
         self.setWindowTitle(self.app.NAME)
         self.resize(640, 480)
         self.tabWidget = QTabWidget()
-        # self.tabWidget.setTabPosition(QTabWidget.South)
+        # self.tabWidget.setTabPosition(QTabWidget.TabPosition.South)
         self.tabWidget.setContentsMargins(0, 0, 0, 0)
         # self.tabWidget.setTabBarAutoHide(True)
         # This gets rid of the annoying margin around the TabWidget:
@@ -175,7 +175,7 @@ class TabWindow(QMainWindow):
         # Warning: this supposedly takes ownership of the page
         index = self.tabWidget.addTab(page, title)
         if isinstance(page, DirectoriesDialog):
-            self.tabWidget.tabBar().setTabButton(index, QTabBar.RightSide, None)
+            self.tabWidget.tabBar().setTabButton(index, QTabBar.ButtonPosition.RightSide, None)
         if switch:
             self.setCurrentIndex(index)
         return index
@@ -221,7 +221,7 @@ class TabWindow(QMainWindow):
         super().showEvent(event)
 
     def changeEvent(self, event):
-        if event.type() == QEvent.WindowStateChange and not self.isMaximized():
+        if event.type() == QEvent.Type.WindowStateChange and not self.isMaximized():
             move_to_screen_center(self)
         super().changeEvent(event)
 
@@ -278,8 +278,8 @@ class TabBarWindow(TabWindow):
         self.stackedWidget = QStackedWidget()
         self.centralWidget.setLayout(self.verticalLayout)
         self.horizontalLayout = QHBoxLayout()
-        self.horizontalLayout.addWidget(self.menubar, 0, Qt.AlignTop)
-        self.horizontalLayout.addWidget(self.tabBar, 0, Qt.AlignTop)
+        self.horizontalLayout.addWidget(self.menubar, 0, Qt.AlignmentFlag.AlignTop)
+        self.horizontalLayout.addWidget(self.tabBar, 0, Qt.AlignmentFlag.AlignTop)
         self.verticalLayout.addLayout(self.horizontalLayout)
         self.verticalLayout.addWidget(self.stackedWidget)
 
@@ -297,7 +297,7 @@ class TabBarWindow(TabWindow):
         self.tabBar.insertTab(stack_index, title)
 
         if isinstance(page, DirectoriesDialog):
-            self.tabBar.setTabButton(stack_index, QTabBar.RightSide, None)
+            self.tabBar.setTabButton(stack_index, QTabBar.ButtonPosition.RightSide, None)
         if switch:  # switch to the added tab immediately upon creation
             self.setTabIndex(stack_index)
         return stack_index

@@ -45,16 +45,16 @@ def move_to_screen_center(widget):
 
 def vertical_spacer(size=None):
     if size:
-        return QSpacerItem(1, size, QSizePolicy.Fixed, QSizePolicy.Fixed)
+        return QSpacerItem(1, size, QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
     else:
-        return QSpacerItem(1, 1, QSizePolicy.Fixed, QSizePolicy.MinimumExpanding)
+        return QSpacerItem(1, 1, QSizePolicy.Policy.Fixed, QSizePolicy.Policy.MinimumExpanding)
 
 
 def horizontal_spacer(size=None):
     if size:
-        return QSpacerItem(size, 1, QSizePolicy.Fixed, QSizePolicy.Fixed)
+        return QSpacerItem(size, 1, QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
     else:
-        return QSpacerItem(1, 1, QSizePolicy.MinimumExpanding, QSizePolicy.Fixed)
+        return QSpacerItem(1, 1, QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.Fixed)
 
 
 def horizontal_wrap(widgets):
@@ -104,7 +104,7 @@ def get_appdata(portable=False):
     if portable:
         return op.join(executable_folder(), "data")
     else:
-        return QStandardPaths.standardLocations(QStandardPaths.AppDataLocation)[0]
+        return QStandardPaths.standardLocations(QStandardPaths.StandardLocation.AppDataLocation)[0]
 
 
 class SysWrapper(io.IOBase):
@@ -144,14 +144,14 @@ def create_qsettings():
     # Create a QSettings instance with the correct arguments.
     config_location = op.join(executable_folder(), "settings.ini")
     if op.isfile(config_location):
-        settings = QSettings(config_location, QSettings.IniFormat)
+        settings = QSettings(config_location, QSettings.Format.IniFormat)
         settings.setValue("Portable", True)
     elif ISWINDOWS:
         # On windows use an ini file in the AppDataLocation instead of registry if possible as it
         # makes it easier for a user to clear it out when there are issues.
-        locations = QStandardPaths.standardLocations(QStandardPaths.AppDataLocation)
+        locations = QStandardPaths.standardLocations(QStandardPaths.StandardLocation.AppDataLocation)
         if locations:
-            settings = QSettings(op.join(locations[0], "settings.ini"), QSettings.IniFormat)
+            settings = QSettings(op.join(locations[0], "settings.ini"), QSettings.Format.IniFormat)
         else:
             settings = QSettings()
         settings.setValue("Portable", False)

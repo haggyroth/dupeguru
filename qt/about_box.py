@@ -19,7 +19,12 @@ tr = trget("ui")
 
 class AboutBox(QDialog):
     def __init__(self, parent, app, **kwargs):
-        flags = Qt.CustomizeWindowHint | Qt.WindowTitleHint | Qt.WindowSystemMenuHint | Qt.MSWindowsFixedSizeDialogHint
+        flags = (
+            Qt.WindowType.CustomizeWindowHint
+            | Qt.WindowType.WindowTitleHint
+            | Qt.WindowType.WindowSystemMenuHint
+            | Qt.WindowType.MSWindowsFixedSizeDialogHint
+        )
         super().__init__(parent, flags, **kwargs)
         self.app = app
         self._setupUi()
@@ -29,7 +34,7 @@ class AboutBox(QDialog):
 
     def _setupUi(self):
         self.setWindowTitle(tr("About {}").format(QCoreApplication.instance().applicationName()))
-        size_policy = QSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        size_policy = QSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self.setSizePolicy(size_policy)
         main_layout = QHBoxLayout(self)
         logo_label = QLabel()
@@ -47,7 +52,7 @@ class AboutBox(QDialog):
         version_label.setText(tr("Version {}").format(QCoreApplication.instance().applicationVersion()))
         detail_layout.addWidget(version_label)
         self.update_label = QLabel(tr("Checking for updates..."))
-        self.update_label.setTextInteractionFlags(Qt.TextBrowserInteraction)
+        self.update_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
         self.update_label.setOpenExternalLinks(True)
         detail_layout.addWidget(self.update_label)
         license_label = QLabel()
@@ -57,8 +62,8 @@ class AboutBox(QDialog):
         spacer_label.setFont(font)
         detail_layout.addWidget(spacer_label)
         self.button_box = QDialogButtonBox()
-        self.button_box.setOrientation(Qt.Horizontal)
-        self.button_box.setStandardButtons(QDialogButtonBox.Ok)
+        self.button_box.setOrientation(Qt.Orientation.Horizontal)
+        self.button_box.setStandardButtons(QDialogButtonBox.StandardButton.Ok)
         detail_layout.addWidget(self.button_box)
         main_layout.addLayout(detail_layout)
 

@@ -54,7 +54,7 @@ class Sections(Flag):
 
 class PreferencesDialogBase(QDialog):
     def __init__(self, parent, app, **kwargs):
-        flags = Qt.CustomizeWindowHint | Qt.WindowTitleHint | Qt.WindowSystemMenuHint
+        flags = Qt.WindowType.CustomizeWindowHint | Qt.WindowType.WindowTitleHint | Qt.WindowType.WindowSystemMenuHint
         super().__init__(parent, flags, **kwargs)
         self.app = app
         self.supportedLanguages = dict(sorted(get_langnames().items(), key=lambda item: item[1]))
@@ -77,7 +77,7 @@ class PreferencesDialogBase(QDialog):
         self.filterHardnessHLayoutSub1 = QHBoxLayout()
         self.filterHardnessHLayoutSub1.setSpacing(12)
         self.filterHardnessSlider = QSlider(self)
-        size_policy = QSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        size_policy = QSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         size_policy.setHorizontalStretch(0)
         size_policy.setVerticalStretch(0)
         size_policy.setHeightForWidth(self.filterHardnessSlider.sizePolicy().hasHeightForWidth())
@@ -85,7 +85,7 @@ class PreferencesDialogBase(QDialog):
         self.filterHardnessSlider.setMinimum(1)
         self.filterHardnessSlider.setMaximum(100)
         self.filterHardnessSlider.setTracking(True)
-        self.filterHardnessSlider.setOrientation(Qt.Horizontal)
+        self.filterHardnessSlider.setOrientation(Qt.Orientation.Horizontal)
         self.filterHardnessHLayoutSub1.addWidget(self.filterHardnessSlider)
         self.filterHardnessLabel = QLabel(self)
         self.filterHardnessLabel.setText("100")
@@ -97,7 +97,7 @@ class PreferencesDialogBase(QDialog):
         self.moreResultsLabel = QLabel(self)
         self.moreResultsLabel.setText(tr("More Results"))
         self.filterHardnessHLayoutSub2.addWidget(self.moreResultsLabel)
-        spacer_item = QSpacerItem(40, 20, QSizePolicy.Expanding, QSizePolicy.Minimum)
+        spacer_item = QSpacerItem(40, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
         self.filterHardnessHLayoutSub2.addItem(spacer_item)
         self.fewerResultsLabel = QLabel(self)
         self.fewerResultsLabel.setText(tr("Fewer Results"))
@@ -173,7 +173,7 @@ Some native dialogs have limited functionality."
         formlayout.addRow(tr("Reference background color:"), self.result_table_ref_background_color)
         self.result_table_delta_foreground_color = ColorPickerButton(self)
         formlayout.addRow(tr("Delta foreground color:"), self.result_table_delta_foreground_color)
-        formlayout.setLabelAlignment(Qt.AlignLeft)
+        formlayout.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
 
         # Keep same vertical spacing as parent layout for consistency
         formlayout.setVerticalSpacing(self.displayVLayout.spacing())
@@ -278,11 +278,13 @@ most users should not have to modify these."
         # self.mainVLayout.addLayout(self.widgetsVLayout)
         self.buttonBox = QDialogButtonBox(self)
         self.buttonBox.setStandardButtons(
-            QDialogButtonBox.Cancel | QDialogButtonBox.Ok | QDialogButtonBox.RestoreDefaults
+            QDialogButtonBox.StandardButton.Cancel
+            | QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.RestoreDefaults
         )
         self.mainVLayout.addWidget(self.tabwidget)
         self.mainVLayout.addWidget(self.buttonBox)
-        self.layout().setSizeConstraint(QLayout.SetFixedSize)
+        self.layout().setSizeConstraint(QLayout.SizeConstraint.SetFixedSize)
         self.tabwidget.addTab(self.page_general, tr("General"))
         self.tabwidget.addTab(self.page_display, tr("Display"))
         self.tabwidget.addTab(self.page_advanced, tr("Advanced"))
@@ -305,7 +307,7 @@ most users should not have to modify these."
             prefs = self.app.prefs
 
         def setchecked(cb, b):
-            cb.setCheckState(Qt.Checked if b else Qt.Unchecked)
+            cb.setCheckState(Qt.CheckState.Checked if b else Qt.CheckState.Unchecked)
 
         if section & Sections.GENERAL:
             self.filterHardnessSlider.setValue(prefs.filter_hardness)
@@ -353,7 +355,7 @@ most users should not have to modify these."
         prefs.filter_hardness = self.filterHardnessSlider.value()
 
         def ischecked(cb):
-            return cb.checkState() == Qt.Checked
+            return cb.checkState() == Qt.CheckState.Checked
 
         prefs.mix_file_kind = ischecked(self.mixFileKindBox)
         prefs.use_regexp = ischecked(self.useRegexpBox)
@@ -396,7 +398,7 @@ most users should not have to modify these."
     # --- Events
     def buttonClicked(self, button):
         role = self.buttonBox.buttonRole(button)
-        if role == QDialogButtonBox.ResetRole:
+        if role == QDialogButtonBox.ButtonRole.ResetRole:
             current_tab = self.tabwidget.currentWidget()
             section_to_update = Sections.ALL
             if current_tab is self.page_general:
@@ -422,7 +424,7 @@ class ColorPickerButton(QPushButton):
 
     @pyqtSlot()
     def onClicked(self):
-        color = QColorDialog.getColor(self.color if self.color is not None else Qt.white, self.parent)
+        color = QColorDialog.getColor(self.color if self.color is not None else Qt.GlobalColor.white, self.parent)
         self.setColor(color)
 
     def setColor(self, color):

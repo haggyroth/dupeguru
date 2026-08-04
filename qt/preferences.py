@@ -143,7 +143,7 @@ class PreferencesBase(QObject):
         if geometry and len(geometry) == 7:
             m, d, area, x, y, w, h = geometry
             if m:
-                widget.setWindowState(Qt.WindowMaximized)
+                widget.setWindowState(Qt.WindowState.WindowMaximized)
             else:
                 r = QRect(x, y, w, h)
                 widget.setGeometry(r)
@@ -253,8 +253,8 @@ class Preferences(PreferencesBase):
         # By default use internal icons on platforms other than Linux for now
         self.details_dialog_override_theme_icons = False if not ISLINUX else True
         self.details_dialog_viewers_show_scrollbars = True
-        self.result_table_ref_foreground_color = QColor(Qt.blue)
-        self.result_table_ref_background_color = QColor(Qt.lightGray)
+        self.result_table_ref_foreground_color = QColor(Qt.GlobalColor.blue)
+        self.result_table_ref_background_color = QColor(Qt.GlobalColor.lightGray)
         self.result_table_delta_foreground_color = QColor(255, 142, 40)  # orange
         self.resultWindowIsMaximized = False
         self.resultWindowRect = None

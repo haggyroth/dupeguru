@@ -36,7 +36,7 @@ class ProgressWindow:
             self._progress_bar.setValue(last_progress)
 
     def show(self):
-        flags = Qt.CustomizeWindowHint | Qt.WindowTitleHint | Qt.WindowSystemMenuHint
+        flags = Qt.WindowType.CustomizeWindowHint | Qt.WindowType.WindowTitleHint | Qt.WindowType.WindowSystemMenuHint
         self._window = QDialog(self.parent, flags)
         self._setup_ui()
         self._window.setModal(True)
@@ -67,7 +67,7 @@ class ProgressWindow:
                 self._window,
             )
             confirm_dialog.setDefaultButton(QMessageBox.StandardButton.No)
-            result = confirm_dialog.exec_()
+            result = confirm_dialog.exec()
             if result != QMessageBox.StandardButton.Yes:
                 return
         self.close()

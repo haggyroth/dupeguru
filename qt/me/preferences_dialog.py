@@ -37,7 +37,7 @@ class PreferencesDialog(PreferencesDialogBase):
         self.verticalLayout_4.addWidget(self.label_6)
         self.horizontalLayout_2 = QHBoxLayout()
         self.horizontalLayout_2.setSpacing(0)
-        spacer_item = QSpacerItem(15, 20, QSizePolicy.Fixed, QSizePolicy.Minimum)
+        spacer_item = QSpacerItem(15, 20, QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Minimum)
         self.horizontalLayout_2.addItem(spacer_item)
         self._setupAddCheckbox("tagTrackBox", tr("Track"), self.widget)
         self.horizontalLayout_2.addWidget(self.tagTrackBox)
