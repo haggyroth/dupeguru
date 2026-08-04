@@ -9,6 +9,23 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed (safety)
+
+- **Delete-and-replace-with-link no longer destroys the file when the link cannot be made**
+  (`core/app.py`, issue #20): `_do_delete_dupe` deleted the duplicate first and only then
+  tried to create the replacement link. On Windows, creating a symlink requires Developer
+  Mode or `SeCreateSymbolicLinkPrivilege`, neither of which is on by default — so the
+  expected outcome on a stock install was: file trashed (or permanently deleted with
+  `--direct-delete`), no link created, and the error swallowed so `perform_on_marked`
+  recorded a **success**. The results table showed the operation as having worked. The link
+  is now built at a temporary name beside the original *before* anything is deleted; if it
+  cannot be created the original is untouched and the error is recorded as a problem with
+  the file left marked. `os.link` was not wrapped at all previously, so a cross-device
+  hardlink failed the same way. The Windows privilege message is now raised rather than
+  pushed through `view.show_message`, which was being called from the job's worker thread,
+  once per file. Directory symlinks now pass `target_is_directory`, which folder-mode scans
+  need on Windows.
+
 ### Fixed
 
 - **Hash caches now record which algorithm produced a digest** (`core/fs.py`,
