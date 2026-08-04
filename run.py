@@ -10,13 +10,12 @@ import os.path as op
 import gc
 
 from PyQt5.QtCore import QCoreApplication
-from PyQt5.QtGui import QIcon, QPixmap
 from PyQt5.QtWidgets import QApplication
 
 from hscommon.trans import install_gettext_trans_under_qt
+from qt import resources
 from qt.error_report_dialog import install_excepthook
 from qt.util import setup_qt_logging, create_qsettings
-from qt import dg_rc  # noqa: F401
 from qt.platform import BASE_PATH
 from core import __version__, __appname__
 
@@ -70,7 +69,7 @@ def main():
     # has been installed
     from qt.app import DupeGuru
 
-    app.setWindowIcon(QIcon(QPixmap(f":/{DupeGuru.LOGO_NAME}")))
+    app.setWindowIcon(resources.icon(DupeGuru.LOGO_NAME))
     global dgapp
     dgapp = DupeGuru()
     install_excepthook("https://github.com/haggyroth/dupeguru/issues")

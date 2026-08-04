@@ -45,12 +45,14 @@ For macos instructions (qt version) see the [macOS Instructions](macos.md).
 ### System Setup
 When running in a linux based environment the following system packages or equivalents are needed to build:
 * python3-pyqt5
-* pyqt5-dev-tools (on some systems, see note)
 * python3-venv (only if using a virtual environment)
 * python3-dev
 * build-essential
 
-Note: On some linux systems pyrcc5 is not put on the path when installing python3-pyqt5, this will cause some issues with the resource files (and icons). These systems should have a respective pyqt5-dev-tools package, which should also be installed. The presence of pyrcc5 can be checked with `which pyrcc5`.  Debian based systems need the extra package, and Arch does not.
+Note: `pyqt5-dev-tools` used to be required here, because the Qt resources were compiled by
+`pyrcc5` and that tool is packaged separately on some distributions. Images are now embedded
+in `qt/resources_data.py`, which is committed, so no resource compiler is needed to build or
+run dupeGuru. Regenerating it after changing an image is `python build.py --resources`.
 
 To create packages the following are also needed:
 * python3-setuptools

@@ -7,10 +7,11 @@
 # http://www.gnu.org/licenses/gpl-3.0.html
 
 from PyQt5.QtCore import Qt, QCoreApplication, QTimer
-from PyQt5.QtGui import QPixmap, QFont
+from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import QDialog, QDialogButtonBox, QSizePolicy, QHBoxLayout, QVBoxLayout, QLabel
 
 from core.util import check_for_update
+from qt import resources
 from qt.util import move_to_screen_center
 from hscommon.trans import trget
 
@@ -38,7 +39,7 @@ class AboutBox(QDialog):
         self.setSizePolicy(size_policy)
         main_layout = QHBoxLayout(self)
         logo_label = QLabel()
-        logo_label.setPixmap(QPixmap(":/%s_big" % self.app.LOGO_NAME))
+        logo_label.setPixmap(resources.pixmap(f"{self.app.LOGO_NAME}_big"))
         main_layout.addWidget(logo_label)
         detail_layout = QVBoxLayout()
         name_label = QLabel()
