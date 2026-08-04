@@ -9,6 +9,21 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **The CI matrix shape is pinned by a test** (`tests/ci_workflow_test.py`): adding the PyQt5
+  fallback as a bare `include` entry did not add a leg, it silently *converted* the existing
+  ubuntu/3.12 job into the fallback — PyQt6 lost its 3.12 Linux coverage and `coverage.xml`
+  stopped being uploaded, with CI green throughout. GitHub folds an include into an existing
+  combination when every key it shares with the base matrix matches, and creates a new job
+  only when it would overwrite a base value. That rule is easy to violate and invisible when
+  violated, so it is now asserted, along with the expected job set, both bindings having a
+  leg, and the artifact uploads excluding the fallback by value rather than by testing for a
+  key's presence — the latter is what suppressed the wrong job. Verified by recreating the
+  original configuration: all four tests fail. `PyYAML` is declared in `requirements-extra.txt`
+  rather than relied on transitively, and the tests deliberately do not skip without it,
+  since a guard that turns "cannot check" into a silent pass is the failure being fixed.
+
 ### Fixed
 
 - **Packaging reported success when the installer step failed** (`package.py`, issue #63):

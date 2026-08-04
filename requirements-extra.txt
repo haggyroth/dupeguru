@@ -3,3 +3,6 @@ pytest-cov>=4.0.0
 flake8
 black
 pyinstaller>=6.15,<7.0; sys_platform != 'linux'
+# Used by tests/ci_workflow_test.py to parse the CI workflow. Declared rather than
+# relied on transitively, so the test cannot start skipping when a dependency drops it.
+PyYAML>=6.0,<7.0
