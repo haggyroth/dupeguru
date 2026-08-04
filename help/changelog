@@ -1,3 +1,10 @@
+=== 4.7.0 (2026-08-04)
+* Run the GUI on PyQt6 by default, keeping PyQt5 working as a fallback
+* Add a preferences option to verify partially hashed matches on full content
+* Embed the images in the source tree, so no resource compiler is needed to build
+* Fix a missing pyrcc5 producing a GUI with no icons while reporting a successful build
+* Add automated coverage for the Qt interface, which previously had none
+
 === 4.6.0 (2026-08-04)
 * Add --plan, reporting exactly what a deletion would remove and what it would skip
 * Add --full-verify, re-reading partial-hash matches and discarding false positives
