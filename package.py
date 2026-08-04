@@ -32,6 +32,41 @@ HELP_DIR = "build/help"
 DEFAULT_QT_API = "pyqt6"
 
 
+def _nsis_fallback_paths():
+    """Plausible makensis locations, for when it is not on PATH.
+
+    Built from the ProgramFiles environment variables rather than hardcoded drive letters,
+    since the install root is not always C:. Both layouts are covered: NSIS 3.x puts
+    makensis.exe directly in its install directory, older builds used a Bin subdirectory.
+    """
+    roots = [os.environ.get("ProgramFiles(x86)"), os.environ.get("ProgramFiles")]
+    return [
+        op.join(root, "NSIS", *parts)
+        for root in roots
+        if root
+        for parts in (("makensis.exe",), ("Bin", "makensis.exe"))
+    ]
+
+
+def find_makensis():
+    """Return a usable makensis path, or None.
+
+    The path used to be hardcoded to one Program Files location, so an NSIS installed
+    anywhere else -- a different drive, a per-user install, winget or Chocolatey -- produced
+    a "not recognized" error whose exit code was then discarded, and the build reported
+    success with no installer. Prefer PATH, then look in the usual places.
+    """
+    found = shutil.which("makensis")
+    if found:
+        return found
+    return next((c for c in _nsis_fallback_paths() if op.isfile(c)), None)
+
+
+def installer_path(bits, version_array):
+    """Where setup.nsi's OutFile directive puts the installer."""
+    return op.join("dist", "dupeGuru_win{0}_{1}.{2}.{3}.exe".format(bits, *version_array))
+
+
 def pin_qt_binding():
     # qtpy picks whichever binding it finds first, and it prefers PyQt5 over PyQt6. On a build
     # machine with both installed that silently freezes the fallback binding instead of the
@@ -167,7 +202,7 @@ def package_windows():
     # the localization
     if not check_loc_doc():
         print("Exiting...")
-        return
+        return 1
     # create version information file from template
     try:
         version_template = open("win_version_info.temp", "r")
@@ -178,7 +213,7 @@ def package_windows():
         version_info_file.close()
     except Exception:
         print("Error creating version info file, exiting...")
-        return
+        return 1
     # run pyinstaller from here:
     pin_qt_binding()
     import PyInstaller.__main__
@@ -199,12 +234,28 @@ def package_windows():
     )
     # remove version info file
     os.remove("win_version_info.txt")
-    # Call NSIS (TODO update to not use hardcoded path)
-    cmd = (
-        '"C:\\Program Files (x86)\\NSIS\\Bin\\makensis.exe" '
-        "/DVERSIONMAJOR={0} /DVERSIONMINOR={1} /DVERSIONPATCH={2} /DBITS={3} setup.nsi"
-    )
-    print_and_do(cmd.format(version_array[0], version_array[1], version_array[2], bits))
+    # Call NSIS. Every step below reports failure rather than returning None: PyInstaller has
+    # already filled dist/ by this point, so a failed installer step leaves a tree that looks
+    # like a successful build minus the one artifact anyone would ship.
+    makensis = find_makensis()
+    if makensis is None:
+        print(
+            "makensis not found. Install NSIS and put makensis on PATH, or install it under "
+            "Program Files. Looked in: PATH, " + ", ".join(_nsis_fallback_paths())
+        )
+        return 1
+    cmd = '"{0}" /DVERSIONMAJOR={1} /DVERSIONMINOR={2} /DVERSIONPATCH={3} /DBITS={4} setup.nsi'
+    result = print_and_do(cmd.format(makensis, version_array[0], version_array[1], version_array[2], bits))
+    if result != 0:
+        print("makensis failed with exit code {0}; no installer was produced.".format(result))
+        return result
+    # Independent of the exit code: a tool can report success and still write nothing.
+    installer = installer_path(bits, version_array)
+    if not op.isfile(installer):
+        print("makensis reported success but {0} does not exist.".format(installer))
+        return 1
+    print("Built {0}".format(installer))
+    return 0
 
 
 def package_macos():
@@ -212,7 +263,7 @@ def package_macos():
     # the localization
     if not check_loc_doc():
         print("Exiting")
-        return
+        return 1
     # run pyinstaller from here:
     pin_qt_binding()
     import PyInstaller.__main__
@@ -232,26 +283,32 @@ def package_macos():
 
 
 def main():
+    """Return a process exit status: 0 on success, non-zero when packaging failed.
+
+    Previously this returned None regardless, so `python package.py` exited 0 even when no
+    artifact had been produced. The Windows and macOS paths report properly; the Linux
+    packagers still return None and are treated as success, which is unchanged behaviour
+    rather than a claim that they detect failure.
+    """
     args = parse_args()
     if args.src_pkg:
         print("Creating source package for dupeGuru")
-        package_source_txz()
-        return
+        return package_source_txz() or 0
     print("Packaging dupeGuru with UI qt")
     if sys.platform == "win32":
-        package_windows()
+        return package_windows() or 0
     elif sys.platform == "darwin":
-        package_macos()
+        return package_macos() or 0
     else:
         if not args.arch_pkg:
             distname = distro.id()
         else:
             distname = "arch"
         if distname == "arch":
-            package_arch()
+            return package_arch() or 0
         else:
-            package_debian()
+            return package_debian() or 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

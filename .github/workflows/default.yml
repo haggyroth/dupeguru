@@ -79,7 +79,7 @@ jobs:
           python build.py --modules
       - name: Run tests
         run: |
-          pytest core hscommon qt --cov=core --cov=hscommon --cov=cli --cov=qt --cov-report=term-missing --cov-report=xml
+          pytest core hscommon qt tests --cov=core --cov=hscommon --cov=cli --cov=qt --cov-report=term-missing --cov-report=xml
       - name: Upload coverage report
         # Not on the PyQt5 fallback leg: it is also ubuntu-latest/3.12, and a second upload
         # under the same artifact name fails the job.

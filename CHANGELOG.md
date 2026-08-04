@@ -11,6 +11,22 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Packaging reported success when the installer step failed** (`package.py`, issue #63):
+  `package_windows` discarded makensis' exit code and `main()` returned `None` regardless, so
+  `python package.py` exited 0 whether or not an installer had been produced. PyInstaller has
+  already filled `dist/` by that point, so a failed run left a tree that looked like a good
+  build minus the one artifact anyone would ship. The makensis path was also hardcoded to a
+  single `Program Files` location, with a pre-existing TODO — an NSIS installed anywhere else
+  produced a "not recognized" error whose exit code was then thrown away, which made the
+  fragile half invisible. `find_makensis()` now prefers PATH and falls back to locations
+  derived from the `ProgramFiles` environment variables rather than a baked-in drive letter,
+  covering both the modern and pre-3.x NSIS layouts; the exit code is checked; the installer
+  file is confirmed to exist afterwards, since a tool can report success and write nothing;
+  and `main()` returns a real exit status. The Linux packagers still do not report failure,
+  which is unchanged rather than newly claimed.
+
+### Fixed
+
 - **The floating-window branch bound the exclusion dialog under the wrong name**
   (`qt/app.py`): `_setup` assigned `self.excludeDialog`, while every reader —
   `excludeListTriggered` and `qt/tabbed_window.py` — looks for `self.excludeListDialog`.
