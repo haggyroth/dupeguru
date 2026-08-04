@@ -8,8 +8,8 @@
 
 from collections import namedtuple
 
-from PyQt5.QtCore import pyqtSignal, QObject
-from PyQt5.QtWidgets import QAction
+from qtpy.QtCore import Signal, QObject
+from qtpy.QtWidgets import QAction
 
 from hscommon.trans import trget
 from hscommon.util import dedupe
@@ -90,5 +90,5 @@ class Recent(QObject):
             self._refreshAllMenus()
 
     # --- Signals
-    mustOpenItem = pyqtSignal(str)
-    itemsChanged = pyqtSignal()
+    mustOpenItem = Signal(str)
+    itemsChanged = Signal()

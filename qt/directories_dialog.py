@@ -4,8 +4,8 @@
 # which should be included with this package. The terms are also available at
 # http://www.gnu.org/licenses/gpl-3.0.html
 
-from PyQt5.QtCore import QRect, Qt
-from PyQt5.QtWidgets import (
+from qtpy.QtCore import QRect, Qt
+from qtpy.QtWidgets import (
     QListView,
     QWidget,
     QFileDialog,

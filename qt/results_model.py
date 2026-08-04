@@ -6,9 +6,9 @@
 # which should be included with this package. The terms are also available at
 # http://www.gnu.org/licenses/gpl-3.0.html
 
-from PyQt5.QtCore import Qt, pyqtSignal, QModelIndex
-from PyQt5.QtGui import QBrush, QFont, QFontMetrics
-from PyQt5.QtWidgets import QTableView
+from qtpy.QtCore import Qt, Signal, QModelIndex
+from qtpy.QtGui import QBrush, QFont, QFontMetrics
+from qtpy.QtWidgets import QTableView
 
 from qt.table import Table
 
@@ -118,4 +118,4 @@ class ResultsView(QTableView):
         # We don't call the superclass' method because the default behavior is to rename the cell.
 
     # --- Signals
-    spacePressed = pyqtSignal()
+    spacePressed = Signal()

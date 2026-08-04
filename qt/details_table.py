@@ -6,9 +6,9 @@
 # which should be included with this package. The terms are also available at
 # http://www.gnu.org/licenses/gpl-3.0.html
 
-from PyQt5.QtCore import Qt, QAbstractTableModel
-from PyQt5.QtWidgets import QHeaderView, QTableView
-from PyQt5.QtGui import QFont, QBrush
+from qtpy.QtCore import Qt, QAbstractTableModel
+from qtpy.QtWidgets import QHeaderView, QTableView
+from qtpy.QtGui import QFont, QBrush
 
 from hscommon.trans import trget
 

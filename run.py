@@ -9,8 +9,8 @@ import sys
 import os.path as op
 import gc
 
-from PyQt5.QtCore import QCoreApplication
-from PyQt5.QtWidgets import QApplication
+from qtpy.QtCore import QCoreApplication
+from qtpy.QtWidgets import QApplication
 
 from hscommon.trans import install_gettext_trans_under_qt
 from qt import resources
@@ -60,7 +60,7 @@ def main():
     # Let the Python interpreter runs every 500ms to handle signals.  This is
     # required because Python cannot handle signals while the Qt event loop is
     # running.
-    from PyQt5.QtCore import QTimer
+    from qtpy.QtCore import QTimer
 
     timer = QTimer()
     timer.start(500)

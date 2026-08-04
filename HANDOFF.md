@@ -142,13 +142,14 @@ nobody is running 4.4.0.
   differs from Windows, so a fix verified on one doesn't prove the other.
 - **[#27](https://github.com/haggyroth/dupeguru/issues/27)** — PyQt6 alongside PyQt5, with
   PyQt6 as the default and PyQt5 as the fallback. Phased: **phase 0** (Qt smoke tests, #52)
-  **phase 1** (Qt6-compatible spellings while still on PyQt5, #53) and **phase 2** (embedded
-  resources replacing `pyrcc5`, #54) are done. Remaining: **phase 3**, the binding switch,
-  which will use **qtpy** rather than a hand-rolled shim (decided); **phase 4**, requirements
-  and CI legs.
-  The one Qt5-only spelling deliberately left in the tree is `from PyQt5.QtWidgets import
-  QAction` in `qt/recent.py` — `QAction` moved to `QtGui` in Qt6 and no single import works
-  on both, so it needs the shim. Note phase 4's packaging half is unverifiable here; see #10.
+  **phase 1** (Qt6-compatible spellings while still on PyQt5, #53), **phase 2** (embedded
+  resources replacing `pyrcc5`, #54) and **phase 3a** (imports moved to qtpy, #55) are done.
+  Remaining: **phase 3b**, making PyQt6 the default with PyQt5 as fallback and adding the
+  CI legs. 3a and 3b were split deliberately so that a failure is attributable either to
+  qtpy or to Qt6 itself, rather than to both at once under smoke-only coverage.
+  Nothing in the tree imports a binding directly any more, and every enum spelling already
+  resolves under PyQt6, so 3b is a requirements-and-CI change rather than a code one.
+  Note phase 4's packaging half is unverifiable here; see #10.
 - **[#28](https://github.com/haggyroth/dupeguru/issues/28)** — resumable scans. The largest
   item; the hash cache already delivers most of the practical benefit.
 
@@ -164,9 +165,14 @@ the widgets construct, preferences reach the scan options, and resources resolve
 asserts layout or behaviour, so a change that renders wrongly still passes. Treat a green run
 as "it did not explode", not "it works".
 
-- `requirements.txt` excludes PyQt5 on Linux (`sys_platform != 'linux'`), so the Linux legs
-  skip `qt/tests/` entirely. Real Qt coverage runs only on the Windows and macOS legs. If you
-  break Qt and only watch Linux, you will not see it.
+- `requirements.txt` installs a Qt binding only off Linux (`sys_platform != 'linux'`), so the
+  Linux legs skip the widget tests. Real Qt coverage runs only on the Windows and macOS legs.
+  If you break Qt and only watch Linux, you will not see it.
+- **Import Qt through `qtpy`, never a binding directly.** `from qtpy.QtWidgets import ...`.
+  qtpy also normalises the signal/slot names: use `Signal` and `Slot`, not `pyqtSignal` and
+  `pyqtSlot`, which it does not export. Where no binding is installed it raises
+  `QtBindingsNotFoundError`, an `ImportError` subclass, which is what lets `importorskip`
+  skip the widget tests cleanly on Linux.
 - The resource tests need no bindings and no build step, so they *do* run on Linux. They are
   the only Qt-adjacent thing that does.
 - To check something by hand, drive the objects offscreen: `QT_QPA_PLATFORM=offscreen`,

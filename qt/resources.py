@@ -27,7 +27,7 @@ the data and compares, so the committed copy cannot drift from `images/` unnotic
 from base64 import b64decode
 from functools import lru_cache
 
-from PyQt5.QtGui import QIcon, QPixmap
+from qtpy.QtGui import QIcon, QPixmap
 
 from qt.resources_data import RESOURCES
 

@@ -6,8 +6,8 @@
 # which should be included with this package. The terms are also available at
 # http://www.gnu.org/licenses/gpl-3.0.html
 
-from PyQt5.QtCore import pyqtSignal, Qt, QRect, QUrl, QModelIndex, QItemSelection
-from PyQt5.QtWidgets import (
+from qtpy.QtCore import Signal, Qt, QRect, QUrl, QModelIndex, QItemSelection
+from qtpy.QtWidgets import (
     QComboBox,
     QStyledItemDelegate,
     QStyle,
@@ -15,7 +15,7 @@ from PyQt5.QtWidgets import (
     QStyleOptionViewItem,
     QApplication,
 )
-from PyQt5.QtGui import QBrush
+from qtpy.QtGui import QBrush
 
 from hscommon.trans import trget
 from qt.tree_model import RefNode, TreeModel
@@ -158,7 +158,7 @@ class DirectoriesModel(TreeModel):
         self.model.selected_nodes = new_nodes
 
     # --- Signals
-    foldersAdded = pyqtSignal(list)
+    foldersAdded = Signal(list)
 
     # --- model --> view
     def refresh(self):

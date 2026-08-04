@@ -6,9 +6,9 @@
 # which should be included with this package. The terms are also available at
 # http://www.gnu.org/licenses/gpl-3.0.html
 
-from PyQt5.QtCore import Qt, QRect
-from PyQt5.QtGui import QGuiApplication
-from PyQt5.QtWidgets import (
+from qtpy.QtCore import Qt, QRect
+from qtpy.QtGui import QGuiApplication
+from qtpy.QtWidgets import (
     QMainWindow,
     QMenu,
     QLabel,
