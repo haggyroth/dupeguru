@@ -247,3 +247,100 @@ def test_connect_twice_does_not_leak_the_first_connection(tmp_path):
             first.execute("SELECT 1")
     finally:
         c.close()
+
+
+# ---------------------------------------------------------------------------
+# Hash algorithm tagging (issue #13)
+# ---------------------------------------------------------------------------
+
+
+def test_algorithm_is_recorded_on_connect(cache):
+    from core.hash_cache import HASH_ALGORITHM
+
+    with cache.conn as conn:
+        row = conn.execute("SELECT value FROM meta WHERE key='hash_algorithm'").fetchone()
+    eq_(row[0], HASH_ALGORITHM)
+
+
+def test_digests_are_discarded_when_the_algorithm_changes(tmp_path, monkeypatch):
+    """The silent failure in #13.
+
+    Both xxh3_128 and md5 emit 16 bytes, so a stored digest gives no clue which produced
+    it. If xxhash availability changes between runs, cached digests would be compared
+    against digests from the other algorithm and byte-identical files would quietly stop
+    being reported as duplicates.
+    """
+    import core.hash_cache as hc
+
+    db = tmp_path / "algo.db"
+    p = _make_file(tmp_path, "a.bin")
+
+    first = HashCache()
+    first.connect(db)
+    first.set_batch([(p, 4, 1, DIGEST_A)])
+    first.commit()
+    eq_(first.get(p, 4, 1), DIGEST_A)
+    first.close()
+
+    # Simulate the environment losing xxhash.
+    monkeypatch.setattr(hc, "HASH_ALGORITHM", "md5")
+
+    second = HashCache()
+    second.connect(db)
+    try:
+        assert second.get(p, 4, 1) is None, "digests from another algorithm must not be served"
+        with second.conn as conn:
+            row = conn.execute("SELECT value FROM meta WHERE key='hash_algorithm'").fetchone()
+        eq_(row[0], "md5")
+    finally:
+        second.close()
+
+
+def test_digests_survive_when_the_algorithm_is_unchanged(tmp_path):
+    db = tmp_path / "stable.db"
+    p = _make_file(tmp_path, "a.bin")
+
+    first = HashCache()
+    first.connect(db)
+    first.set_batch([(p, 4, 1, DIGEST_A)])
+    first.commit()
+    first.close()
+
+    second = HashCache()
+    second.connect(db)
+    try:
+        eq_(second.get(p, 4, 1), DIGEST_A), "an unchanged algorithm must not invalidate the cache"
+    finally:
+        second.close()
+
+
+def test_cache_written_before_algorithm_tagging_is_discarded(tmp_path):
+    """A cache from before #13 has no hash_algorithm marker at all.
+
+    Its digests could have come from either algorithm, so they cannot be trusted and must
+    be dropped on first connect rather than served.
+    """
+    db = tmp_path / "untagged.db"
+    conn = sqlite3.connect(str(db))
+    conn.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)")
+    conn.execute(
+        "CREATE TABLE hash_cache (path TEXT PRIMARY KEY, size INTEGER NOT NULL, "
+        "mtime_ns INTEGER NOT NULL, xxhash BLOB, entry_dt DATETIME)"
+    )
+    # Current schema version, but no hash_algorithm row -- exactly a pre-#13 cache.
+    conn.execute("INSERT INTO meta VALUES ('schema_version', ?)", (str(HashCache.schema_version),))
+    conn.execute(
+        "INSERT INTO hash_cache VALUES (?, ?, ?, ?, datetime('now'))",
+        ("/some/path", 4, 1, DIGEST_A),
+    )
+    conn.commit()
+    conn.close()
+
+    c = HashCache()
+    c.connect(db)
+    try:
+        with c.conn as active:
+            remaining = active.execute("SELECT COUNT(*) FROM hash_cache").fetchone()[0]
+        eq_(remaining, 0)
+    finally:
+        c.close()

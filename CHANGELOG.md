@@ -11,6 +11,17 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Hash caches now record which algorithm produced a digest** (`core/fs.py`,
+  `core/hash_cache.py`, issue #13): both caches store 16-byte digests and both fall back from
+  xxhash to md5 when xxhash is unavailable, but neither recorded which had been used. If
+  xxhash availability changed between runs — a different venv, a frozen build missing the
+  wheel, a platform without one — unmodified files returned digests from the old algorithm
+  while new files got the current one, and byte-identical files silently stopped being
+  reported as duplicates. Nothing about a stored digest reveals which function made it, so
+  there was no way to notice. Both caches now write a `hash_algorithm` marker and discard
+  every cached digest when it changes. Caches written before this change carry no marker and
+  are discarded once, costing a single rehash.
+
 - **CSV export wrote malformed line endings on Windows** (`core/export.py`): `export_to_csv`
   opened the file without `newline=""`, so the `\r\n` written by the `csv` module was
   translated again by the text layer, producing `\r\r\n`. Strict CSV parsers read that as a

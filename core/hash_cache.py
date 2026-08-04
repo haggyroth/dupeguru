@@ -19,14 +19,21 @@ from pathlib import Path
 from threading import Lock
 from typing import AnyStr, Union
 
+# HASH_ALGORITHM identifies which function produced a cached digest, so a change in xxhash
+# availability between runs invalidates the cache instead of silently mixing digests from two
+# algorithms. Both emit 16 bytes, so nothing about a stored digest reveals which made it.
 try:
     import xxhash
+
+    HASH_ALGORITHM = "xxh3_128"
 
     def _make_hasher():
         return xxhash.xxh3_128()
 
 except ImportError:
     import hashlib
+
+    HASH_ALGORITHM = "md5"
 
     def _make_hasher():
         return hashlib.md5()
@@ -96,23 +103,37 @@ class HashCache:
             self.conn.commit()
 
     def _check_upgrade(self, conn: sqlite3.Connection) -> None:
-        """Drop and recreate the cache table if it was written by an older schema.
+        """Drop and recreate the cache table if the schema or hash algorithm changed.
 
-        Caller must hold the lock. Losing cached digests costs a rehash, nothing more.
+        Caller must hold the lock. Losing cached digests costs a rehash, nothing more --
+        whereas keeping digests made by a different algorithm costs missed duplicates.
         """
         row = conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
         try:
             found = int(row[0]) if row else None
         except (TypeError, ValueError):
             found = None
-        if found == self.schema_version:
+        algo_row = conn.execute("SELECT value FROM meta WHERE key='hash_algorithm'").fetchone()
+        algorithm = algo_row[0] if algo_row else None
+
+        if found == self.schema_version and algorithm == HASH_ALGORITHM:
             return
-        if found is not None:
+        if found is not None and found != self.schema_version:
             logging.info("HashCache: schema %s != %s, rebuilding cache", found, self.schema_version)
+        if algorithm is not None and algorithm != HASH_ALGORITHM:
+            logging.info(
+                "HashCache: hash algorithm changed from %s to %s, discarding cached digests",
+                algorithm,
+                HASH_ALGORITHM,
+            )
         conn.execute(self._DROP)
         conn.execute(
             "INSERT OR REPLACE INTO meta(key, value) VALUES('schema_version', ?)",
             (str(self.schema_version),),
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES('hash_algorithm', ?)",
+            (HASH_ALGORITHM,),
         )
 
     def clear(self) -> None:
