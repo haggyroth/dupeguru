@@ -199,6 +199,47 @@ class TestCaseDupeGuru:
         with pytest.raises(OSError, match="changed since the last scan"):
             dgapp._do_delete_dupe(dupe, False, False, False)
 
+    # --- The shared pre-deletion predicate (issue #25) ---
+
+    def test_check_deletable_accepts_an_unchanged_file(self, tmpdir):
+        f = Path(str(tmpdir)) / "file.txt"
+        f.write_text("hello")
+        st = f.stat()
+        status, message = app.check_deletable(f, st.st_size, st.st_mtime)
+        eq_(status, app.DeleteStatus.OK)
+        eq_(message, "")
+
+    def test_check_deletable_reports_each_refusal_distinctly(self, tmpdir):
+        tmppath = Path(str(tmpdir))
+        missing = tmppath / "gone.txt"
+        eq_(app.check_deletable(missing, 5, 0)[0], app.DeleteStatus.GONE)
+
+        f = tmppath / "file.txt"
+        f.write_text("hello")
+        st = f.stat()
+        eq_(app.check_deletable(f, 999, st.st_mtime)[0], app.DeleteStatus.CHANGED)
+        eq_(app.check_deletable(f, st.st_size, st.st_mtime - 100)[0], app.DeleteStatus.CHANGED)
+
+    def test_check_deletable_tolerates_sub_second_mtime_drift(self, tmpdir):
+        """FAT32 has 2-second mtime resolution; NTFS rounds. Neither is a real change."""
+        f = Path(str(tmpdir)) / "file.txt"
+        f.write_text("hello")
+        st = f.stat()
+        eq_(app.check_deletable(f, st.st_size, st.st_mtime - 1)[0], app.DeleteStatus.OK)
+        eq_(app.check_deletable(f, st.st_size, st.st_mtime - 3)[0], app.DeleteStatus.CHANGED)
+
+    def test_check_deletable_refuses_a_symlink(self, tmpdir):
+        tmppath = Path(str(tmpdir))
+        target = tmppath / "target.txt"
+        target.write_text("hello")
+        link = tmppath / "link.txt"
+        try:
+            link.symlink_to(target)
+        except (OSError, NotImplementedError):
+            pytest.skip("no symlink privilege on this platform")
+        st = target.stat()
+        eq_(app.check_deletable(link, st.st_size, st.st_mtime)[0], app.DeleteStatus.SYMLINK)
+
     # --- Delete-and-replace-with-link ordering (issue #20) ---
 
     def _linkable_dupe(self, tmpdir):

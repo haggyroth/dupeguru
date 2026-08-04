@@ -11,6 +11,19 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`--plan` reports what a deletion would do** (`cli.py`, `core/app.py`, issue #25): there
+  was no way to see what `--delete` would actually remove. `--dry-run` gave a file count and
+  a byte total, but could not say how many files would be refused by the size/mtime
+  revalidation, how many matched only on a sampled hash, or how many sit on a different
+  volume from their reference. `--plan` implies no mutation, needs no `--delete`, prints
+  that summary to stderr, and emits a per-file plan as JSON to stdout carrying
+  `would_delete`, `match_confidence` and a `blocked_reason`. It works against a saved
+  results file too, which is where it matters most: results from last week may describe a
+  directory that has since changed. `--dry-run`'s summary gained the group and
+  full-content counts.
+  The plan is computed by the deletion's own predicate rather than a parallel
+  reimplementation, so the paths it says will go are exactly the ones a subsequent
+  `--delete` removes; a plan that could disagree with the deletion would be worse than none.
 - **Partial-hash matches are recorded and can be verified** (`cli.py`, `core/scanner.py`,
   `core/results.py`, issue #26): `--partial-hash-threshold` matches large files on three
   sampled chunks, which can produce false positives, but the result set did not carry the
@@ -36,6 +49,17 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   **Note:** adding any exclusion replaces the built-in "skip dot-prefixed folders" fallback,
   so `--exclude` on its own *widens* the scan. `--exclude-defaults` restores it. This is
   documented in `--exclude`'s help text and covered by a test.
+
+### Changed
+
+- **The pre-deletion revalidation lives in one place** (`core/app.py`, issue #25): three
+  copies of "is this file still safe to delete" existed — `_do_delete_dupe` raising,
+  `_delete_from_saved_results` collecting problems, and nothing at all on the planning side.
+  Extracted as `check_deletable`, which returns a `DeleteStatus` and leaves the policy to
+  each caller: the live path still treats a vanished file as a silent no-op, the
+  saved-results path still reports it. No behaviour change.
+- CLI skip reasons no longer read `skipped <path>: skipped: ...` — the reason strings carried
+  a prefix that both consumers were already supplying.
 
 ### Fixed
 
