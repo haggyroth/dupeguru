@@ -47,9 +47,16 @@ jobs:
       - name: Build python modules
         run: |
           python build.py --modules
+      - name: Build Qt resources
+        # Only where the Qt bindings are installed: requirements.txt excludes PyQt5 on
+        # Linux, and pyrcc5 ships with it. Without this the Qt resource tests would skip
+        # rather than run, which is how an empty dg_rc.py went unnoticed before.
+        if: runner.os != 'Linux'
+        run: |
+          python -c "import build; build.build_qt_resources()"
       - name: Run tests
         run: |
-          pytest core hscommon --cov=core --cov=hscommon --cov=cli --cov-report=term-missing --cov-report=xml
+          pytest core hscommon qt --cov=core --cov=hscommon --cov=cli --cov=qt --cov-report=term-missing --cov-report=xml
       - name: Upload coverage report
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
