@@ -25,10 +25,24 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- **The Windows uninstaller removed the wrong directory** (`setup.nsi`, issue #27): it did
-  `RMDir /r "$INSTDIR\PyQt5"`, so after PyQt6 became the default binding an uninstall would
-  have left the entire Qt runtime behind. Only reachable from a packaged install, which is
-  why nothing in the test suite could catch it.
+- **The Windows uninstaller left the entire payload behind** (`setup.nsi`, issue #27):
+  measured against a real build, uninstalling removed 3.8 MB of 114.3 MB and stranded
+  110.5 MB, the Qt runtime included. The uninstall section enumerated top-level package
+  directories, but widening the PyInstaller pin to 6.x moved the whole payload into
+  `_internal/`, so every path it named matched nothing and the non-recursive `RMDir` on
+  `$INSTDIR` then failed against the surviving tree. It now removes `$INSTDIR\_internal`,
+  which covers the packages, the binding and every bundled DLL without naming any of them.
+  The pre-6.x paths are kept so uninstalling over a `<= 4.7.0` install still cleans up;
+  both layouts were tested. This supersedes the earlier `PyQt5` → `PyQt6` correction to the
+  same block, which fixed the directory name but not the layout it lived in.
+- **The frozen Windows build bundled the fallback binding** (`package.py`, issue #27):
+  `package.py` never set `QT_API`, and qtpy prefers PyQt5 when both bindings are installed,
+  so a build machine with both froze PyQt5 while the uninstaller looked for PyQt6. What
+  actually stranded in the measurement above was `_internal\PyQt5`, 75.4 MB — fixing the
+  layout alone would still have missed. `pin_qt_binding()` now sets `QT_API=pyqt6` before
+  each PyInstaller run, making the frozen binding a property of the build rather than of the
+  machine; an existing value is honoured so the PyQt5 fallback can still be packaged
+  deliberately.
 - **`freeze_support()` is called from the entry points** (`run.py`, `cli.py`, `__main__.py`,
   issue #10): it was invoked at import time in `core/pe/matchblock.py` instead. Contrary to
   what #10 states, that call *is* reached in every mode — `core/pe/__init__.py` imports
