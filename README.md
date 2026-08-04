@@ -92,10 +92,9 @@ This fork ships a headless CLI for scripted and automated scans. It is installed
 
     $ dupeguru-scan <folder> [<folder> ...] [options]
     $ python cli.py <folder> [<folder> ...] [options]
+    $ python -m dupeguru <folder> [<folder> ...] [options]
 
-There is no `scan` subcommand — folders are positional arguments. (`python -m dupeguru` and the
-`scan` verb are documented in `cli.py`'s docstring but do not work; see
-[issue #30][issue-invocation].)
+There is no `scan` subcommand — folders are positional arguments.
 
 Scan a folder and write JSON results:
 
@@ -177,7 +176,6 @@ run before each commit:
 [upstream]: https://github.com/arsenetar/dupeguru
 [fork]: https://github.com/haggyroth/dupeguru
 [fork-issues]: https://github.com/haggyroth/dupeguru/issues
-[issue-invocation]: https://github.com/haggyroth/dupeguru/issues/30
 [cross-toolkit]: http://www.hardcoded.net/articles/cross-toolkit-software
 [documentation]: http://dupeguru.voltaicideas.net/help/en/
 [python]: http://www.python.org/
