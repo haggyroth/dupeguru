@@ -24,14 +24,22 @@ from pathlib import Path
 from hscommon.util import nonone, get_file_ext
 
 hasher: Callable
+# HASH_ALGORITHM identifies which function produced a cached digest. Both algorithms emit
+# 16 bytes, so a digest computed by one is indistinguishable from the other by inspection.
+# Without recording this, a change in xxhash availability between runs would leave the cache
+# serving digests from the other algorithm, and byte-identical files would stop matching.
+# Note xxhash.xxh128 is an alias for xxh3_128, which is what core/hash_cache.py calls, so
+# both caches name the same algorithm here.
 try:
     import xxhash
 
     hasher = xxhash.xxh128
+    HASH_ALGORITHM = "xxh3_128"
 except ImportError:
     import hashlib
 
     hasher = hashlib.md5
+    HASH_ALGORITHM = "md5"
 
 __all__ = [
     "File",
@@ -130,6 +138,8 @@ class FilesDB:
 
     def _check_upgrade(self) -> None:
         with self.lock, self.conn as conn:
+            # meta has to exist before the algorithm check can read from it.
+            conn.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)")
             has_schema = conn.execute(
                 "SELECT NAME FROM sqlite_master WHERE type='table' AND name='schema_version'"
             ).fetchall()
@@ -138,14 +148,28 @@ class FilesDB:
                 version = conn.execute("SELECT version FROM schema_version ORDER BY version DESC").fetchone()[0]
             else:
                 conn.execute("CREATE TABLE schema_version (version int PRIMARY KEY, description TEXT)")
-            if version != self.schema_version:
+            row = conn.execute("SELECT value FROM meta WHERE key='hash_algorithm'").fetchone()
+            algorithm = row[0] if row else None
+            # An algorithm change invalidates every digest just as surely as a schema change:
+            # the rows are still readable, but comparing them against freshly computed digests
+            # would silently stop reporting real duplicates.
+            if version != self.schema_version or algorithm != HASH_ALGORITHM:
+                if algorithm is not None and algorithm != HASH_ALGORITHM:
+                    logging.info(
+                        "FilesDB: hash algorithm changed from %s to %s, discarding cached digests",
+                        algorithm,
+                        HASH_ALGORITHM,
+                    )
                 conn.execute(self.drop_table_query)
                 conn.execute(
                     "INSERT OR REPLACE INTO schema_version VALUES (:version, :description)",
                     {"version": self.schema_version, "description": self.schema_version_description},
                 )
             conn.execute(self.create_table_query)
-            conn.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)")
+            conn.execute(
+                "INSERT OR REPLACE INTO meta(key, value) VALUES('hash_algorithm', ?)",
+                (HASH_ALGORITHM,),
+            )
 
     def clear(self) -> None:
         self._flush_if_pending()

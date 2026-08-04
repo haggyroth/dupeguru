@@ -111,3 +111,65 @@ def test_has_file_attrs(tmpdir):
     b = fs.Folder(Path(str(tmpdir)))
     assert b.mtime > 0
     eq_(b.extension, "")
+
+
+# ---------------------------------------------------------------------------
+# FilesDB records which hash algorithm produced its digests (issue #13)
+# ---------------------------------------------------------------------------
+
+
+def test_filesdb_records_the_hash_algorithm(tmp_path):
+    db = fs.FilesDB()
+    db.connect(str(tmp_path / "files.db"))
+    try:
+        with db.conn as conn:
+            row = conn.execute("SELECT value FROM meta WHERE key='hash_algorithm'").fetchone()
+        eq_(row[0], fs.HASH_ALGORITHM)
+    finally:
+        db.close()
+
+
+def test_filesdb_discards_digests_when_the_algorithm_changes(tmp_path, monkeypatch):
+    """Both algorithms emit 16 bytes, so a stored digest cannot be told apart by inspection.
+
+    Serving an xxh3_128 digest to a run that now computes md5 (or the reverse) means
+    byte-identical files silently stop matching.
+    """
+    dbpath = str(tmp_path / "files.db")
+    target = tmp_path / "a.bin"
+    target.write_bytes(b"data")
+
+    first = fs.FilesDB()
+    first.connect(dbpath)
+    first.put(target, "digest", b"\x01" * 16)
+    first.commit()
+    eq_(first.get(target, "digest"), b"\x01" * 16)
+    first.close()
+
+    monkeypatch.setattr(fs, "HASH_ALGORITHM", "some-other-algorithm")
+
+    second = fs.FilesDB()
+    second.connect(dbpath)
+    try:
+        assert second.get(target, "digest") is None, "digests from another algorithm must not be served"
+    finally:
+        second.close()
+
+
+def test_filesdb_keeps_digests_when_the_algorithm_is_unchanged(tmp_path):
+    dbpath = str(tmp_path / "files.db")
+    target = tmp_path / "a.bin"
+    target.write_bytes(b"data")
+
+    first = fs.FilesDB()
+    first.connect(dbpath)
+    first.put(target, "digest", b"\x02" * 16)
+    first.commit()
+    first.close()
+
+    second = fs.FilesDB()
+    second.connect(dbpath)
+    try:
+        eq_(second.get(target, "digest"), b"\x02" * 16)
+    finally:
+        second.close()
