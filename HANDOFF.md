@@ -20,12 +20,12 @@ it renders links for *historical* upstream ticket numbers in `help/changelog`. D
 | | |
 |---|---|
 | Branch | `master` (not `main`) |
-| Version | 4.7.0, released |
-| Releases | v4.4.0, v4.4.1, v4.5.0, v4.6.0, v4.7.0 |
-| Issues | 23 closed, 3 open |
-| Tests | **835 passing, 6 skipped** on macOS as of #56. Windows/Linux counts differ (see below) |
+| Version | 4.7.1, released |
+| Releases | v4.4.0, v4.4.1, v4.5.0, v4.6.0, v4.7.0, v4.7.1 |
+| Issues | 26 closed, 1 open |
+| Tests | **862 passing, 6 skipped** on macOS. Windows/Linux counts differ (see below) |
 | Qt bindings | PyQt6 by default, PyQt5 as a fallback with its own CI leg |
-| CI | green on Python 3.10–3.14 (Linux) plus Windows and macOS |
+| CI | green on Python 3.10–3.14 (Linux) plus Windows and macOS; `master` is protected |
 
 Work is tracked as GitHub issues on the fork. Don't keep a parallel roadmap file — check the
 tracker.
@@ -75,9 +75,10 @@ move and a green run looks different.
 | 3 Windows junction tests | run | **skip** | **skip** |
 | 1 case-sensitivity test | skip | skip (APFS is case-insensitive) | run |
 | 2 exclude union-mode tests | skip | skip | skip |
-| **Totals** | 838 / 3 skipped | **835 / 6 skipped** | 836 / 5 skipped |
+| **Totals** | 865 / 3 skipped | **862 / 6 skipped** | 863 / 5 skipped |
 
-841 tests collected in total. All three columns were measured on CI as of #56. If a count is
+868 tests collected in total. The macOS column is measured; the other two are that total
+less the tests their platform skips, and were last measured on CI at #56. If a count is
 off by a little, check which group changed rather than assuming the suite broke.
 
 Note the Windows column is CI, not the old Windows laptop: CI runners *do* have symlink
@@ -106,6 +107,28 @@ Branch off `master` → PR → wait for **fully green** CI → merge commit titl
 `merge: <branch-name> (#<PR>)` → delete branch. Kyle authorised auto-merging any PR once CI
 is fully green without checking in each time.
 
+`master` is **protected**, and this is enforced by GitHub rather than by remembering:
+
+- Direct pushes are rejected — `GH006: ... Changes must be made through a pull request`.
+- **9 required status checks**: `pre-commit` and all eight `test (...)` legs. A PR cannot be
+  merged while any is pending or failing, which is the point: judging "green" by reading a
+  check list is what nearly merged #47 with Windows still running.
+- `enforce_admins` is on, so there is no bypass. Zero approvals are required, so
+  merge-on-green still needs nobody else.
+- Force pushes and branch deletion are off. Tag pushes are unaffected, so releases work.
+
+**Adding or renaming a CI leg breaks merging until the required-contexts list is updated**,
+because contexts are matched by name. That is deliberate — a leg silently vanishing is the
+failure this guards — but it means the two go together:
+
+```bash
+gh api repos/haggyroth/dupeguru/branches/master/protection | \
+    python -c "import json,sys; print(*json.load(sys.stdin)['required_status_checks']['contexts'], sep='\n')"
+```
+
+`tests/ci_workflow_test.py` pins the expected job set, so a matrix change is a visible edit
+in the diff rather than something to discover later.
+
 Commits follow Conventional Commits. `commitlint` is configured but not enforced locally
 unless you `pre-commit install`.
 
@@ -114,6 +137,16 @@ unless you `pre-commit install`.
 **`pre-commit run --all-files` silently skips untracked files.** It reads `git ls-files`, so a
 newly created file is invisible until `git add`. This produced a false "all six hooks passed"
 locally and a red CI run. **Always `git add` before running it.**
+
+**Green does not mean checked.** Four times in one session a green signal meant less than it
+looked: a duplicate workflow run showed a passing entry for a check still pending in another
+run; an `include` entry converted a CI leg instead of adding one, and the check *count* was
+the only clue; a smoke test printed "pool ran" while asserting nothing of the sort; and a
+stale PyInstaller analysis produced a build that reported success while shipping the previous
+binding. Three of those now have mechanical guards — branch protection,
+`tests/ci_workflow_test.py`, and `run_checked` plus `--clean`. The fourth, a test that would
+pass whether or not the code under test ran, has no cheap mechanical answer short of mutation
+testing; the habit below is the mitigation. Ask what actually ran, not whether it was green.
 
 **Verify a fix by reverting it.** `git stash push <file>`, run the new test, confirm it
 *fails*, then `git stash pop`. This caught several tests that would otherwise have passed
