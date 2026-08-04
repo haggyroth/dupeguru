@@ -9,6 +9,39 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **A manual packaging workflow** (`.github/workflows/packaging.yml`, issues #10 and #27):
+  `workflow_dispatch` only, since no release has ever shipped a binary and freezing is slow.
+  It builds the frozen CLI on Windows and macOS and runs a real content scan through the
+  resulting binary, which exercises the `ProcessPoolExecutor` path in
+  `core/scanner.py::_hash_files_parallel` — the code path #10 concerns, and previously the
+  only way to check it was to have someone build by hand. It fails on the fingerprints of
+  that failure mode (`bootstrapping phase`, `falling back to sequential`) as well as on a
+  wrong group count. It cannot check the GUI or the NSIS installer; those stay manual.
+
+### Fixed
+
+- **The Windows uninstaller removed the wrong directory** (`setup.nsi`, issue #27): it did
+  `RMDir /r "$INSTDIR\PyQt5"`, so after PyQt6 became the default binding an uninstall would
+  have left the entire Qt runtime behind. Only reachable from a packaged install, which is
+  why nothing in the test suite could catch it.
+- **`freeze_support()` is called from the entry points** (`run.py`, `cli.py`, `__main__.py`,
+  issue #10): it was invoked at import time in `core/pe/matchblock.py` instead. Contrary to
+  what #10 states, that call *is* reached in every mode — `core/pe/__init__.py` imports
+  `matchblock` eagerly — but reaching it is not enough. It has to run before the entry point
+  does anything else, and `run.py` constructs a `QApplication` before the import chain gets
+  there. It now sits at the top of each `__main__` block, as the multiprocessing docs
+  require, and no longer depends on an import side effect.
+
+### Changed
+
+- **The PyInstaller pin is widened to `>=6.15,<7.0`** (`requirements-extra.txt`): the old
+  `>=5.6,<6.0` had no Python 3.14 build, so the whole file — including pytest, flake8 and
+  black — could not be installed on a current interpreter. Widened together with actual
+  packaging verification rather than on its own: 6.21 was used to build and run a frozen CLI
+  on macOS, which is the check that was missing when this was previously left alone.
+
 ## [4.7.0] - 2026-08-04
 
 ### Changed

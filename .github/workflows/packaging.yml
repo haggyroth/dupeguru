@@ -1,0 +1,88 @@
+# Builds a frozen executable and smoke-tests it. Manual only.
+#
+# Packaging is not part of normal CI: no release has ever shipped a binary, and freezing is
+# slow. But issues #10 and #27 both concern behaviour that *only* exists in a frozen build,
+# so without something like this they can never be checked at all.
+#
+# What this can and cannot prove:
+#   - It CAN build the app frozen, and run a real content scan through the frozen CLI. That
+#     scan uses the ProcessPoolExecutor in core/scanner.py::_hash_files_parallel, which is
+#     the code path issue #10 is about, so a re-execution bug there shows up here.
+#   - It CANNOT check the GUI. The symptom described in #10 -- extra windows -- needs a
+#     desktop session and a person. Nor does it run the NSIS installer/uninstaller, which is
+#     what #27's setup.nsi item concerns. Those remain manual.
+
+name: Packaging
+
+on:
+  workflow_dispatch:
+
+jobs:
+  freeze:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+      - name: Set up Python 3.12
+        uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 # v6.1.0
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install setuptools
+          pip install -r requirements.txt -r requirements-extra.txt
+      - name: Build python modules
+        run: python build.py --modules
+      - name: Freeze the CLI
+        run: >
+          pyinstaller --noconfirm --console --name dupeguru-scan
+          --distpath dist-freeze --workpath build-freeze --specpath build-freeze
+          cli.py
+      - name: Smoke-test the frozen binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Random payloads so nothing can be served from the hash cache: every file must be
+          # hashed, which is what puts work through the process pool.
+          python - <<'PY'
+          import pathlib, uuid
+          d = pathlib.Path("scan-fixture"); d.mkdir(exist_ok=True)
+          tag = uuid.uuid4().hex
+          for i in range(120):
+              payload = (f"{tag}-{i}-".encode() * 20000)   # ~0.5 MB
+              (d / f"a{i}.bin").write_bytes(payload)
+              (d / f"b{i}.bin").write_bytes(payload)
+          PY
+          BIN=dist-freeze/dupeguru-scan/dupeguru-scan
+          [ -f "$BIN.exe" ] && BIN="$BIN.exe"
+          # Exit code 1 is EXIT_DUPES_FOUND, which is the expected success here.
+          set +e
+          "$BIN" scan-fixture --verbose > scan-out.json 2> scan-err.txt
+          rc=$?
+          set -e
+          echo "exit code: $rc"
+          tail -5 scan-err.txt || true
+          if [ "$rc" -ne 1 ]; then echo "::error::expected exit 1 (duplicates found), got $rc"; exit 1; fi
+          python - <<'PY'
+          import json, sys, pathlib
+          stats = json.load(open("scan-out.json"))["stats"]
+          print("stats:", stats)
+          if stats["groups"] != 120:
+              sys.exit(f"::error::expected 120 groups, got {stats['groups']}")
+          err = pathlib.Path("scan-err.txt").read_text(errors="replace")
+          # These are the fingerprints of the issue #10 failure mode: a spawn child
+          # re-executing the program instead of running the worker.
+          for marker in ("bootstrapping phase", "falling back to sequential"):
+              if marker in err:
+                  sys.exit(f"::error::frozen build shows parallel-hashing trouble: {marker!r}")
+          print("frozen content scan OK: pool ran, no re-execution markers")
+          PY
+      - name: Upload frozen build
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: frozen-cli-${{ matrix.os }}
+          path: dist-freeze/**

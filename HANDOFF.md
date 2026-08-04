@@ -51,14 +51,11 @@ the Qt/Homebrew setup if you need to run the GUI rather than just the CLI and te
 Two things the old one-line install got wrong, both found setting this machine up on Python
 3.14 (Homebrew's current default):
 
-- **Don't `pip install -r requirements-extra.txt` on 3.14.** It pins
-  `pyinstaller>=5.6,<6.0`, and no release in that range has a 3.14 build, so the whole
-  install aborts — including the pytest/flake8/black that the same file provides. Install
-  those four directly, as above. The pin is only needed for packaging, which nothing here
-  currently does. Don't "fix" it by widening the pin to 6.x on its own: PyInstaller majors
-  change frozen-build behaviour, that's untestable without an actual packaging run, and it
-  would land squarely on the unverified-fix trap that issue #10 exists to avoid. Pair it
-  with #10 and real packaging work.
+- ~~Don't `pip install -r requirements-extra.txt` on 3.14.~~ **Fixed in #58.** The pin was
+  `pyinstaller>=5.6,<6.0`, which has no 3.14 build, so the whole file failed to install —
+  taking pytest/flake8/black with it. It is now `>=6.15,<7.0` and installs cleanly. The pin
+  was widened together with actual packaging verification rather than on its own, which is
+  what made it safe to do: see the packaging section below.
 - **`python build.py --modules` needs `setuptools` installed explicitly.** It shells out to
   `setup.py build_ext`, and venvs stopped seeding setuptools in 3.12. Without it the build
   fails with a bare `ModuleNotFoundError: No module named 'setuptools'` several lines above
@@ -126,6 +123,31 @@ way, and it's worth continuing.
 Minor: running throwaway scripts via `python - <<EOF` breaks `ProcessPoolExecutor`, because
 the main module becomes `<stdin>` and spawn workers can't re-import it. Write to a real `.py`
 file and set `PYTHONPATH` to the repo root.
+
+## Packaging
+
+Nothing here has ever shipped a binary — every release has zero assets — so packaging bugs
+are latent rather than live. `.github/workflows/packaging.yml` is **manual only**
+(`workflow_dispatch`): it freezes the CLI on Windows and macOS and runs a real content scan
+through the frozen binary, which is the only automated way to exercise the process-pool path
+that issue #10 concerns.
+
+Two things it cannot do, and that therefore still need a person: launch the GUI (the symptom
+in #10 is extra windows), and run the NSIS installer/uninstaller (#27's `setup.nsi` item).
+
+Findings from the first real packaging run, on macOS with PyInstaller 6.21 — worth knowing
+before anyone "fixes" #10 again:
+
+- The **frozen CLI is not affected**. Measured: 11 concurrent worker processes, 300 groups
+  found, exit 1, no re-execution markers. `cli.py` imports at module scope, so anything that
+  hands control to the worker machinery runs before `main()` does.
+- **PyInstaller ships `pyi_rth_multiprocessing.py`**, a runtime hook whose explicit job is to
+  stop `spawn` re-reading `__main__` from the main script. That is #10's exact mechanism, and
+  it has been in PyInstaller since 2017 — so it is in the 5.x range the project used to pin.
+  #10 may therefore be mitigated by the packaging tool already. It is still **unconfirmed on
+  Windows with a GUI build**, which is the only configuration the issue actually describes.
+- `freeze_support()` now sits in the `__main__` block of all three entry points regardless.
+  That is the documented contract, and it does not depend on the packaging tool's behaviour.
 
 ## Releases
 

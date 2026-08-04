@@ -84,4 +84,13 @@ def main():
 
 
 if __name__ == "__main__":
+    # Must be the first thing in the entry point, per the multiprocessing docs. Content
+    # scans use a ProcessPoolExecutor, and on spawn platforms -- Windows and macOS -- each
+    # worker re-executes this program. PyInstaller ships a runtime hook that also handles
+    # this, but relying on the packaging tool for it is not the documented contract, and
+    # this entry point is the one that would suffer: it constructs a QApplication before
+    # importing anything that could hand control to the worker machinery.
+    import multiprocessing
+
+    multiprocessing.freeze_support()
     sys.exit(main())
