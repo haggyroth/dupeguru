@@ -1,8 +1,11 @@
 """dupeGuru command-line interface.
 
 Usage:
-    python -m dupeguru scan <folder> [<folder> ...] [options]
-    python cli.py scan <folder> [<folder> ...] [options]
+    dupeguru-scan <folder> [<folder> ...] [options]     # installed console script
+    python cli.py <folder> [<folder> ...] [options]     # from a source checkout
+    python -m dupeguru <folder> [<folder> ...] [options]
+
+There is no "scan" subcommand: folders are positional arguments.
 
 Exit codes:
     0  Scan completed, no duplicates found (or --from-results: nothing deleted).
@@ -55,7 +58,7 @@ EXIT_DUPES_FOUND = 1
 EXIT_BAD_ARGS = 2
 EXIT_SCAN_ERROR = 3
 
-# --- CLI name → ScanType ---------------------------------------------------
+# --- CLI name -> ScanType ---------------------------------------------------
 # Keys are the values accepted on the command line.
 _SCAN_TYPE_MAP = {
     "filename": ScanType.FILENAME,
@@ -401,7 +404,7 @@ def _delete_from_saved_results(
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="dupeguru scan",
+        prog="dupeguru-scan",
         description=(
             "Scan one or more folders for duplicate files and report results as JSON.\n\n"
             "Exit codes: 0=no duplicates, 1=duplicates found, 2=bad arguments, "
@@ -442,8 +445,8 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="TYPE",
         help=(
-            "Scan algorithm. Defaults per mode: standard→contents, music→tag, "
-            "picture→picture-contents.  "
+            "Scan algorithm. Defaults per mode: standard->contents, music->tag, "
+            "picture->picture-contents.  "
             f"Choices: {', '.join(sorted(_SCAN_TYPE_MAP))}."
         ),
     )
@@ -603,7 +606,26 @@ def _build_parser() -> argparse.ArgumentParser:
 # --- Main ------------------------------------------------------------------
 
 
+def _make_streams_utf8() -> None:
+    """Stop a legacy console code page from killing output.
+
+    On Windows, stdout/stderr default to the console code page (often cp1252). File paths
+    routinely contain characters it cannot encode, and a single one raises
+    UnicodeEncodeError mid-scan. errors="replace" keeps the run alive and substitutes the
+    offending character rather than aborting.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue  # already replaced, e.g. by pytest's capture
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (ValueError, OSError):
+            pass
+
+
 def main(argv=None) -> int:
+    _make_streams_utf8()
     parser = _build_parser()
     args = parser.parse_args(argv)
 
@@ -766,9 +788,9 @@ def main(argv=None) -> int:
     app.options["word_weighting"] = args.word_weighting
     app.options["match_similar_words"] = args.match_similar
     app.options["mix_file_kind"] = args.mix_file_kind
-    app.options["size_threshold"] = args.min_size * 1024  # KB → bytes
-    app.options["large_size_threshold"] = args.max_size * 1024 * 1024  # MB → bytes
-    app.options["big_file_size_threshold"] = args.partial_hash_threshold * 1024 * 1024  # MiB → bytes
+    app.options["size_threshold"] = args.min_size * 1024  # KB -> bytes
+    app.options["large_size_threshold"] = args.max_size * 1024 * 1024  # MB -> bytes
+    app.options["big_file_size_threshold"] = args.partial_hash_threshold * 1024 * 1024  # MiB -> bytes
     app.options["rehash_ignore_mtime"] = args.rehash_ignore_mtime
 
     # Add directories -----------------------------------------------------

@@ -1,9 +1,12 @@
 """Tests for the dupeGuru command-line interface (cli.py)."""
 
+import argparse
 import json
+import sys
 from pathlib import Path
 
 import pytest
+from hscommon.testutil import eq_
 
 import cli
 from cli import main, EXIT_OK, EXIT_DUPES_FOUND, EXIT_BAD_ARGS, EXIT_SCAN_ERROR
@@ -624,3 +627,93 @@ class TestHeadlessView:
         v = cli._HeadlessView()
         assert v.ask_yes_no("are you sure?") is False
         assert "declined" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# Help output must survive a legacy console code page (issue #29)
+# ---------------------------------------------------------------------------
+
+
+class TestHelpEncoding:
+    def test_help_text_is_pure_ascii(self):
+        """A single non-ASCII character crashed --help on a cp1252 console.
+
+        argparse renders every help string into --help output, and Windows consoles
+        default to the code page rather than UTF-8, so U+2192 in the --scan-type help
+        raised UnicodeEncodeError before argparse could print anything.
+        """
+        help_text = cli._build_parser().format_help()
+        offenders = sorted({c for c in help_text if ord(c) > 127})
+        assert not offenders, f"non-ASCII in --help will crash a cp1252 console: {offenders!r}"
+
+    def test_help_encodes_to_cp1252(self):
+        """The direct form of the same guard, against the code page that actually broke."""
+        cli._build_parser().format_help().encode("cp1252")
+
+    def test_cli_source_is_pure_ascii(self):
+        """Comments too: they get copied into help strings, which is how this happened."""
+        from pathlib import Path
+
+        source = Path(cli.__file__).read_text(encoding="utf-8")
+        offenders = sorted({c for c in source if ord(c) > 127})
+        assert not offenders, f"non-ASCII in cli.py: {offenders!r}"
+
+    def test_prog_name_matches_the_installed_command(self):
+        """It read "dupeguru scan", implying a subcommand that does not exist."""
+        eq_(cli._build_parser().prog, "dupeguru-scan")
+
+    def test_there_is_no_scan_subcommand(self):
+        """The docstring used to document one; folders are positional."""
+        parser = cli._build_parser()
+        assert not any(
+            isinstance(action, argparse._SubParsersAction) for action in parser._actions
+        ), "docs and prog name assume no subcommand"
+
+    def test_make_streams_utf8_tolerates_streams_without_reconfigure(self, monkeypatch):
+        """pytest's capture replaces sys.stdout with an object that may lack reconfigure."""
+
+        class _Plain:
+            pass
+
+        monkeypatch.setattr(sys, "stdout", _Plain())
+        monkeypatch.setattr(sys, "stderr", _Plain())
+        cli._make_streams_utf8()  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# Documented invocations must actually work (issue #30)
+# ---------------------------------------------------------------------------
+
+
+class TestInvocation:
+    def test_python_m_dupeguru_runs(self, tmp_path):
+        """`python -m dupeguru` raised ModuleNotFoundError: the checkout dir was not on sys.path."""
+        import subprocess
+
+        repo_root = Path(cli.__file__).parent
+        _write_files(tmp_path, {"a.txt": b"same", "b.txt": b"same"})
+
+        result = subprocess.run(
+            [sys.executable, "-m", repo_root.name, str(tmp_path)],
+            cwd=str(repo_root.parent),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+
+        assert result.returncode == EXIT_DUPES_FOUND, result.stderr
+        data = json.loads(result.stdout)
+        eq_(data["stats"]["groups"], 1)
+
+    def test_main_module_does_not_run_on_import(self):
+        """__main__.py called sys.exit(main()) unguarded.
+
+        Spawn-based pool workers re-import the main module, so an unguarded call would
+        make every worker re-run the whole CLI.
+        """
+        from pathlib import Path as _Path
+
+        source = _Path(cli.__file__).parent.joinpath("__main__.py").read_text(encoding="utf-8")
+        assert 'if __name__ == "__main__":' in source
+        body = source.split('if __name__ == "__main__":', 1)[0]
+        assert "sys.exit(main())" not in body, "main() must not be invoked at import time"

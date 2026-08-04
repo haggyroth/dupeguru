@@ -28,22 +28,21 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   blank line between every row. Found by writing the first tests for this module. The file
   handle was also never closed; both exports now use a context manager.
 
-### Added
-
-- **`core/gui/mark_dialog.py` coverage 0% → 100%** (`core/tests/mark_dialog_test.py`,
-  issue #23): the rule-based auto-marking engine decides which file in each group is kept and
-  marks the rest, so whatever it marks is what a later delete removes. It had no tests at all.
-  Covers rule-list construction, `apply()` marking every non-keeper, never marking the group
-  reference, idempotency, replacing rather than adding to a previous marking, honouring the
-  selected rule, reference-folder files never being marked or displaced, and opposite size
-  rules genuinely picking opposite keepers.
-- **`core/export.py` coverage 26% → 100%** (`core/tests/export_test.py`): XHTML structure and
-  indentation, CSV header and quoting, UTF-8 in both, empty input, and the `OSError` that
-  `core/app.py` relies on catching.
-- **Coverage configuration** (`setup.cfg`): `[coverage:run]` now omits test code and
-  build/localisation tooling, so the headline figure reflects shippable code. This *lowers* the
-  reported number from 84% to 78% — the previous figure was inflated by test files, which are
-  ~100% covered by construction.
+- **`dupeguru-scan --help` no longer crashes on a Windows console** (`cli.py`, issue #29): the
+  `--scan-type` help text contained U+2192 (`→`), which cp1252 cannot encode, so argparse
+  raised `UnicodeEncodeError` while printing usage. `--help` is the first thing anyone runs.
+  All non-ASCII is gone from `cli.py`, and stdout/stderr are reconfigured to UTF-8 with
+  `errors="replace"` so a path containing characters outside the console code page cannot
+  abort a scan either.
+- **Documented CLI invocations now work** (`cli.py`, `__main__.py`, issue #30): the module
+  docstring advertised a `scan` subcommand that does not exist — it was parsed as a folder
+  name, producing "folder does not exist" for a path the user never typed — and `prog` was
+  set to `"dupeguru scan"`, repeating the claim in `--help`. `python -m dupeguru` raised
+  `ModuleNotFoundError` because the checkout directory was not on `sys.path`. The docstring
+  and `prog` now match reality, and `__main__.py` puts its own directory on `sys.path`.
+- **`__main__.py` no longer runs the CLI at import time** (`__main__.py`): it called
+  `sys.exit(main())` unguarded. Spawn-based pool workers re-import the main module, so every
+  worker would have re-run the whole CLI. Now behind `if __name__ == "__main__":`.
 
 - **Loading a directory list no longer discards the exclusion list** (`core/app.py`,
   `core/directories.py`, issue #12): `load_directories()` reset the selection by calling
@@ -52,7 +51,6 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   with nothing. Every scan afterwards ignored the user's exclusions — no error, no UI
   indication — until the app was restarted. Replaced with an explicit `Directories.clear()`
   that resets the selection and states while leaving the exclusion list alone.
-
 - **"Clear Cache" now clears the cache scans actually use** (`core/hash_cache.py`,
   `core/app.py`, issue #11): `clear_hash_cache()` cleared only `fs.filesdb`, while the
   content-scan fast path in `core/scanner.py` reads `hashcachedb` (`hash_cache2.db`). That
@@ -65,14 +63,27 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`core/gui/mark_dialog.py` coverage 0% → 100%** (`core/tests/mark_dialog_test.py`,
+  issue #23): the rule-based auto-marking engine decides which file in each group is kept and
+  marks the rest, so whatever it marks is what a later delete removes. It had no tests at all.
+  Covers rule-list construction, `apply()` marking every non-keeper, never marking the group
+  reference, idempotency, replacing rather than adding to a previous marking, honouring the
+  selected rule, reference-folder files never being marked or displaced, and opposite size
+  rules genuinely picking opposite keepers.
+- **`core/export.py` coverage 26% → 100%** (`core/tests/export_test.py`): XHTML structure and
+  indentation, CSV header and quoting, UTF-8 in both, empty input, and the `OSError` that
+  `core/app.py` relies on catching.
+- **`core/tests/hash_cache_test.py`**: `HashCache` previously had no tests — `cache_test.py`
+  covers the picture cache, not this one. Covers the round trip, clear, all three purge paths,
+  throttling, schema rebuild, and hash-algorithm invalidation.
 - **`HashCache` schema versioning** (`core/hash_cache.py`): an `entry_dt` column was needed for
   age-based purging, so the table now carries a schema version in a `meta` table and is dropped
   and rebuilt on mismatch. Rebuilding costs one rehash, which is cheaper than a migration for a
-  cache. This also gives issue #13 the mechanism it needs to record which hash algorithm
-  produced a digest.
-- **`core/tests/hash_cache_test.py`**: `HashCache` previously had no tests — `cache_test.py`
-  covers the picture cache, not this one. 19 tests covering the round trip, clear, all three
-  purge paths, throttling, and schema rebuild.
+  cache. This is also the mechanism the hash-algorithm marker above uses.
+- **Coverage configuration** (`setup.cfg`): `[coverage:run]` now omits test code and
+  build/localisation tooling, so the headline figure reflects shippable code. This *lowers* the
+  reported number from 84% to 78% — the previous figure was inflated by test files, which are
+  ~100% covered by construction.
 
 ## [4.4.1] - 2026-08-03
 
