@@ -219,6 +219,7 @@ class Preferences(PreferencesBase):
         self.large_file_threshold = get("LargeFileThreshold", self.large_file_threshold)
         self.big_file_partial_hashes = get("BigFilePartialHashes", self.big_file_partial_hashes)
         self.big_file_size_threshold = get("BigFileSizeThreshold", self.big_file_size_threshold)
+        self.full_verify = get("FullVerify", self.full_verify)
         self.scan_tag_track = get("ScanTagTrack", self.scan_tag_track)
         self.scan_tag_artist = get("ScanTagArtist", self.scan_tag_artist)
         self.scan_tag_album = get("ScanTagAlbum", self.scan_tag_album)
@@ -273,6 +274,7 @@ class Preferences(PreferencesBase):
         self.large_file_threshold = 1000  # MB
         self.big_file_partial_hashes = False
         self.big_file_size_threshold = 100  # MB
+        self.full_verify = False
         self.scan_tag_track = False
         self.scan_tag_artist = True
         self.scan_tag_album = True
@@ -328,6 +330,7 @@ class Preferences(PreferencesBase):
         set_("LargeFileThreshold", self.large_file_threshold)
         set_("BigFilePartialHashes", self.big_file_partial_hashes)
         set_("BigFileSizeThreshold", self.big_file_size_threshold)
+        set_("FullVerify", self.full_verify)
         set_("ScanTagTrack", self.scan_tag_track)
         set_("ScanTagArtist", self.scan_tag_artist)
         set_("ScanTagAlbum", self.scan_tag_album)

@@ -1099,3 +1099,44 @@ def test_fields_scan_type_still_matches_in_order(fake_fileexists):
     s.scan_type = ScanType.FIELDS
     f = [no("The White Stripes - Little Ghost"), no("Little Ghost - The White Stripes")]
     eq_(len(s.get_dupe_groups(f)), 0)
+
+
+# ---------------------------------------------------------------------------
+# The options -> scanner bridge used by both front ends
+# ---------------------------------------------------------------------------
+
+# DupeGuru.start_scanning copies app.options onto the scanner with
+#     for k, v in self.options.items():
+#         if hasattr(scanner, k): setattr(scanner, k, v)
+# An option the scanner does not declare is dropped silently, with no error anywhere, so a
+# feature can be wired up in the GUI and simply never take effect. These assert that the
+# scanner side of that contract exists.
+
+
+def test_scanner_declares_the_options_the_front_ends_set():
+    s = Scanner()
+    for option in (
+        "scan_type",
+        "min_match_percentage",
+        "mix_file_kind",
+        "word_weighting",
+        "match_similar_words",
+        "size_threshold",
+        "large_size_threshold",
+        "big_file_size_threshold",
+        "full_verify",
+        "include_exists_check",
+        "scanned_tags",
+    ):
+        assert hasattr(s, option), f"Scanner has no {option!r}, so setting it would be a silent no-op"
+
+
+def test_full_verify_defaults_off_and_survives_the_bridge():
+    s = Scanner()
+    eq_(s.full_verify, False)
+    options = {"full_verify": True, "not_a_scanner_option": 1}
+    for k, v in options.items():
+        if hasattr(s, k):
+            setattr(s, k, v)
+    eq_(s.full_verify, True)
+    assert not hasattr(s, "not_a_scanner_option")
