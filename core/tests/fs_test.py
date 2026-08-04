@@ -6,9 +6,11 @@
 # which should be included with this package. The terms are also available at
 # http://www.gnu.org/licenses/gpl-3.0.html
 
+import sqlite3
 import typing
 from os import urandom
 
+from pytest import raises
 from pathlib import Path
 from hscommon.testutil import eq_
 from core.tests.directories_test import create_fake_fs
@@ -173,3 +175,92 @@ def test_filesdb_keeps_digests_when_the_algorithm_is_unchanged(tmp_path):
         eq_(second.get(target, "digest"), b"\x02" * 16)
     finally:
         second.close()
+
+
+# ---------------------------------------------------------------------------
+# FilesDB survives a vanished file and a closed connection (issues #15, #16)
+# ---------------------------------------------------------------------------
+
+
+def test_filesdb_get_returns_none_for_a_vanished_file(tmp_path):
+    """#15: stat() sat outside the try, so a file deleted mid-scan raised OSError.
+
+    It surfaced through File.__getattribute__'s broad handler, which reports every
+    exception as a decoding error -- a FileNotFoundError logged as "error while
+    decoding", which sends the reader looking in entirely the wrong place.
+    """
+    db = fs.FilesDB()
+    db.connect(str(tmp_path / "files.db"))
+    try:
+        assert db.get(tmp_path / "never_existed.bin", "digest") is None
+    finally:
+        db.close()
+
+
+def test_filesdb_put_ignores_a_vanished_file(tmp_path):
+    db = fs.FilesDB()
+    db.connect(str(tmp_path / "files.db"))
+    try:
+        db.put(tmp_path / "never_existed.bin", "digest", b"x" * 16)  # must not raise
+        db.commit()
+    finally:
+        db.close()
+
+
+def test_filesdb_get_still_works_for_a_real_file(tmp_path):
+    """The guard must not swallow the normal path."""
+    db = fs.FilesDB()
+    db.connect(str(tmp_path / "files.db"))
+    target = tmp_path / "a.bin"
+    target.write_bytes(b"data")
+    try:
+        db.put(target, "digest", b"\x07" * 16)
+        db.commit()
+        eq_(db.get(target, "digest"), b"\x07" * 16)
+    finally:
+        db.close()
+
+
+def test_filesdb_close_clears_the_connection(tmp_path):
+    """#16: close() left a closed connection in place, unlike HashCache."""
+    db = fs.FilesDB()
+    db.connect(str(tmp_path / "files.db"))
+    db.close()
+    assert db.conn is None
+
+
+def test_filesdb_operations_after_close_are_quiet_noops(tmp_path, caplog):
+    """Every call used to raise "Cannot operate on a closed database" into the broad
+    handler in get(), logging a warning per file."""
+    import logging as _logging
+
+    db = fs.FilesDB()
+    db.connect(str(tmp_path / "files.db"))
+    target = tmp_path / "a.bin"
+    target.write_bytes(b"data")
+    db.close()
+
+    with caplog.at_level(_logging.WARNING):
+        assert db.get(target, "digest") is None
+        db.put(target, "digest", b"x" * 16)
+        eq_(db.purge_missing(), 0)
+        eq_(db.purge_old_entries(), 0)
+        assert db.purge_if_stale() is False
+        db.clear()
+        db.commit()
+        db.close()  # idempotent
+
+    assert not caplog.records, f"post-close calls should be silent, got: {caplog.records}"
+
+
+def test_filesdb_connect_twice_does_not_leak(tmp_path):
+    db = fs.FilesDB()
+    db.connect(str(tmp_path / "one.db"))
+    first = db.conn
+    db.connect(str(tmp_path / "two.db"))
+    try:
+        assert db.conn is not first
+        with raises(sqlite3.ProgrammingError):
+            first.execute("SELECT 1")
+    finally:
+        db.close()

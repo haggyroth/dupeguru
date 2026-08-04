@@ -219,8 +219,13 @@ class Scanner:
             kw["match_similar_words"] = self.match_similar_words
             kw["weight_words"] = self.word_weighting
             kw["min_match_percentage"] = self.min_match_percentage
-            if self.scan_type == ScanType.FIELDSNOORDER:
-                self.scan_type = ScanType.FIELDS
+            # FIELDSNOORDER is FIELDS plus a flag. Resolve it into a local rather than
+            # writing back to self.scan_type: that rewrite was permanent, so a second
+            # get_dupe_groups() call on the same Scanner silently did an *ordered* field
+            # comparison, and it made the FIELDSNOORDER branch further down unreachable.
+            scan_type = self.scan_type
+            if scan_type == ScanType.FIELDSNOORDER:
+                scan_type = ScanType.FIELDS
                 kw["no_field_order"] = True
             func = {
                 ScanType.FILENAME: lambda f: engine.getwords(rem_file_ext(f.name)),
@@ -230,7 +235,7 @@ class Scanner:
                     for attrname in SCANNABLE_TAGS
                     if attrname in self.scanned_tags
                 ],
-            }[self.scan_type]
+            }[scan_type]
             for f in j.iter_with_progress(files, tr("Read metadata of %d/%d files")):
                 logging.debug("Reading metadata of %s", f.path)
                 f.words = func(f)

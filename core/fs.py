@@ -129,6 +129,9 @@ class FilesDB:
         self._pending: list = []
 
     def connect(self, path: Union[AnyStr, os.PathLike]) -> None:
+        if self.conn is not None:
+            # Don't leak the previous connection if connect() is called twice.
+            self.close()
         self.conn = sqlite3.connect(path, check_same_thread=False)
         self.lock = Lock()
         self._pending = []
@@ -172,6 +175,8 @@ class FilesDB:
             )
 
     def clear(self) -> None:
+        if self.conn is None:
+            return
         self._flush_if_pending()
         with self.lock, self.conn as conn:
             conn.execute(self.drop_table_query)
@@ -179,6 +184,8 @@ class FilesDB:
 
     def purge_missing(self) -> int:
         """Remove entries whose paths no longer exist on disk. Returns count of purged rows."""
+        if self.conn is None:
+            return 0
         self._flush_if_pending()
         with self.lock, self.conn as conn:
             cur = conn.execute("SELECT path FROM files")
@@ -192,6 +199,8 @@ class FilesDB:
 
     def purge_old_entries(self, days: int = 90) -> int:
         """Remove entries not updated within ``days`` days. Returns count of purged rows."""
+        if self.conn is None:
+            return 0
         self._flush_if_pending()
         with self.lock, self.conn as conn:
             cur = conn.execute(
@@ -206,6 +215,8 @@ class FilesDB:
     def purge_if_stale(self, interval_days: int = 7) -> bool:
         """Run purge_missing + purge_old_entries only when the last purge is older than
         interval_days. Returns True if a purge was performed."""
+        if self.conn is None:
+            return False
         self._flush_if_pending()
         with self.lock, self.conn as conn:
             row = conn.execute("SELECT value FROM meta WHERE key='last_purge'").fetchone()
@@ -222,10 +233,17 @@ class FilesDB:
         return True
 
     def get(self, path: Path, key: str) -> Union[bytes, None]:
-        stat = path.stat()
-        size = stat.st_size
-        mtime_ns = stat.st_mtime_ns
+        if self.conn is None:
+            return None
+        # stat() belongs inside the try. It used to sit above it, so a file deleted
+        # between enumeration and hashing raised OSError out of here into
+        # File.__getattribute__'s broad handler, which reports everything as a decoding
+        # error -- a plain FileNotFoundError logged as "error while decoding".
+        size = mtime_ns = None
         try:
+            stat = path.stat()
+            size = stat.st_size
+            mtime_ns = stat.st_mtime_ns
             with self.conn as conn:
                 if self.ignore_mtime:
                     cursor = conn.execute(
@@ -241,13 +259,22 @@ class FilesDB:
 
             if result:
                 return result[0]
+        except OSError as ex:
+            # The file went away, or is unreadable. Normal during a live scan.
+            logging.debug("Couldn't stat %s for %s: %s", path, key, ex)
         except Exception as ex:
             logging.warning(f"Couldn't get {key} for {path} w/{size}, {mtime_ns}: {ex}")
 
         return None
 
     def put(self, path: Path, key: str, value: Any) -> None:
-        stat = path.stat()
+        if self.conn is None:
+            return
+        try:
+            stat = path.stat()
+        except OSError as ex:
+            logging.debug("Couldn't stat %s for %s: %s", path, key, ex)
+            return
         size = stat.st_size
         mtime_ns = stat.st_mtime_ns
         with self.lock:
@@ -273,18 +300,29 @@ class FilesDB:
 
     def _flush_if_pending(self) -> None:
         """Flush pending writes if any, acquiring the lock."""
+        if self.conn is None:
+            return
         with self.lock:
             self._flush_pending()
 
     def commit(self) -> None:
+        if self.conn is None:
+            return
         with self.lock:
             self._flush_pending()
             self.conn.commit()
 
     def close(self) -> None:
+        # Setting conn to None is what makes the guards on the other methods work.
+        # Leaving a closed connection in place meant every later call raised
+        # "Cannot operate on a closed database" into the broad handler in get(),
+        # which logged a warning per file. HashCache has always done it this way.
+        if self.conn is None:
+            return
         with self.lock:
             self._flush_pending()
             self.conn.close()
+            self.conn = None
 
 
 filesdb = FilesDB()  # Singleton
