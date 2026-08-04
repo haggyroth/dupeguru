@@ -23,7 +23,7 @@ it renders links for *historical* upstream ticket numbers in `help/changelog`. D
 | Version | 4.6.0, released |
 | Releases | v4.4.0, v4.4.1, v4.5.0, v4.6.0 |
 | Issues | 23 closed, 3 open |
-| Tests | **814 passing, 6 skipped** on macOS as of #50. Windows/Linux counts differ (see below) |
+| Tests | **835 passing, 6 skipped** on macOS as of #56. Windows/Linux counts differ (see below) |
 | CI | green on Python 3.10–3.14 (Linux) plus Windows and macOS |
 
 Work is tracked as GitHub issues on the fork. Don't keep a parallel roadmap file — check the
@@ -64,7 +64,7 @@ Two things the old one-line install got wrong, both found setting this machine u
   the traceback that actually names `build.py`, which is easy to misread as a C toolchain
   problem. It isn't.
 
-`requirements.txt` itself, PyQt5 included, installs cleanly on 3.14.
+`requirements.txt`, PyQt6 included, installs cleanly on 3.14.
 
 ## What changes when you move to macOS
 
@@ -77,11 +77,15 @@ move and a green run looks different.
 | 3 Windows junction tests | run | **skip** | **skip** |
 | 1 case-sensitivity test | skip | skip (APFS is case-insensitive) | run |
 | 2 exclude union-mode tests | skip | skip | skip |
-| **Totals** | 813 / 7 skipped | **814 / 6 skipped** | 815 / 5 skipped |
+| **Totals** | 838 / 3 skipped | **835 / 6 skipped** | 836 / 5 skipped |
 
-820 tests collected in total. Only the macOS column has been measured directly (as of #50);
-the other two are that number less the tests their platform skips. If a count is off by a
-little, check which group changed rather than assuming the suite broke.
+841 tests collected in total. macOS and Windows were measured on CI as of #56; the Linux
+figure is that total less the tests it skips. If a count is off by a little, check which
+group changed rather than assuming the suite broke.
+
+Note the Windows column is CI, not the old Windows laptop: CI runners *do* have symlink
+privilege, so they run both the symlink and the junction tests and skip the least. And since
+#56 every platform runs the ~21 Qt tests, so none of the three columns skips them any more.
 
 Consequences worth knowing:
 
@@ -142,14 +146,10 @@ nobody is running 4.4.0.
   differs from Windows, so a fix verified on one doesn't prove the other.
 - **[#27](https://github.com/haggyroth/dupeguru/issues/27)** — PyQt6 alongside PyQt5, with
   PyQt6 as the default and PyQt5 as the fallback. Phased: **phase 0** (Qt smoke tests, #52)
-  **phase 1** (Qt6-compatible spellings while still on PyQt5, #53), **phase 2** (embedded
-  resources replacing `pyrcc5`, #54) and **phase 3a** (imports moved to qtpy, #55) are done.
-  Remaining: **phase 3b**, making PyQt6 the default with PyQt5 as fallback and adding the
-  CI legs. 3a and 3b were split deliberately so that a failure is attributable either to
-  qtpy or to Qt6 itself, rather than to both at once under smoke-only coverage.
-  Nothing in the tree imports a binding directly any more, and every enum spelling already
-  resolves under PyQt6, so 3b is a requirements-and-CI change rather than a code one.
-  Note phase 4's packaging half is unverifiable here; see #10.
+  **phase 1** (#53), **phase 2** (#54), **phase 3a** (#55) and **phase 3b** (#56) are all
+  done: PyQt6 is the default binding, PyQt5 is a supported fallback with its own CI leg, and
+  nothing in the tree imports a binding directly. What remains of #27 is **packaging** — and
+  that half is unverifiable here, since nobody can run a frozen build; see #10.
 - **[#28](https://github.com/haggyroth/dupeguru/issues/28)** — resumable scans. The largest
   item; the hash cache already delivers most of the practical benefit.
 
@@ -165,10 +165,16 @@ the widgets construct, preferences reach the scan options, and resources resolve
 asserts layout or behaviour, so a change that renders wrongly still passes. Treat a green run
 as "it did not explode", not "it works".
 
-- `requirements.txt` installs a Qt binding only off Linux (`sys_platform != 'linux'`), so the
-  Linux legs skip the widget tests. Real Qt coverage runs only on the Windows and macOS legs.
-  If you break Qt and only watch Linux, you will not see it.
+- Since #56 the Qt tests run on **every** leg, Linux included — the `sys_platform != 'linux'`
+  exclusion that made Linux skip them is gone, because PyQt6 has manylinux wheels where PyQt5
+  did not. Qt wheels do not bundle the system libraries Qt links against, so the Linux legs
+  install `libegl1`, `libgl1`, `libxkbcommon-x11-0` and `libdbus-1-3`; a missing one shows up
+  as the offscreen platform plugin failing to load, not as a Python error.
+- One leg runs the **PyQt5 fallback**, with PyQt6 uninstalled rather than overridden by
+  `QT_API`, so it exercises what a user on the fallback actually has. If you touch Qt code,
+  a green PyQt6 run does not mean the fallback still works — check that leg too.
 - **Import Qt through `qtpy`, never a binding directly.** `from qtpy.QtWidgets import ...`.
+  PyQt6 is the default; `pip install -r requirements-pyqt5.txt` and `QT_API=pyqt5` switches.
   qtpy also normalises the signal/slot names: use `Signal` and `Slot`, not `pyqtSignal` and
   `pyqtSlot`, which it does not export. Where no binding is installed it raises
   `QtBindingsNotFoundError`, an `ImportError` subclass, which is what lets `importorskip`

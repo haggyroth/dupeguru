@@ -27,11 +27,27 @@ jobs:
         # function signatures that are evaluated at import time on Python <= 3.13,
         # so 3.8 and 3.9 cannot import the package at all. See issue #22.
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        # qt-binding has to be a real matrix dimension, not just an include key. An include
+        # entry whose os and python-version both match an existing combination is *merged*
+        # into that job rather than creating a new one -- which silently turned the ubuntu
+        # 3.12 job into the PyQt5 leg instead of adding one alongside it. Declaring the
+        # default here means the pyqt5 include overwrites a matrix value, and GitHub then
+        # creates a separate job as intended.
+        qt-binding: [pyqt6]
         include:
           - os: windows-latest
             python-version: "3.12"
+            qt-binding: pyqt6
           - os: macos-latest
             python-version: "3.12"
+            qt-binding: pyqt6
+          # The PyQt5 fallback. PyQt6 is the default binding; nothing in the tree imports a
+          # binding directly, so PyQt5 stays supported. This leg swaps the binding outright
+          # rather than setting QT_API, so it exercises qtpy's own selection with only PyQt5
+          # present -- which is what a user on the fallback actually has.
+          - os: ubuntu-latest
+            python-version: "3.12"
+            qt-binding: pyqt5
 
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
@@ -39,11 +55,25 @@ jobs:
         uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 # v6.1.0
         with:
           python-version: ${{ matrix.python-version }}
+      - name: Install Qt runtime libraries (Linux)
+        # Qt ships no system libraries in its wheels. Even the offscreen platform plugin,
+        # which the Qt tests use, links libEGL and libxkbcommon. Linux had no Qt binding at
+        # all before PyQt6 became the default, so this is newly needed.
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libegl1 libgl1 libxkbcommon-x11-0 libdbus-1-3
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install setuptools
           pip install -r requirements.txt -r requirements-extra.txt
+      - name: Switch to the PyQt5 fallback binding
+        if: matrix.qt-binding == 'pyqt5'
+        run: |
+          pip uninstall -y PyQt6 PyQt6-Qt6 PyQt6-sip
+          pip install -r requirements-pyqt5.txt
+          python -c "import qtpy; assert qtpy.API_NAME == 'PyQt5', qtpy.API_NAME; print('qtpy selected', qtpy.API_NAME)"
       - name: Build python modules
         run: |
           python build.py --modules
@@ -51,13 +81,16 @@ jobs:
         run: |
           pytest core hscommon qt --cov=core --cov=hscommon --cov=cli --cov=qt --cov-report=term-missing --cov-report=xml
       - name: Upload coverage report
-        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        # Not on the PyQt5 fallback leg: it is also ubuntu-latest/3.12, and a second upload
+        # under the same artifact name fails the job.
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12' && matrix.qt-binding != 'pyqt5'
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: coverage-xml
           path: coverage.xml
       - name: Upload Artifacts
-        if: matrix.os == 'ubuntu-latest'
+        # Likewise: the fallback leg would upload a second "modules 3.12".
+        if: matrix.os == 'ubuntu-latest' && matrix.qt-binding != 'pyqt5'
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: modules ${{ matrix.python-version }}

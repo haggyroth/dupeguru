@@ -1,12 +1,13 @@
 distro>=1.8.0,<2.0.0
 mutagen>=1.46.0,<2.0.0
 polib>=1.1.0,<2.0.0
-PyQt5 >=5.15.0,<6.0; sys_platform != 'linux'
 pywin32>=304; sys_platform == 'win32'
-# qtpy selects the installed Qt binding at import time, so qt/ imports from qtpy rather than
-# from a binding directly. It is matched to the PyQt5 marker: with no binding present it
-# raises QtBindingsNotFoundError, so installing it where Qt is unavailable would buy nothing.
-qtpy>=2.4.0,<3.0.0; sys_platform != 'linux'
+# Qt: PyQt6 is the default binding. PyQt5 is supported as a fallback -- nothing in the tree
+# imports a binding directly, everything goes through qtpy -- but it is not installed here.
+# To use it instead: pip install -r requirements-pyqt5.txt
+# qtpy picks whichever binding is present; set QT_API to choose when both are.
+PyQt6>=6.5.0,<7.0
+qtpy>=2.4.0,<3.0.0
 semantic-version>=2.0.0,<3.0.0
 Send2Trash>=1.8.2,<2.0.0
 sphinx>=5.3.0,<8.0.0

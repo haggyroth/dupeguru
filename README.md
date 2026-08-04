@@ -40,14 +40,32 @@ For macos instructions (qt version) see the [macOS Instructions](macos.md).
 ### Prerequisites
 * [Python 3.10+][python] — parts of the codebase use PEP 604 (`X | None`) annotations that are
   evaluated at runtime, so earlier versions will not import.
-* PyQt5
+* PyQt6 (installed by `requirements.txt`; see [Qt bindings](#qt-bindings) for the PyQt5 fallback)
+
+### Qt bindings
+
+The GUI runs on **PyQt6** by default. **PyQt5 is supported as a fallback** — nothing in the
+tree imports a binding directly, everything goes through [qtpy][qtpy], which selects whichever
+binding is installed. CI runs a PyQt5 leg so the fallback cannot rot unnoticed.
+
+To use PyQt5 instead:
+
+    $ pip install -r requirements.txt -r requirements-pyqt5.txt
+    $ QT_API=pyqt5 python run.py
+
+`QT_API` is only needed when both bindings are installed; qtpy picks whichever it finds
+otherwise. The CLI (`dupeguru-scan`) needs no Qt binding at all.
 
 ### System Setup
 When running in a linux based environment the following system packages or equivalents are needed to build:
-* python3-pyqt5
 * python3-venv (only if using a virtual environment)
 * python3-dev
 * build-essential
+
+Qt wheels bundle Qt itself but not the system libraries it links against. On a bare Linux
+image — a CI runner or a container — the Qt GUI, including the offscreen platform used by the
+test suite, additionally needs `libegl1`, `libgl1`, `libxkbcommon-x11-0` and `libdbus-1-3` or
+their equivalents. A normal desktop install will already have them.
 
 Note: `pyqt5-dev-tools` used to be required here, because the Qt resources were compiled by
 `pyrcc5` and that tool is packaged separately on some distributions. Images are now embedded
@@ -264,5 +282,6 @@ run before each commit:
 [cross-toolkit]: http://www.hardcoded.net/articles/cross-toolkit-software
 [documentation]: http://dupeguru.voltaicideas.net/help/en/
 [python]: http://www.python.org/
+[qtpy]: https://github.com/spyder-ide/qtpy
 [pyqt]: http://www.riverbankcomputing.com
 [tox]: https://tox.readthedocs.org/en/latest/
