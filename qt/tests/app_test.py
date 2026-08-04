@@ -135,27 +135,28 @@ class TestPreferencesReachTheScanner:
 class TestResources:
     """A missing resource is a null pixmap, not an exception.
 
-    That is exactly how build.py could emit an empty ``qt/dg_rc.py``, report success, and
-    produce a GUI with no icons at all. These fail instead.
+    That is how an empty ``qt/dg_rc.py`` once produced a GUI with no icons at all while the
+    build reported success. These fail instead. The resources are embedded and committed
+    now, so unlike before there is no build step for these to depend on.
     """
 
-    def test_resources_resolve(self):
-        pytest.importorskip("qt.dg_rc", reason="Qt resources not built; run build.py")
-        from PyQt5.QtGui import QPixmap
+    def test_named_resources_load(self):
+        from qt import resources
 
-        for name in (":/logo_se", ":/plus", ":/minus", ":/error"):
-            assert not QPixmap(name).isNull(), f"resource {name} did not load"
+        for name in ("logo_se", "plus", "minus", "error"):
+            assert not resources.pixmap(name).isNull(), f"resource {name} did not load"
 
-    def test_every_qrc_alias_resolves(self):
-        """Guards the aliases themselves, not just a hand-picked few."""
-        pytest.importorskip("qt.dg_rc", reason="Qt resources not built; run build.py")
-        import re
-        from pathlib import Path
+    def test_every_declared_resource_loads(self):
+        """Guards the whole manifest, not a hand-picked few."""
+        from qt import resources
 
-        from PyQt5.QtGui import QPixmap
+        assert resources.names(), "no resources are declared"
+        missing = [n for n in resources.names() if resources.pixmap(n).isNull()]
+        assert not missing, f"declared resources that do not load: {missing}"
 
-        qrc = Path(__file__).parent.parent / "dg.qrc"
-        aliases = re.findall(r'alias="([^"]+)"', qrc.read_text())
-        assert aliases, "no aliases found in dg.qrc"
-        missing = [a for a in aliases if QPixmap(f":/{a}").isNull()]
-        assert not missing, f"aliases declared in dg.qrc but not loadable: {missing}"
+    def test_unknown_resource_raises(self):
+        """Better a KeyError than a silently blank icon."""
+        from qt import resources
+
+        with pytest.raises(KeyError):
+            resources.data("no_such_resource")

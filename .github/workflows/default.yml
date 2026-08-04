@@ -47,13 +47,6 @@ jobs:
       - name: Build python modules
         run: |
           python build.py --modules
-      - name: Build Qt resources
-        # Only where the Qt bindings are installed: requirements.txt excludes PyQt5 on
-        # Linux, and pyrcc5 ships with it. Without this the Qt resource tests would skip
-        # rather than run, which is how an empty dg_rc.py went unnoticed before.
-        if: runner.os != 'Linux'
-        run: |
-          python -c "import build; build.build_qt_resources()"
       - name: Run tests
         run: |
           pytest core hscommon qt --cov=core --cov=hscommon --cov=cli --cov=qt --cov-report=term-missing --cov-report=xml

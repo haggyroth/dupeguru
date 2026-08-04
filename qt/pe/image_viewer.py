@@ -4,6 +4,8 @@
 
 from PyQt5.QtCore import QObject, Qt, QSize, QRectF, QPointF, QPoint, pyqtSlot, pyqtSignal, QEvent
 from PyQt5.QtGui import QPixmap, QPainter, QPalette, QCursor, QIcon, QKeySequence
+
+from qt import resources
 from PyQt5.QtWidgets import (
     QGraphicsView,
     QGraphicsScene,
@@ -61,7 +63,7 @@ class ViewerToolBar(QToolBar):
                 (
                     QIcon.fromTheme("zoom-in")
                     if ISLINUX and not self.parent.app.prefs.details_dialog_override_theme_icons
-                    else QIcon(QPixmap(":/" + "zoom_in"))
+                    else resources.icon("zoom_in")
                 ),
                 tr("Increase zoom"),
                 controller.zoomIn,
@@ -72,7 +74,7 @@ class ViewerToolBar(QToolBar):
                 (
                     QIcon.fromTheme("zoom-out")
                     if ISLINUX and not self.parent.app.prefs.details_dialog_override_theme_icons
-                    else QIcon(QPixmap(":/" + "zoom_out"))
+                    else resources.icon("zoom_out")
                 ),
                 tr("Decrease zoom"),
                 controller.zoomOut,
@@ -83,7 +85,7 @@ class ViewerToolBar(QToolBar):
                 (
                     QIcon.fromTheme("zoom-original")
                     if ISLINUX and not self.parent.app.prefs.details_dialog_override_theme_icons
-                    else QIcon(QPixmap(":/" + "zoom_original"))
+                    else resources.icon("zoom_original")
                 ),
                 tr("Normal size"),
                 controller.zoomNormalSize,
@@ -94,7 +96,7 @@ class ViewerToolBar(QToolBar):
                 (
                     QIcon.fromTheme("zoom-best-fit")
                     if ISLINUX and not self.parent.app.prefs.details_dialog_override_theme_icons
-                    else QIcon(QPixmap(":/" + "zoom_best_fit"))
+                    else resources.icon("zoom_best_fit")
                 ),
                 tr("Best fit"),
                 controller.zoomBestFit,
@@ -110,7 +112,7 @@ class ViewerToolBar(QToolBar):
         self.buttonImgSwap.setIcon(
             QIcon.fromTheme("view-refresh", self.style().standardIcon(QStyle.StandardPixmap.SP_BrowserReload))
             if ISLINUX and not self.parent.app.prefs.details_dialog_override_theme_icons
-            else QIcon(QPixmap(":/" + "exchange"))
+            else resources.icon("exchange")
         )
         self.buttonImgSwap.setText("Swap images")
         self.buttonImgSwap.setToolTip("Swap images")

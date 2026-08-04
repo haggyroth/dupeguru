@@ -11,6 +11,23 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Images are embedded in a committed module; the Qt resource build step is gone** (`qt/`,
+  `build.py`, issue #27, phase 2): Qt's `.qrc` system needs `pyrcc5` to compile resources
+  into a Python module, and PyQt6 ships no equivalent — Riverbank dropped the tool. The
+  eleven images now live base64-encoded in `qt/resources_data.py`, generated from
+  `qt/dg.qrc` by `python build.py --resources` and **committed**, and are loaded through
+  `qt.resources.icon()` / `qt.resources.pixmap()` instead of `QPixmap(":/name")`.
+  Embedding rather than reading `images/` off disk preserves the property that made frozen
+  builds work: the bytes live inside a Python module, so nothing has to be bundled as data
+  files — `package.py` copies only two logos, and changing that lands on the packaging work
+  that cannot be verified here (#10). Committing rather than generating during the build
+  removes the failure mode from #50 outright: there is no longer a resource step that can
+  fail silently. `qt/tests/resources_test.py` regenerates and compares, so the committed
+  copy cannot drift from `images/` unnoticed, and because it needs no Qt bindings it runs on
+  the Linux legs too — the first Qt-adjacent coverage those have had. The generated module
+  is 124 KB, against 347 KB for the `dg_rc.py` it replaces. `pyqt5-dev-tools` is no longer a
+  build prerequisite, and `hscommon.build.fix_qt_resource_file`, which existed only to patch
+  `pyrcc5` output, is removed.
 - **The Qt code now uses Qt6-compatible spellings throughout** (`qt/`, issue #27, phase 1):
   346 enum references moved to their scoped form (`Qt.AlignLeft` to
   `Qt.AlignmentFlag.AlignLeft`), `exec_()` to `exec()`, `Qt.MidButton` to

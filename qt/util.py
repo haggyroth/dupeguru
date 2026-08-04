@@ -17,7 +17,9 @@ from hscommon.util import first
 from hscommon.plat import ISWINDOWS
 
 from PyQt5.QtCore import QStandardPaths, QSettings
-from PyQt5.QtGui import QPixmap, QIcon, QGuiApplication
+from PyQt5.QtGui import QGuiApplication
+
+from qt import resources
 from PyQt5.QtWidgets import (
     QSpacerItem,
     QSizePolicy,
@@ -77,7 +79,7 @@ def create_actions(actions, target):
     for name, shortcut, icon, desc, func in actions:
         action = QAction(target)
         if icon:
-            action.setIcon(QIcon(QPixmap(":/" + icon)))
+            action.setIcon(resources.icon(icon))
         if shortcut:
             action.setShortcut(shortcut)
         action.setText(desc)

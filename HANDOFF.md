@@ -142,11 +142,10 @@ nobody is running 4.4.0.
   differs from Windows, so a fix verified on one doesn't prove the other.
 - **[#27](https://github.com/haggyroth/dupeguru/issues/27)** — PyQt6 alongside PyQt5, with
   PyQt6 as the default and PyQt5 as the fallback. Phased: **phase 0** (Qt smoke tests, #52)
-  and **phase 1** (Qt6-compatible spellings while still on PyQt5, #53) are done. Remaining:
-  **phase 2**, replacing the `pyrcc5` resource step, which has no PyQt6 equivalent — prefer
-  generating an embedded Python module over loading from disk, so frozen builds keep working
-  without bundling `images/`; **phase 3**, the binding switch, which will use **qtpy** rather
-  than a hand-rolled shim (decided); **phase 4**, requirements and CI legs.
+  **phase 1** (Qt6-compatible spellings while still on PyQt5, #53) and **phase 2** (embedded
+  resources replacing `pyrcc5`, #54) are done. Remaining: **phase 3**, the binding switch,
+  which will use **qtpy** rather than a hand-rolled shim (decided); **phase 4**, requirements
+  and CI legs.
   The one Qt5-only spelling deliberately left in the tree is `from PyQt5.QtWidgets import
   QAction` in `qt/recent.py` — `QAction` moved to `QtGui` in Qt6 and no single import works
   on both, so it needs the shim. Note phase 4's packaging half is unverifiable here; see #10.
@@ -168,9 +167,8 @@ as "it did not explode", not "it works".
 - `requirements.txt` excludes PyQt5 on Linux (`sys_platform != 'linux'`), so the Linux legs
   skip `qt/tests/` entirely. Real Qt coverage runs only on the Windows and macOS legs. If you
   break Qt and only watch Linux, you will not see it.
-- The tests need `qt/dg_rc.py`, which `build.py --modules` does *not* generate. CI has a
-  separate resource-build step gated on `runner.os != 'Linux'`. Locally, run the full
-  `build.py` (with the venv's `bin` on PATH) or the resource tests skip and guard nothing.
+- The resource tests need no bindings and no build step, so they *do* run on Linux. They are
+  the only Qt-adjacent thing that does.
 - To check something by hand, drive the objects offscreen: `QT_QPA_PLATFORM=offscreen`,
   construct `qt.app.DupeGuru`, exercise the dialog. `PreferencesDialog.save()` only mutates
   the in-memory prefs object — `Preferences.save()` syncs QSettings and runs on app quit — so
@@ -182,9 +180,25 @@ as "it did not explode", not "it works".
   `test_scanner_declares_the_options_the_front_ends_set` and its Qt-side counterpart guard
   that; extend both when you add an option.
 
-Also: `build.py` must find `pyrcc5`. It now errors if it cannot, but before #50 it wrote an
-empty `qt/dg_rc.py` and reported success, giving a GUI with no icons and no explanation.
-Running `./env/bin/python build.py` without activating the venv is what triggers it.
+## Images are embedded, and committed
+
+Since #54 there is no resource build step at all. `qt/resources_data.py` holds the eleven
+images as base64 and is **committed**, generated from `qt/dg.qrc` by
+`python build.py --resources`. Load them through `qt.resources.icon(name)` /
+`qt.resources.pixmap(name)`; the old `QPixmap(":/name")` scheme is gone, as is `pyrcc5`,
+which PyQt6 does not ship.
+
+- **Change an image, re-run `python build.py --resources` and commit the result.**
+  `qt/tests/resources_test.py` regenerates and compares, so forgetting fails CI with a
+  message telling you the command — but only if you look.
+- Embedded rather than read from `images/` on disk because that is what makes frozen builds
+  work: `package.py` bundles only two logos, and fixing that properly lands on the packaging
+  work nobody here can verify (#10).
+- Committed rather than generated during the build because the generated-at-build-time
+  version is what failed silently in #50: a missing `pyrcc5` still produced a (empty)
+  `dg_rc.py` and a "build succeeded". There is now no step left to fail.
+- `qt/dg.qrc` survives as the alias-to-image manifest. It is no longer compiled by anything;
+  it is just the input our generator reads.
 
 ## Context worth carrying
 

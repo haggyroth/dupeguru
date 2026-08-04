@@ -7,7 +7,9 @@
 # http://www.gnu.org/licenses/gpl-3.0.html
 
 from PyQt5.QtCore import pyqtSignal, Qt
-from PyQt5.QtGui import QIcon, QPixmap, QPainter, QPalette
+from PyQt5.QtGui import QIcon, QPainter, QPalette
+
+from qt import resources
 from PyQt5.QtWidgets import QToolButton, QLineEdit, QStyle, QStyleOptionFrame
 
 from hscommon.trans import trget
@@ -21,7 +23,7 @@ tr = trget("ui")
 class LineEditButton(QToolButton):
     def __init__(self, parent, **kwargs):
         super().__init__(parent, **kwargs)
-        pixmap = QPixmap(":/search_clear_13")
+        pixmap = resources.pixmap("search_clear_13")
         self.setIcon(QIcon(pixmap))
         self.setIconSize(pixmap.size())
         self.setCursor(Qt.CursorShape.ArrowCursor)
