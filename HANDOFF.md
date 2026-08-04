@@ -20,10 +20,10 @@ it renders links for *historical* upstream ticket numbers in `help/changelog`. D
 | | |
 |---|---|
 | Branch | `master` (not `main`) |
-| Version | 4.5.0, released |
-| Releases | v4.4.0, v4.4.1, v4.5.0 |
-| Issues | 22 closed, 4 open |
-| Tests | **800 passing, 6 skipped** on macOS as of #47. Windows/Linux counts differ (see below) |
+| Version | 4.6.0, released |
+| Releases | v4.4.0, v4.4.1, v4.5.0, v4.6.0 |
+| Issues | 23 closed, 3 open |
+| Tests | **814 passing, 6 skipped** on macOS as of #50. Windows/Linux counts differ (see below) |
 | CI | green on Python 3.10–3.14 (Linux) plus Windows and macOS |
 
 Work is tracked as GitHub issues on the fork. Don't keep a parallel roadmap file — check the
@@ -77,11 +77,11 @@ move and a green run looks different.
 | 3 Windows junction tests | run | **skip** | **skip** |
 | 1 case-sensitivity test | skip | skip (APFS is case-insensitive) | run |
 | 2 exclude union-mode tests | skip | skip | skip |
-| **Totals** | 799 / 7 skipped | **800 / 6 skipped** | 801 / 5 skipped |
+| **Totals** | 813 / 7 skipped | **814 / 6 skipped** | 815 / 5 skipped |
 
-806 tests collected in total. Only the macOS column has been measured directly since #47; the
-other two are that number less the tests their platform skips. If a count is off by a little,
-check which group changed rather than assuming the suite broke.
+820 tests collected in total. Only the macOS column has been measured directly (as of #50);
+the other two are that number less the tests their platform skips. If a count is off by a
+little, check which group changed rather than assuming the suite broke.
 
 Consequences worth knowing:
 
@@ -140,15 +140,37 @@ nobody is running 4.4.0.
   Writing the fix without a PyInstaller run to test it would mean shipping something
   unverified and calling it done. Pair it with actual packaging work. Note macOS packaging
   differs from Windows, so a fix verified on one doesn't prove the other.
-- **[#25](https://github.com/haggyroth/dupeguru/issues/25)** — `--plan` mode. Cheapest of the
-  remaining work, and unblocked now that #26 has landed. **The issue text is stale**: it was
-  written when `--dry-run` was still a no-op and says so. `--dry-run` now computes and prints
-  a real plan (`_deletion_plan` / `_report_deletion_plan` in `cli.py`), and the per-file
-  partial-match flag it asks for already exists. Re-read the code before the issue.
 - **[#27](https://github.com/haggyroth/dupeguru/issues/27)** — PyQt6 alongside PyQt5. A real
-  project. Relevant on macOS, where Homebrew increasingly prefers PyQt6.
+  project. Relevant on macOS, where Homebrew increasingly prefers PyQt6. Note `qt/` has no
+  automated coverage at all (see below), so this one is hand-testing from the start.
 - **[#28](https://github.com/haggyroth/dupeguru/issues/28)** — resumable scans. The largest
   item; the hash cache already delivers most of the practical benefit.
+
+**Read the code before the issue text.** #25 and #26 were both written against a state of the
+world that had already moved by the time they were picked up — #25 still asserted `--dry-run`
+was a no-op long after it was fixed, and half of #26's GUI ask was already implemented. The
+tracker is the roadmap, but it is not a description of the present.
+
+## The Qt layer is untested
+
+CI runs `pytest core hscommon`. **`qt/` is never imported by a test**, and `requirements.txt`
+excludes PyQt5 on Linux (`sys_platform != 'linux'`), so the Linux matrix could not run one
+anyway. Two consequences:
+
+- Anything wired only through `qt/` is verified by hand or not at all. Check it by driving
+  the objects offscreen: `QT_QPA_PLATFORM=offscreen`, construct `qt.app.DupeGuru`, and
+  exercise the dialog directly. `PreferencesDialog.save()` only mutates the in-memory prefs
+  object — `Preferences.save()` syncs QSettings and runs on app quit — so poking at it in a
+  throwaway script will not corrupt real settings.
+- Options reach the scanner through `if hasattr(scanner, k): setattr(scanner, k, v)` in
+  `DupeGuru.start_scanning`. An option name the scanner does not declare is dropped **with no
+  error anywhere**, which is exactly how a feature gets wired into the GUI and never fires.
+  `test_scanner_declares_the_options_the_front_ends_set` guards that; extend it when you add
+  an option.
+
+Also: `build.py` must find `pyrcc5`. It now errors if it cannot, but before #50 it wrote an
+empty `qt/dg_rc.py` and reported success, giving a GUI with no icons and no explanation.
+Running `./env/bin/python build.py` without activating the venv is what triggers it.
 
 ## Context worth carrying
 
@@ -162,7 +184,16 @@ unsafe and are now fixed and released in 4.5.0:
   swallowed the failure — on a default Windows install that meant file gone, no link, reported
   as a success
 
-If you do run this on real data: `--dry-run` genuinely works now, and `--exclude` is worth
-using — but note that adding any exclusion *replaces* the built-in "skip dot-prefixed folders"
-fallback, so pass `--exclude-defaults` alongside it or the scan will start descending into
-`.git`.
+If you do run this on real data: use **`--plan`** (added in 4.6.0). It re-validates every
+candidate with the same predicate the deletion uses, so it reports what would actually be
+removed *and* what would be skipped, and the paths it names are exactly the ones a subsequent
+`--delete` touches. `--dry-run` still works and is cheaper to read; `--plan` is the one to
+trust before pointing this at anything you care about.
+
+`--exclude` is worth using too — but note that adding any exclusion *replaces* the built-in
+"skip dot-prefixed folders" fallback, so pass `--exclude-defaults` alongside it or the scan
+will start descending into `.git`.
+
+If you turn on `--partial-hash-threshold` for speed, pair it with `--full-verify`. Sampled
+matching can genuinely produce false positives; verification re-reads only the files involved
+in those matches and discards the ones that do not hold up.
