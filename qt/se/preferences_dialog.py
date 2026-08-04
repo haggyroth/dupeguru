@@ -98,6 +98,19 @@ class PreferencesDialog(PreferencesDialogBase):
         self.horizontalLayout_2b.addItem(spacer_item2)
         self.verticalLayout_4.addLayout(self.horizontalLayout_2b)
         self._setupAddCheckbox(
+            "fullVerifyBox",
+            tr("Verify partially hashed matches by comparing full contents"),
+            self.widget,
+        )
+        self.fullVerifyBox.setToolTip(
+            tr(
+                "Partial hashing compares sampled chunks, so two different files can match. "
+                "This re-reads only the files involved in such matches and discards any that "
+                "do not match in full. Has no effect unless partial hashing is enabled."
+            )
+        )
+        self.verticalLayout_4.addWidget(self.fullVerifyBox)
+        self._setupAddCheckbox(
             "ignoreHardlinkMatches",
             tr("Ignore duplicates hardlinking to the same file"),
             self.widget,
@@ -115,6 +128,7 @@ class PreferencesDialog(PreferencesDialogBase):
         self.sizeSaturationSpinBox.setValue(prefs.large_file_threshold)
         setchecked(self.bigFilePartialHashesBox, prefs.big_file_partial_hashes)
         self.bigSizeThresholdSpinBox.setValue(prefs.big_file_size_threshold)
+        setchecked(self.fullVerifyBox, prefs.full_verify)
 
         # Update UI state based on selected scan type
         scan_type = prefs.get_scan_type(AppMode.STANDARD)
@@ -132,3 +146,4 @@ class PreferencesDialog(PreferencesDialogBase):
         prefs.large_file_threshold = self.sizeSaturationSpinBox.value()
         prefs.big_file_partial_hashes = ischecked(self.bigFilePartialHashesBox)
         prefs.big_file_size_threshold = self.bigSizeThresholdSpinBox.value()
+        prefs.full_verify = ischecked(self.fullVerifyBox)

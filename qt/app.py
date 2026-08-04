@@ -178,6 +178,9 @@ class DupeGuru(QObject):
             * 1024
             # threshold is in MiB. The scanner wants bytes
         )
+        # Only meaningful alongside partial hashing: with no partial matches there is
+        # nothing to verify, and the scanner's verification pass is a no-op.
+        self.model.options["full_verify"] = self.prefs.full_verify and self.prefs.big_file_partial_hashes
         scanned_tags = set()
         if self.prefs.scan_tag_track:
             scanned_tags.add("track")

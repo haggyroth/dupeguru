@@ -50,6 +50,13 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   so `--exclude` on its own *widens* the scan. `--exclude-defaults` restores it. This is
   documented in `--exclude`'s help text and covered by a test.
 
+- **`--full-verify` is reachable from the GUI** (`qt/`, issue #26): the preferences dialog
+  could enable partial hashing, which is what creates the false-positive risk, but had no
+  way to enable the verification that resolves it — the option existed only on the CLI. Adds
+  a "Verify partially hashed matches by comparing full contents" checkbox, persisted as
+  `FullVerify`. It is gated on partial hashing being enabled, since with no partial matches
+  the verification pass is a no-op.
+
 ### Changed
 
 - **The pre-deletion revalidation lives in one place** (`core/app.py`, issue #25): three
@@ -63,6 +70,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A missing `pyrcc5` no longer produces an icon-less GUI and calls it a success**
+  (`build.py`): the Qt resource step shelled out to a bare `pyrcc5` with the output
+  redirected by the shell. `build.py` is routinely run as `./env/bin/python build.py`
+  without the venv activated, in which case `pyrcc5` is not on PATH — but the shell still
+  created `qt/dg_rc.py`, empty, and the build reported "build succeeded". The result was a
+  GUI that started fine with every icon missing and nothing anywhere to explain why. The
+  compiler is now looked up beside the running interpreter first, invoked via `subprocess`
+  rather than a shell redirect, and an empty result is a hard error.
 - **`--from-results` deletions now honour the partial-match gate** (`cli.py`, issue #26):
   the scan path refuses to delete files matched only on a sampled hash unless
   `--allow-partial-matches` is passed, but routing the same deletion through
