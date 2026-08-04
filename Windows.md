@@ -2,7 +2,7 @@
 
 ### Prerequisites
 
-- [Python 3.7+][python]
+- [Python 3.10+][python]
 - [Visual Studio 2019][vs] or [Visual Studio Build Tools 2019][vsBuildTools] with the Windows 10 SDK
 - [nsis][nsis] (for installer creation)
 - [msys2][msys2] (for using makefile method)
