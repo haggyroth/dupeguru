@@ -21,6 +21,6 @@ class DetailsDialog(DetailsDialogBase):
         self.setMinimumSize(QSize(200, 0))
         self.tableView = DetailsTable(self)
         self.tableView.setAlternatingRowColors(True)
-        self.tableView.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.tableView.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.tableView.setShowGrid(False)
         self.setWidget(self.tableView)

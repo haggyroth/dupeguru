@@ -24,7 +24,7 @@ tr = trget("ui")
 
 class IgnoreListDialog(QDialog):
     def __init__(self, parent, model, **kwargs):
-        flags = Qt.CustomizeWindowHint | Qt.WindowTitleHint | Qt.WindowSystemMenuHint
+        flags = Qt.WindowType.CustomizeWindowHint | Qt.WindowType.WindowTitleHint | Qt.WindowType.WindowSystemMenuHint
         super().__init__(parent, flags, **kwargs)
         self.specific_actions = frozenset()
         self._setupUi()
@@ -42,9 +42,9 @@ class IgnoreListDialog(QDialog):
         self.verticalLayout = QVBoxLayout(self)
         self.verticalLayout.setContentsMargins(0, 0, 0, 0)
         self.tableView = QTableView()
-        self.tableView.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.tableView.setSelectionMode(QAbstractItemView.ExtendedSelection)
-        self.tableView.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.tableView.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.tableView.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.tableView.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.tableView.setShowGrid(False)
         self.tableView.horizontalHeader().setStretchLastSection(True)
         self.tableView.verticalHeader().setDefaultSectionSize(18)

@@ -36,7 +36,7 @@ class FirstRunDialog(QDialog):
     def _setupUi(self):
         self.setWindowTitle(tr("Welcome to dupeGuru"))
         self.setMinimumWidth(460)
-        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
 
         layout = QVBoxLayout(self)
         layout.setSpacing(8)
@@ -67,9 +67,9 @@ class FirstRunDialog(QDialog):
 
         label = QLabel(body)
         label.setWordWrap(True)
-        label.setTextFormat(Qt.RichText)
+        label.setTextFormat(Qt.TextFormat.RichText)
         label.setOpenExternalLinks(False)
         layout.addWidget(label)
 
-        self.button_box = QDialogButtonBox(QDialogButtonBox.Ok)
+        self.button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
         layout.addWidget(self.button_box)

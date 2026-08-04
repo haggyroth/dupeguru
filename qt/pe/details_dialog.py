@@ -24,9 +24,9 @@ class DetailsDialog(DetailsDialogBase):
         self.setWindowTitle(tr("Details"))
         self.resize(502, 502)
         self.setMinimumSize(QSize(250, 250))
-        self.splitter = QSplitter(Qt.Vertical)
+        self.splitter = QSplitter(Qt.Orientation.Vertical)
         self.topFrame = EmittingFrame()
-        self.topFrame.setFrameShape(QFrame.StyledPanel)
+        self.topFrame.setFrameShape(QFrame.Shape.StyledPanel)
         self.horizontalLayout = QGridLayout()
         # Minimum width for the toolbar in the middle:
         self.horizontalLayout.setColumnMinimumWidth(1, 10)
@@ -47,8 +47,8 @@ class DetailsDialog(DetailsDialogBase):
         self.vController = ScrollAreaController(self)
 
         self.verticalToolBar = ViewerToolBar(self, self.vController)
-        self.verticalToolBar.setOrientation(Qt.Orientation(Qt.Vertical))
-        self.horizontalLayout.addWidget(self.verticalToolBar, 1, 1, 1, 1, Qt.AlignCenter)
+        self.verticalToolBar.setOrientation(Qt.Orientation(Qt.Orientation.Vertical))
+        self.horizontalLayout.addWidget(self.verticalToolBar, 1, 1, 1, 1, Qt.AlignmentFlag.AlignCenter)
 
         self.referenceImageViewer = ScrollAreaImageViewer(self, "referenceImage")
         self.horizontalLayout.addWidget(self.referenceImageViewer, 0, 2, 3, 1)
@@ -57,12 +57,12 @@ class DetailsDialog(DetailsDialogBase):
         self.splitter.setStretchFactor(0, 8)
 
         self.tableView = DetailsTable(self)
-        size_policy = QSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+        size_policy = QSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         size_policy.setHorizontalStretch(0)
         size_policy.setVerticalStretch(0)
         self.tableView.setSizePolicy(size_policy)
         self.tableView.setAlternatingRowColors(True)
-        self.tableView.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.tableView.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.tableView.setShowGrid(False)
         self.splitter.addWidget(self.tableView)
         self.splitter.setStretchFactor(1, 1)

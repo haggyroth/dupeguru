@@ -23,7 +23,7 @@ class MarkDialog(QDialog):
     """
 
     def __init__(self, parent, app, **kwargs):
-        flags = Qt.CustomizeWindowHint | Qt.WindowTitleHint | Qt.WindowSystemMenuHint
+        flags = Qt.WindowType.CustomizeWindowHint | Qt.WindowType.WindowTitleHint | Qt.WindowType.WindowSystemMenuHint
         super().__init__(parent, flags, **kwargs)
         self.model = MarkDialogModel(app=app.model)
         self._setupUi()
@@ -34,7 +34,7 @@ class MarkDialog(QDialog):
     def _setupUi(self):
         self.setWindowTitle(tr("Mark by Rule"))
         self.setMinimumWidth(380)
-        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
 
         layout = QVBoxLayout(self)
         layout.setSpacing(8)
@@ -55,8 +55,8 @@ class MarkDialog(QDialog):
             self.ruleComboBox.setCurrentIndex(self.model.selected_index)
         layout.addWidget(self.ruleComboBox)
 
-        self.buttonBox = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        self.buttonBox.button(QDialogButtonBox.Ok).setText(tr("Mark Others"))
+        self.buttonBox = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        self.buttonBox.button(QDialogButtonBox.StandardButton.Ok).setText(tr("Mark Others"))
         layout.addWidget(self.buttonBox)
 
     def _ruleSelected(self, index):

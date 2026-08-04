@@ -16,11 +16,11 @@ from hscommon.plat import ISLINUX
 
 class DetailsDialog(QDockWidget):
     def __init__(self, parent, app, **kwargs):
-        super().__init__(parent, Qt.Tool, **kwargs)
+        super().__init__(parent, Qt.WindowType.Tool, **kwargs)
         self.parent = parent
         self.app = app
         self.model = app.model.details_panel
-        self.setAllowedAreas(Qt.AllDockWidgetAreas)
+        self.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
         self._setupUi()
         # To avoid saving uninitialized geometry on appWillSavePrefs, we track whether our dialog
         # has been shown. If it has, we know that our geometry should be saved.
@@ -31,8 +31,8 @@ class DetailsDialog(QDockWidget):
         self.tableView.setModel(self.tableModel)
         self.model.view = self
         self.app.willSavePrefs.connect(self.appWillSavePrefs)
-        # self.setAttribute(Qt.WA_DeleteOnClose)
-        parent.addDockWidget(area if self._wasDocked else Qt.BottomDockWidgetArea, self)
+        # self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        parent.addDockWidget(area if self._wasDocked else Qt.DockWidgetArea.BottomDockWidgetArea, self)
 
     def _setupUi(self):  # Virtual
         pass
@@ -61,9 +61,9 @@ class DetailsDialog(QDockWidget):
 
         features = self.features()
         if self.app.prefs.details_dialog_vertical_titlebar:
-            self.setFeatures(features | QDockWidget.DockWidgetVerticalTitleBar)
-        elif features & QDockWidget.DockWidgetVerticalTitleBar:
-            self.setFeatures(features ^ QDockWidget.DockWidgetVerticalTitleBar)
+            self.setFeatures(features | QDockWidget.DockWidgetFeature.DockWidgetVerticalTitleBar)
+        elif features & QDockWidget.DockWidgetFeature.DockWidgetVerticalTitleBar:
+            self.setFeatures(features ^ QDockWidget.DockWidgetFeature.DockWidgetVerticalTitleBar)
 
     # --- Events
     def appWillSavePrefs(self):

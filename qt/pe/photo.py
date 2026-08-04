@@ -28,7 +28,7 @@ class File(PhotoBase):
 
     def _plat_get_blocks(self, block_count_per_side, orientation):
         image = QImage(str(self.path))
-        image = image.convertToFormat(QImage.Format_RGB888)
+        image = image.convertToFormat(QImage.Format.Format_RGB888)
         if not isinstance(orientation, int):
             logging.warning(
                 "Orientation for file '%s' was a %s '%s', not an int.",

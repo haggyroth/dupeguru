@@ -230,18 +230,18 @@ class DupeGuru(QObject):
             QApplication.setStyle(QStyleFactory.create("Fusion"))
             palette = QApplication.style().standardPalette()
             palette.setColor(QPalette.ColorRole.Window, QColor(53, 53, 53))
-            palette.setColor(QPalette.ColorRole.WindowText, Qt.white)
+            palette.setColor(QPalette.ColorRole.WindowText, Qt.GlobalColor.white)
             palette.setColor(QPalette.ColorRole.Base, QColor(25, 25, 25))
             palette.setColor(QPalette.ColorRole.AlternateBase, QColor(53, 53, 53))
             palette.setColor(QPalette.ColorRole.ToolTipBase, QColor(53, 53, 53))
-            palette.setColor(QPalette.ColorRole.ToolTipText, Qt.white)
-            palette.setColor(QPalette.ColorRole.Text, Qt.white)
+            palette.setColor(QPalette.ColorRole.ToolTipText, Qt.GlobalColor.white)
+            palette.setColor(QPalette.ColorRole.Text, Qt.GlobalColor.white)
             palette.setColor(QPalette.ColorRole.Button, QColor(53, 53, 53))
-            palette.setColor(QPalette.ColorRole.ButtonText, Qt.white)
-            palette.setColor(QPalette.ColorRole.BrightText, Qt.red)
+            palette.setColor(QPalette.ColorRole.ButtonText, Qt.GlobalColor.white)
+            palette.setColor(QPalette.ColorRole.BrightText, Qt.GlobalColor.red)
             palette.setColor(QPalette.ColorRole.Link, QColor(42, 130, 218))
             palette.setColor(QPalette.ColorRole.Highlight, QColor(42, 130, 218))
-            palette.setColor(QPalette.ColorRole.HighlightedText, Qt.black)
+            palette.setColor(QPalette.ColorRole.HighlightedText, Qt.GlobalColor.black)
             palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text, QColor(164, 166, 168))
             palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.WindowText, QColor(164, 166, 168))
             palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.ButtonText, QColor(164, 166, 168))
@@ -262,11 +262,11 @@ class DupeGuru(QObject):
     def remove_selected(self):
         self.model.remove_selected(self)
 
-    def confirm(self, title, msg, default_button=QMessageBox.Yes):
+    def confirm(self, title, msg, default_button=QMessageBox.StandardButton.Yes):
         active = QApplication.activeWindow()
-        buttons = QMessageBox.Yes | QMessageBox.No
+        buttons = QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         answer = QMessageBox.question(active, title, msg, buttons, default_button)
-        return answer == QMessageBox.Yes
+        return answer == QMessageBox.StandardButton.Yes
 
     def invokeCustomCommand(self):
         self.model.invoke_custom_command()
@@ -339,7 +339,7 @@ class DupeGuru(QObject):
     def clearCacheTriggered(self):
         title = tr("Clear Cache")
         msg = tr("Do you really want to clear the cache? This will remove all cached file hashes and picture analysis.")
-        if self.confirm(title, msg, QMessageBox.No):
+        if self.confirm(title, msg, QMessageBox.StandardButton.No):
             self.model.clear_picture_cache()
             self.model.clear_hash_cache()
             active = QApplication.activeWindow()
@@ -376,7 +376,7 @@ class DupeGuru(QObject):
         )
         preferences_dialog.load()
         result = preferences_dialog.exec()
-        if result == QDialog.Accepted:
+        if result == QDialog.DialogCode.Accepted:
             preferences_dialog.save()
             self.prefs.save()
             self._update_options()
@@ -426,7 +426,7 @@ class DupeGuru(QObject):
             # The object is not deleted entirely, avoid saving its geometry in the future
             # self.willSavePrefs.disconnect(self.details_dialog.appWillSavePrefs)
             # or simply delete it on close which is probably cleaner:
-            self.details_dialog.setAttribute(Qt.WA_DeleteOnClose)
+            self.details_dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
             self.details_dialog.close()
             # if we don't do the following, Qt will crash when we recreate the Results dialog
             self.details_dialog.setParent(None)
@@ -448,7 +448,7 @@ class DupeGuru(QObject):
         self.problemDialog.show()
 
     def select_dest_folder(self, prompt):
-        flags = QFileDialog.ShowDirsOnly
+        flags = QFileDialog.Option.ShowDirsOnly
         return QFileDialog.getExistingDirectory(self.resultWindow, prompt, "", flags)
 
     def select_dest_file(self, prompt, extension):

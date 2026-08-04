@@ -9,6 +9,31 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **The Qt code now uses Qt6-compatible spellings throughout** (`qt/`, issue #27, phase 1):
+  346 enum references moved to their scoped form (`Qt.AlignLeft` to
+  `Qt.AlignmentFlag.AlignLeft`), `exec_()` to `exec()`, `Qt.MidButton` to
+  `Qt.MouseButton.MiddleButton`, `QFileDialog.DirectoryOnly` to `FileMode.Directory` plus
+  the `ShowDirsOnly` option, and the `QDesktopWidget` uses to `QGuiApplication.screenAt` —
+  the idiom `qt.util.move_to_screen_center` already used. Every one of these works
+  identically on PyQt5 5.15 and PyQt6, so this is a no-op for the shipped binding and
+  removes almost all of the eventual port's diff. The mapping was derived by introspecting
+  PyQt6 rather than written by hand; every rewrite was checked to have the same value under
+  PyQt5 and to resolve under PyQt6, and all 380 enum spellings in the tree now resolve under
+  both. `qt/recent.py` still imports `QAction` from `QtWidgets`, which is deliberate: it
+  moved to `QtGui` in Qt6 and no single import works on both.
+
+### Added
+
+- **Smoke coverage for the Qt front end** (`qt/tests/`, issue #27, phase 0): nothing under
+  `qt/` was imported by any test and CI ran only `core hscommon`, which is how
+  `--full-verify` shipped unreachable from the GUI and how an empty `qt/dg_rc.py` produced an
+  icon-less build that reported success. Covers widget construction, preferences reaching the
+  scan options, and resource aliases actually resolving. CI now runs `pytest core hscommon qt`
+  plus a resource-build step on the platforms that have `pyrcc5`; the Linux legs skip the Qt
+  tests, since `requirements.txt` excludes PyQt5 there.
+
 ## [4.6.0] - 2026-08-04
 
 ### Added
