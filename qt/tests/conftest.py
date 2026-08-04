@@ -17,8 +17,9 @@ Two things have to be true before a single widget is constructed:
   installed copy. ``QStandardPaths.setTestModeEnabled`` plus a redirected QSettings path
   moves both into a sandbox.
 
-PyQt is imported lazily inside the fixtures so that this file stays importable on Linux,
-where requirements.txt does not install PyQt5 at all.
+Qt is imported lazily inside the fixtures so that this file stays importable on Linux, where
+requirements.txt installs no Qt binding at all. Imports go through qtpy, which selects the
+installed binding; see qt/tests/app_test.py for how the absence of one is handled.
 """
 
 import os
@@ -42,8 +43,8 @@ def qapp(tmp_path_factory):
 
     Session-scoped because Qt permits only one QApplication per process.
     """
-    from PyQt5.QtCore import QCoreApplication, QSettings, QStandardPaths
-    from PyQt5.QtWidgets import QApplication
+    from qtpy.QtCore import QCoreApplication, QSettings, QStandardPaths
+    from qtpy.QtWidgets import QApplication
 
     settings_dir = tmp_path_factory.mktemp("qsettings")
 

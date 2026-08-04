@@ -16,11 +16,11 @@ from core.util import executable_folder
 from hscommon.util import first
 from hscommon.plat import ISWINDOWS
 
-from PyQt5.QtCore import QStandardPaths, QSettings
-from PyQt5.QtGui import QGuiApplication
+from qtpy.QtCore import QStandardPaths, QSettings
+from qtpy.QtGui import QGuiApplication
 
 from qt import resources
-from PyQt5.QtWidgets import (
+from qtpy.QtWidgets import (
     QSpacerItem,
     QSizePolicy,
     QAction,

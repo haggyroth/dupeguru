@@ -5,8 +5,8 @@
 # which should be included with this package. The terms are also available at
 # http://www.gnu.org/licenses/gpl-3.0.html
 
-from PyQt5.QtCore import pyqtSignal
-from PyQt5.QtWidgets import QWidget, QHBoxLayout, QRadioButton
+from qtpy.QtCore import Signal
+from qtpy.QtWidgets import QWidget, QHBoxLayout, QRadioButton
 
 from qt.util import horizontal_spacer
 
@@ -62,7 +62,7 @@ class RadioBox(QWidget):
                 break
 
     # --- Signals
-    itemSelected = pyqtSignal(int)
+    itemSelected = Signal(int)
 
     # --- Properties
     @property

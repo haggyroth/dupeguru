@@ -11,6 +11,16 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Qt is imported through qtpy rather than a binding directly** (`qt/`, `hscommon/`,
+  `run.py`, issue #27, phase 3a): 90 import lines across 41 files moved from `PyQt5.*` to
+  `qtpy.*`, and the signal/slot names qtpy does not export followed — 25 `pyqtSignal` and 48
+  `pyqtSlot` became `Signal` and `Slot`. Behaviour is unchanged: qtpy still resolves PyQt5,
+  which stays the only binding in `requirements.txt` for now. Making PyQt6 the default is a
+  separate change, split off deliberately so that a failure is attributable to qtpy or to Qt6
+  rather than to both at once.
+  This also resolves the last Qt5-only spelling in the tree: `qt/recent.py` imported `QAction`
+  from `QtWidgets`, which is where it lives in Qt5 and not where it lives in Qt6. qtpy exposes
+  it from either module, so no import in the tree is binding-specific any more.
 - **Images are embedded in a committed module; the Qt resource build step is gone** (`qt/`,
   `build.py`, issue #27, phase 2): Qt's `.qrc` system needs `pyrcc5` to compile resources
   into a Python module, and PyQt6 ships no equivalent — Riverbank dropped the tool. The

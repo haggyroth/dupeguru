@@ -2,8 +2,8 @@
 # which should be included with this package. The terms are also available at
 # http://www.gnu.org/licenses/gpl-3.0.html
 
-from PyQt5.QtCore import QRect, pyqtSlot, Qt, QEvent
-from PyQt5.QtWidgets import (
+from qtpy.QtCore import QRect, Slot, Qt, QEvent
+from qtpy.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
@@ -109,7 +109,7 @@ class TabWindow(QMainWindow):
         self.menuList.add(self.menuView)
         self.menuList.add(self.menuHelp)
 
-    @pyqtSlot(int)
+    @Slot(int)
     def updateMenuBar(self, page_index=-1):
         if page_index < 0:
             return
@@ -232,7 +232,7 @@ class TabWindow(QMainWindow):
             self.getWidgetAtIndex(index).closeEvent(close_event)
         self.appWillSavePrefs()
 
-    @pyqtSlot(int)
+    @Slot(int)
     def onTabCloseRequested(self, index):
         current_widget = self.getWidgetAtIndex(index)
         if isinstance(current_widget, DirectoriesDialog):
@@ -242,7 +242,7 @@ class TabWindow(QMainWindow):
             return
         self.removeTab(index)
 
-    @pyqtSlot()
+    @Slot()
     def onDialogAccepted(self):
         """Remove tabbed dialog when Accepted/Done (close button clicked)."""
         widget = self.sender()
@@ -250,7 +250,7 @@ class TabWindow(QMainWindow):
         if index > -1:
             self.removeTab(index)
 
-    @pyqtSlot()
+    @Slot()
     def toggleTabBar(self):
         value = self.sender().isChecked()
         self.actionToggleTabs.setChecked(value)
@@ -302,7 +302,7 @@ class TabBarWindow(TabWindow):
             self.setTabIndex(stack_index)
         return stack_index
 
-    @pyqtSlot(int)
+    @Slot(int)
     def showTabIndex(self, index):
         # The tab bar's indices should be aligned with the stackwidget's
         if index >= 0 and index <= self.stackedWidget.count():
@@ -321,22 +321,22 @@ class TabBarWindow(TabWindow):
         """Sets the current Tab on TabBar for this widget."""
         self.tabBar.setCurrentIndex(self.indexOfWidget(widget))
 
-    @pyqtSlot(int)
+    @Slot(int)
     def setTabIndex(self, index):
         if index is None:
             return
         self.tabBar.setCurrentIndex(index)
 
-    @pyqtSlot(int)
+    @Slot(int)
     def onRemovedWidget(self, index):
         self.removeTab(index)
 
-    @pyqtSlot(int)
+    @Slot(int)
     def removeTab(self, index):
         """Remove the tab, but not the widget (it should already be removed)"""
         return self.tabBar.removeTab(index)
 
-    @pyqtSlot(int)
+    @Slot(int)
     def removeWidget(self, widget):
         return self.stackedWidget.removeWidget(widget)
 
@@ -352,13 +352,13 @@ class TabBarWindow(TabWindow):
     def getCount(self):
         return self.stackedWidget.count()
 
-    @pyqtSlot()
+    @Slot()
     def toggleTabBar(self):
         value = self.sender().isChecked()
         self.actionToggleTabs.setChecked(value)
         self.tabBar.setVisible(value)
 
-    @pyqtSlot(int)
+    @Slot(int)
     def onTabCloseRequested(self, index):
         target_widget = self.getWidgetAtIndex(index)
         if isinstance(target_widget, DirectoriesDialog):
@@ -370,7 +370,7 @@ class TabBarWindow(TabWindow):
         # Removing the widget should trigger tab removal via the signal
         self.removeWidget(self.getWidgetAtIndex(index))
 
-    @pyqtSlot()
+    @Slot()
     def onDialogAccepted(self):
         """Remove tabbed dialog when Accepted/Done (close button clicked)."""
         widget = self.sender()

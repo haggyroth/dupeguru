@@ -4,8 +4,8 @@
 # which should be included with this package. The terms are also available at
 # http://www.gnu.org/licenses/gpl-3.0.html
 
-from PyQt5.QtCore import QSize
-from PyQt5.QtWidgets import QAbstractItemView
+from qtpy.QtCore import QSize
+from qtpy.QtWidgets import QAbstractItemView
 
 from hscommon.trans import trget
 from qt.details_dialog import DetailsDialog as DetailsDialogBase

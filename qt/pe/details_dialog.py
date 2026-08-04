@@ -4,9 +4,9 @@
 # which should be included with this package. The terms are also available at
 # http://www.gnu.org/licenses/gpl-3.0.html
 
-from PyQt5.QtCore import Qt, QSize, pyqtSignal, pyqtSlot
-from PyQt5.QtWidgets import QAbstractItemView, QSizePolicy, QGridLayout, QSplitter, QFrame
-from PyQt5.QtGui import QResizeEvent
+from qtpy.QtCore import Qt, QSize, Signal, Slot
+from qtpy.QtWidgets import QAbstractItemView, QSizePolicy, QGridLayout, QSplitter, QFrame
+from qtpy.QtGui import QResizeEvent
 from hscommon.trans import trget
 from qt.details_dialog import DetailsDialog as DetailsDialogBase
 from qt.details_table import DetailsTable
@@ -87,7 +87,7 @@ class DetailsDialog(DetailsDialogBase):
         self.vController.updateView(ref, dupe, group)
 
     # --- Override
-    @pyqtSlot(QResizeEvent)
+    @Slot(QResizeEvent)
     def resizeEvent(self, event):
         self.ensure_same_sizes()
         if self.vController is None or not self.vController.bestFit:
@@ -135,7 +135,7 @@ class DetailsDialog(DetailsDialogBase):
 class EmittingFrame(QFrame):
     """Emits a signal whenever is resized"""
 
-    resized = pyqtSignal(QResizeEvent)
+    resized = Signal(QResizeEvent)
 
     def resizeEvent(self, event):
         self.resized.emit(event)

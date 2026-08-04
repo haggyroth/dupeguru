@@ -4,8 +4,8 @@
 # which should be included with this package. The terms are also available at
 # http://www.gnu.org/licenses/gpl-3.0.html
 
-from PyQt5.QtCore import Qt, QSize, pyqtSlot
-from PyQt5.QtWidgets import (
+from qtpy.QtCore import Qt, QSize, Slot
+from qtpy.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QVBoxLayout,
@@ -28,7 +28,7 @@ from PyQt5.QtWidgets import (
     QGroupBox,
     QFormLayout,
 )
-from PyQt5.QtGui import QPixmap, QIcon
+from qtpy.QtGui import QPixmap, QIcon
 from hscommon import desktop, plat
 
 from hscommon.trans import trget
@@ -422,7 +422,7 @@ class ColorPickerButton(QPushButton):
         self.color = None
         self.clicked.connect(self.onClicked)
 
-    @pyqtSlot()
+    @Slot()
     def onClicked(self):
         color = QColorDialog.getColor(self.color if self.color is not None else Qt.GlobalColor.white, self.parent)
         self.setColor(color)

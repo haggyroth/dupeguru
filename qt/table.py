@@ -7,7 +7,7 @@
 # http://www.gnu.org/licenses/gpl-3.0.html
 
 import typing
-from PyQt5.QtCore import (
+from qtpy.QtCore import (
     Qt,
     QAbstractTableModel,
     QModelIndex,
