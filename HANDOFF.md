@@ -20,10 +20,11 @@ it renders links for *historical* upstream ticket numbers in `help/changelog`. D
 | | |
 |---|---|
 | Branch | `master` (not `main`) |
-| Version | 4.6.0, released |
-| Releases | v4.4.0, v4.4.1, v4.5.0, v4.6.0 |
+| Version | 4.7.0, released |
+| Releases | v4.4.0, v4.4.1, v4.5.0, v4.6.0, v4.7.0 |
 | Issues | 23 closed, 3 open |
 | Tests | **835 passing, 6 skipped** on macOS as of #56. Windows/Linux counts differ (see below) |
+| Qt bindings | PyQt6 by default, PyQt5 as a fallback with its own CI leg |
 | CI | green on Python 3.10–3.14 (Linux) plus Windows and macOS |
 
 Work is tracked as GitHub issues on the fork. Don't keep a parallel roadmap file — check the
@@ -79,9 +80,8 @@ move and a green run looks different.
 | 2 exclude union-mode tests | skip | skip | skip |
 | **Totals** | 838 / 3 skipped | **835 / 6 skipped** | 836 / 5 skipped |
 
-841 tests collected in total. macOS and Windows were measured on CI as of #56; the Linux
-figure is that total less the tests it skips. If a count is off by a little, check which
-group changed rather than assuming the suite broke.
+841 tests collected in total. All three columns were measured on CI as of #56. If a count is
+off by a little, check which group changed rather than assuming the suite broke.
 
 Note the Windows column is CI, not the old Windows laptop: CI runners *do* have symlink
 privilege, so they run both the symlink and the junction tests and skip the least. And since
