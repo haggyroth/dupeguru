@@ -9,6 +9,27 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`Scanner._getmatches` no longer rewrites `self.scan_type`** (`core/scanner.py`, issue #14):
+  it assigned `self.scan_type = ScanType.FIELDS` to smuggle a `no_field_order` flag through,
+  permanently. A second `get_dupe_groups()` call on the same `Scanner` therefore did an
+  *ordered* field comparison and found nothing where the first found a match — 0 groups
+  instead of 1 in the new regression test. It also made the `FIELDSNOORDER` branch further
+  down unreachable. Both front ends build a fresh `Scanner` per scan so nothing hit this
+  today, but the `--watch` and resumable-scan work in #28 naturally would.
+- **A file that vanishes mid-scan no longer logs as a decoding error** (`core/fs.py`,
+  issue #15): `FilesDB.get` and `put` called `path.stat()` above their `try`, so a
+  `FileNotFoundError` escaped into `File.__getattribute__`'s broad handler, which reports
+  every exception as *"error while decoding"*. That sends the reader looking in the wrong
+  place entirely, and the attribute silently fell back to `b""`. Scanning a folder another
+  process is writing to — a download directory, a syncing cloud folder — hits this routinely.
+- **`FilesDB.close()` now clears the connection** (`core/fs.py`, issue #16): it left a closed
+  connection in place, so every later call raised *"Cannot operate on a closed database"* into
+  the broad handler in `get()`, logging a warning per file. The public methods now guard on
+  `conn is None` and `connect()` closes any previous connection instead of leaking it, all
+  matching what `HashCache` already did.
+
 ### Changed
 
 - **`--filter-hardlinks` now defaults off, matching the GUI** (`cli.py`, issue #21): the CLI

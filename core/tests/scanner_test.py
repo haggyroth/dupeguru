@@ -1060,3 +1060,42 @@ def test_parallel_pool_mid_crash_skips_already_completed_files(tmp_path):
         str(done_path) not in sequentially_hashed
     ), "File that completed in parallel must not be re-hashed sequentially"
     assert str(pending_path) in sequentially_hashed
+
+
+# ---------------------------------------------------------------------------
+# _getmatches must not rewrite self.scan_type (issue #14)
+# ---------------------------------------------------------------------------
+
+
+def test_fields_noorder_leaves_scan_type_alone(fake_fileexists):
+    """It used to assign self.scan_type = ScanType.FIELDS to smuggle a flag through."""
+    s = Scanner()
+    s.scan_type = ScanType.FIELDSNOORDER
+    f = [no("The White Stripes - Little Ghost"), no("Little Ghost - The White Stripes")]
+    s.get_dupe_groups(f)
+    eq_(s.scan_type, ScanType.FIELDSNOORDER)
+
+
+def test_fields_noorder_scanner_is_reusable(fake_fileexists):
+    """The consequence of the rewrite: a second scan on the same Scanner silently
+    became an *ordered* field comparison, because no_field_order was no longer set.
+
+    Nothing reuses a Scanner today -- both front ends build a fresh one -- but the
+    --watch and resumable-scan work in #28 naturally would.
+    """
+    s = Scanner()
+    s.scan_type = ScanType.FIELDSNOORDER
+
+    first = s.get_dupe_groups([no("The White Stripes - Little Ghost"), no("Little Ghost - The White Stripes")])
+    second = s.get_dupe_groups([no("The White Stripes - Little Ghost"), no("Little Ghost - The White Stripes")])
+
+    eq_(len(first), 1)
+    eq_(len(second), len(first)), "a reused scanner must give the same answer"
+
+
+def test_fields_scan_type_still_matches_in_order(fake_fileexists):
+    """Guard against the fix accidentally turning every FIELDS scan into no-order."""
+    s = Scanner()
+    s.scan_type = ScanType.FIELDS
+    f = [no("The White Stripes - Little Ghost"), no("Little Ghost - The White Stripes")]
+    eq_(len(s.get_dupe_groups(f)), 0)
