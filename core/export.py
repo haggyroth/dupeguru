@@ -138,14 +138,17 @@ def export_to_xhtml(colnames, rows):
     content = MAIN_TEMPLATE.replace("$colheaders", colheaders).replace("$rows", rendered_rows)
     folder = mkdtemp()
     destpath = op.join(folder, "export.htm")
-    fp = open(destpath, "wt", encoding="utf-8")
-    fp.write(content)
-    fp.close()
+    with open(destpath, "wt", encoding="utf-8") as fp:
+        fp.write(content)
     return destpath
 
 
 def export_to_csv(dest, colnames, rows):
-    writer = csv.writer(open(dest, "wt", encoding="utf-8"))
-    writer.writerow(["Group ID"] + colnames)
-    for row in rows:
-        writer.writerow(row)
+    # newline="" is required by the csv module: it writes \r\n itself, and without this
+    # the text layer translates the \n again, producing \r\r\n on Windows and a file that
+    # strict CSV parsers read as blank lines between every row.
+    with open(dest, "wt", encoding="utf-8", newline="") as fp:
+        writer = csv.writer(fp)
+        writer.writerow(["Group ID"] + colnames)
+        for row in rows:
+            writer.writerow(row)

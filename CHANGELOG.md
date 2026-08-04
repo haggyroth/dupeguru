@@ -11,6 +11,29 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **CSV export wrote malformed line endings on Windows** (`core/export.py`): `export_to_csv`
+  opened the file without `newline=""`, so the `\r\n` written by the `csv` module was
+  translated again by the text layer, producing `\r\r\n`. Strict CSV parsers read that as a
+  blank line between every row. Found by writing the first tests for this module. The file
+  handle was also never closed; both exports now use a context manager.
+
+### Added
+
+- **`core/gui/mark_dialog.py` coverage 0% → 100%** (`core/tests/mark_dialog_test.py`,
+  issue #23): the rule-based auto-marking engine decides which file in each group is kept and
+  marks the rest, so whatever it marks is what a later delete removes. It had no tests at all.
+  Covers rule-list construction, `apply()` marking every non-keeper, never marking the group
+  reference, idempotency, replacing rather than adding to a previous marking, honouring the
+  selected rule, reference-folder files never being marked or displaced, and opposite size
+  rules genuinely picking opposite keepers.
+- **`core/export.py` coverage 26% → 100%** (`core/tests/export_test.py`): XHTML structure and
+  indentation, CSV header and quoting, UTF-8 in both, empty input, and the `OSError` that
+  `core/app.py` relies on catching.
+- **Coverage configuration** (`setup.cfg`): `[coverage:run]` now omits test code and
+  build/localisation tooling, so the headline figure reflects shippable code. This *lowers* the
+  reported number from 84% to 78% — the previous figure was inflated by test files, which are
+  ~100% covered by construction.
+
 - **Loading a directory list no longer discards the exclusion list** (`core/app.py`,
   `core/directories.py`, issue #12): `load_directories()` reset the selection by calling
   `self.directories.__init__()`. `Directories.__init__` takes `exclude_list` as an argument
