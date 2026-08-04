@@ -90,6 +90,17 @@ class Directories:
         self.states = {}
         self._exclude_list = exclude_list
 
+    def clear(self):
+        """Drop the folder selection and its states, keeping the exclusion list.
+
+        Callers that want a blank slate should use this rather than re-invoking
+        ``__init__`` on a live instance: ``__init__`` takes ``exclude_list`` as an
+        argument defaulting to None, so calling it with no arguments silently replaces
+        the configured exclusion list with nothing.
+        """
+        self._dirs = []
+        self.states = {}
+
     def __contains__(self, path):
         norm = os.path.normcase(str(path))
         for p in self._dirs:
