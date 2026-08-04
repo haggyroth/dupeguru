@@ -1,3 +1,9 @@
+=== 4.7.1 (2026-08-04)
+* Fix the Windows uninstaller leaving the whole application behind, Qt runtime included
+* Fix packaged builds bundling the fallback Qt binding instead of the default one
+* Call freeze_support() from the entry points, as the multiprocessing documentation requires
+* Verify packaged builds automatically, on Windows and macOS
+
 === 4.7.0 (2026-08-04)
 * Run the GUI on PyQt6 by default, keeping PyQt5 working as a fallback
 * Add a preferences option to verify partially hashed matches on full content
