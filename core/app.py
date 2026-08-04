@@ -278,34 +278,80 @@ class DupeGuru(Broadcaster):
                     "time differs). Re-scan to refresh results."
                 ).format(str(dupe.path))
             )
-        logging.debug("Sending '%s' to trash", dupe.path)
         str_path = str(dupe.path)
-        if direct_deletion:
-            if op.isdir(str_path):
-                shutil.rmtree(str_path)
-            else:
-                os.remove(str_path)
-        else:
-            send2trash(str_path)  # Raises OSError when there's a problem
+        link_tmp = None
         if link_deleted:
             group = self.results.get_group_of_duplicate(dupe)
             ref = group.ref
-            if use_hardlinks:
-                os.link(str(ref.path), str_path)
+            # Build the replacement link *before* destroying anything, at a temporary
+            # name beside the original. Creating it first is the whole point: if it
+            # cannot be made -- no symlink privilege on Windows, a cross-device
+            # hardlink -- the original is still on disk and the error propagates to
+            # perform_on_marked, which records a problem and leaves the file marked.
+            # The previous order deleted first and, on the Windows privilege error,
+            # swallowed the exception, so the file was gone, no link replaced it, and
+            # the operation was reported as a success.
+            link_tmp = self._unused_link_path(str_path)
+            self._make_replacement_link(ref.path, link_tmp, use_hardlinks)
+
+        logging.debug("Sending '%s' to trash", dupe.path)
+        try:
+            if direct_deletion:
+                if op.isdir(str_path):
+                    shutil.rmtree(str_path)
+                else:
+                    os.remove(str_path)
             else:
+                send2trash(str_path)  # Raises OSError when there's a problem
+        except Exception:
+            if link_tmp is not None:
                 try:
-                    os.symlink(str(ref.path), str_path)
-                except OSError as e:
-                    if sys.platform == "win32" and e.errno in (errno.EPERM, errno.EACCES):
-                        msg = tr(
-                            "Could not create a symbolic link at '{}'. On Windows, symbolic links "
-                            "require either Developer Mode or the SeCreateSymbolicLinkPrivilege. "
-                            "Consider using hardlinks instead."
-                        ).format(str_path)
-                        self.view.show_message(msg)
-                    else:
-                        raise
+                    link_tmp.unlink()
+                except OSError:
+                    logging.warning("Could not clean up temporary link '%s'", link_tmp)
+            raise
+
+        if link_tmp is not None:
+            # The original is gone, so this moves the link into its place.
+            os.replace(str(link_tmp), str_path)
         self.clean_empty_dirs(dupe.path.parent)
+
+    @staticmethod
+    def _unused_link_path(str_path):
+        """Return a free path beside ``str_path`` to build a replacement link at."""
+        candidate = Path(str_path + ".dupeguru-link")
+        counter = 0
+        # exists() is False for a broken symlink, so is_symlink() has to be checked too.
+        while candidate.exists() or candidate.is_symlink():
+            counter += 1
+            candidate = Path(f"{str_path}.dupeguru-link{counter}")
+        return candidate
+
+    @staticmethod
+    def _make_replacement_link(source, link_path, use_hardlinks):
+        """Create a link at ``link_path`` pointing at ``source``.
+
+        Raises OSError on failure, with a message explaining the Windows privilege case.
+        Raising rather than reporting is deliberate: the caller has not deleted anything
+        yet, and perform_on_marked turns the OSError into a recorded problem.
+        """
+        if use_hardlinks:
+            os.link(str(source), str(link_path))
+            return
+        try:
+            # target_is_directory is ignored on POSIX and required on Windows for a
+            # directory symlink, which folder-mode scans produce.
+            os.symlink(str(source), str(link_path), target_is_directory=source.is_dir())
+        except OSError as e:
+            if sys.platform == "win32" and e.errno in (errno.EPERM, errno.EACCES):
+                raise OSError(
+                    tr(
+                        "Could not create a symbolic link at '{}'. On Windows, symbolic links "
+                        "require either Developer Mode or the SeCreateSymbolicLinkPrivilege. "
+                        "Consider using hardlinks instead."
+                    ).format(str(link_path))
+                ) from e
+            raise
 
     def _create_file(self, path):
         # We add fs.Folder to fileclasses in case the file we're loading contains folder paths.

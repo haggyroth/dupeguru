@@ -4,6 +4,7 @@
 # which should be included with this package. The terms are also available at
 # http://www.gnu.org/licenses/gpl-3.0.html
 
+import errno
 import os
 import os.path as op
 import logging
@@ -197,6 +198,125 @@ class TestCaseDupeGuru:
         dgapp = TestApp().app
         with pytest.raises(OSError, match="changed since the last scan"):
             dgapp._do_delete_dupe(dupe, False, False, False)
+
+    # --- Delete-and-replace-with-link ordering (issue #20) ---
+
+    def _linkable_dupe(self, tmpdir):
+        """Build a (dgapp, dupe, victim_path) trio wired into a real two-file group."""
+        from core import engine
+
+        tmppath = Path(str(tmpdir))
+        keeper = tmppath / "keeper.txt"
+        victim = tmppath / "victim.txt"
+        keeper.write_text("same")
+        victim.write_text("same")
+
+        dgapp = TestApp().app
+        ref_obj = fs.File(keeper)
+        dupe_obj = fs.File(victim)
+        for obj in (ref_obj, dupe_obj):
+            obj.is_ref = False
+        group = engine.Group()
+        group.add_match(engine.Match(ref_obj, dupe_obj, 100))
+        dgapp.results.groups = [group]
+        group.prioritize(lambda x: 0 if x.path == keeper else 1)
+        return dgapp, dupe_obj, victim
+
+    def test_failed_link_creation_leaves_the_file_intact(self, tmpdir, monkeypatch):
+        """The data loss in #20.
+
+        The old order deleted first and then tried to create the link, so a failure --
+        the default on Windows, where symlinks need a privilege most users lack -- left
+        the file destroyed with nothing in its place.
+        """
+        dgapp, dupe, victim = self._linkable_dupe(tmpdir)
+
+        def _refuse(*args, **kwargs):
+            raise OSError("symlink creation refused")
+
+        monkeypatch.setattr(app.os, "symlink", _refuse)
+
+        with pytest.raises(OSError):
+            dgapp._do_delete_dupe(dupe, link_deleted=True, use_hardlinks=False, direct_deletion=True)
+
+        assert victim.exists(), "the file must survive when its replacement link cannot be made"
+        eq_(victim.read_text(), "same")
+
+    def test_failed_link_creation_leaves_no_temporary_files(self, tmpdir, monkeypatch):
+        dgapp, dupe, victim = self._linkable_dupe(tmpdir)
+        monkeypatch.setattr(app.os, "symlink", lambda *a, **kw: (_ for _ in ()).throw(OSError("nope")))
+
+        with pytest.raises(OSError):
+            dgapp._do_delete_dupe(dupe, link_deleted=True, use_hardlinks=False, direct_deletion=True)
+
+        leftovers = [p.name for p in Path(str(tmpdir)).iterdir() if "dupeguru-link" in p.name]
+        eq_(leftovers, [])
+
+    def test_failed_delete_removes_the_temporary_link(self, tmpdir, monkeypatch):
+        """If the link was made but the delete then failed, the temp link must not linger."""
+        dgapp, dupe, victim = self._linkable_dupe(tmpdir)
+        monkeypatch.setattr(app.os, "symlink", lambda src, dst, **kw: Path(dst).write_text("stand-in"))
+        monkeypatch.setattr(app.os, "remove", lambda p: (_ for _ in ()).throw(OSError("delete refused")))
+
+        with pytest.raises(OSError):
+            dgapp._do_delete_dupe(dupe, link_deleted=True, use_hardlinks=False, direct_deletion=True)
+
+        assert victim.exists()
+        leftovers = [p.name for p in Path(str(tmpdir)).iterdir() if "dupeguru-link" in p.name]
+        eq_(leftovers, [])
+
+    def test_windows_symlink_privilege_error_is_raised_not_swallowed(self, tmpdir, monkeypatch):
+        """It used to call view.show_message and continue, so the failure read as success.
+
+        Reporting through the view also happened on the job's worker thread, once per
+        file. Raising instead lets perform_on_marked record it and keep the file marked.
+        """
+        dgapp, dupe, victim = self._linkable_dupe(tmpdir)
+
+        def _eperm(*args, **kwargs):
+            raise OSError(errno.EPERM, "privilege not held")
+
+        monkeypatch.setattr(app.sys, "platform", "win32")
+        monkeypatch.setattr(app.os, "symlink", _eperm)
+
+        with pytest.raises(OSError, match="Developer Mode|SeCreateSymbolicLinkPrivilege"):
+            dgapp._do_delete_dupe(dupe, link_deleted=True, use_hardlinks=False, direct_deletion=True)
+
+        assert victim.exists()
+
+    def test_successful_link_replaces_the_deleted_file(self, tmpdir, monkeypatch):
+        """The happy path still works: original gone, link in its place."""
+        dgapp, dupe, victim = self._linkable_dupe(tmpdir)
+        created = {}
+
+        def _fake_symlink(src, dst, **kwargs):
+            created["src"] = src
+            Path(dst).write_text("link-to:" + str(src))
+
+        monkeypatch.setattr(app.os, "symlink", _fake_symlink)
+
+        dgapp._do_delete_dupe(dupe, link_deleted=True, use_hardlinks=False, direct_deletion=True)
+
+        assert victim.exists(), "the link should now occupy the original path"
+        assert victim.read_text().startswith("link-to:")
+        assert created["src"].endswith("keeper.txt")
+        leftovers = [p.name for p in Path(str(tmpdir)).iterdir() if "dupeguru-link" in p.name]
+        eq_(leftovers, [])
+
+    def test_unused_link_path_avoids_collisions(self, tmpdir):
+        base = Path(str(tmpdir)) / "f.txt"
+        base.write_text("x")
+        first = app.DupeGuru._unused_link_path(str(base))
+        eq_(first.name, "f.txt.dupeguru-link")
+        first.write_text("occupied")
+        second = app.DupeGuru._unused_link_path(str(base))
+        assert second != first
+        eq_(second.name, "f.txt.dupeguru-link1")
+
+    def test_delete_without_linking_is_unaffected(self, tmpdir):
+        dgapp, dupe, victim = self._linkable_dupe(tmpdir)
+        dgapp._do_delete_dupe(dupe, link_deleted=False, use_hardlinks=False, direct_deletion=True)
+        assert not victim.exists()
 
     def test_dirs_span_multiple_devices_single(self, tmpdir):
         # A single directory never triggers the multi-device warning.
