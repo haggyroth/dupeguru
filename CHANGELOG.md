@@ -9,6 +9,26 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Build and packaging steps no longer fail open** (`hscommon/build.py`, `package.py`): a
+  run of build steps could fail and report success, which is how a missing `pyrcc5` produced
+  an empty `dg_rc.py` (#50), an uninstaller matched nothing (#27) and a failed `makensis`
+  exited 0 (#63). The common cause is that `print_and_do` returns an exit code which is
+  silently ignorable, and callers ignored it. New `run_checked()` **raises** instead, so
+  ignoring a failure takes an explicit `except` rather than merely forgetting to look, and
+  its optional `produces=` asserts the artifact exists and is non-empty — the half an
+  exit-code check does not cover, since a tool can report success and write nothing.
+  Converted the steps that discarded their result: `hdiutil` (`build_dmg` printed
+  "Build Complete" regardless of whether a `.dmg` had been produced), the `cp`/`ln` before
+  it, `dpkg-buildpackage`, and `git archive`/`xz`. `main()` turns a `BuildError` into a
+  non-zero exit. Still not covered, and said so in `main()`'s docstring: `package_arch` runs
+  no subprocess at all, and the copy helpers report problems by printing.
+- **PyInstaller runs are `--clean`** (`package.py`): PyInstaller caches its analysis in the
+  work directory, separate from `dist/`. Clearing only `dist/` produced a build that logged
+  "checking Analysis", reused the stale TOC and shipped the *previous* run's Qt binding while
+  exiting 0 — a false pass that cost a verification round during the 4.7.1 work.
+
 ### Added
 
 - **The CI matrix shape is pinned by a test** (`tests/ci_workflow_test.py`): adding the PyQt5
