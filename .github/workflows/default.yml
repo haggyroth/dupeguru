@@ -27,11 +27,20 @@ jobs:
         # function signatures that are evaluated at import time on Python <= 3.13,
         # so 3.8 and 3.9 cannot import the package at all. See issue #22.
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        # qt-binding has to be a real matrix dimension, not just an include key. An include
+        # entry whose os and python-version both match an existing combination is *merged*
+        # into that job rather than creating a new one -- which silently turned the ubuntu
+        # 3.12 job into the PyQt5 leg instead of adding one alongside it. Declaring the
+        # default here means the pyqt5 include overwrites a matrix value, and GitHub then
+        # creates a separate job as intended.
+        qt-binding: [pyqt6]
         include:
           - os: windows-latest
             python-version: "3.12"
+            qt-binding: pyqt6
           - os: macos-latest
             python-version: "3.12"
+            qt-binding: pyqt6
           # The PyQt5 fallback. PyQt6 is the default binding; nothing in the tree imports a
           # binding directly, so PyQt5 stays supported. This leg swaps the binding outright
           # rather than setting QT_API, so it exercises qtpy's own selection with only PyQt5
@@ -74,14 +83,14 @@ jobs:
       - name: Upload coverage report
         # Not on the PyQt5 fallback leg: it is also ubuntu-latest/3.12, and a second upload
         # under the same artifact name fails the job.
-        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12' && !matrix.qt-binding
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12' && matrix.qt-binding != 'pyqt5'
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: coverage-xml
           path: coverage.xml
       - name: Upload Artifacts
         # Likewise: the fallback leg would upload a second "modules 3.12".
-        if: matrix.os == 'ubuntu-latest' && !matrix.qt-binding
+        if: matrix.os == 'ubuntu-latest' && matrix.qt-binding != 'pyqt5'
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: modules ${{ matrix.python-version }}
