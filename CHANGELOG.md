@@ -18,7 +18,10 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `core/scanner.py::_hash_files_parallel` — the code path #10 concerns, and previously the
   only way to check it was to have someone build by hand. It fails on the fingerprints of
   that failure mode (`bootstrapping phase`, `falling back to sequential`) as well as on a
-  wrong group count. It cannot check the GUI or the NSIS installer; those stay manual.
+  wrong group count, and on the absence of the hashing loop's own progress output —
+  without that last check it would pass whether or not the process pool ever ran, which
+  is exactly the false confidence it exists to prevent. It cannot check the GUI or the
+  NSIS installer; those stay manual.
 
 ### Fixed
 

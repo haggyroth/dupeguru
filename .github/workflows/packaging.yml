@@ -52,8 +52,11 @@ jobs:
           import pathlib, uuid
           d = pathlib.Path("scan-fixture"); d.mkdir(exist_ok=True)
           tag = uuid.uuid4().hex
-          for i in range(120):
-              payload = (f"{tag}-{i}-".encode() * 20000)   # ~0.5 MB
+          # >500 pairs on purpose. _hash_files_parallel only emits its "Hashing files N/M"
+          # progress every _BATCH_SIZE (500) files, and that message is the only externally
+          # visible proof the hashing loop ran at all. Small payloads keep this quick.
+          for i in range(700):
+              payload = (f"{tag}-{i}-".encode() * 700)     # ~5 KB
               (d / f"a{i}.bin").write_bytes(payload)
               (d / f"b{i}.bin").write_bytes(payload)
           PY
@@ -71,15 +74,22 @@ jobs:
           import json, sys, pathlib
           stats = json.load(open("scan-out.json"))["stats"]
           print("stats:", stats)
-          if stats["groups"] != 120:
-              sys.exit(f"::error::expected 120 groups, got {stats['groups']}")
+          if stats["groups"] != 700:
+              sys.exit(f"::error::expected 700 groups, got {stats['groups']}")
           err = pathlib.Path("scan-err.txt").read_text(errors="replace")
-          # These are the fingerprints of the issue #10 failure mode: a spawn child
-          # re-executing the program instead of running the worker.
+          # Fingerprints of the issue #10 failure mode: a spawn child re-executing the
+          # program instead of running the worker.
           for marker in ("bootstrapping phase", "falling back to sequential"):
               if marker in err:
                   sys.exit(f"::error::frozen build shows parallel-hashing trouble: {marker!r}")
-          print("frozen content scan OK: pool ran, no re-execution markers")
+          # Correct results alone do not show the process pool was used -- a scan that
+          # silently fell back, or never reached the hashing loop, also produces them. This
+          # message comes from the hashing loop itself, and the fallback path is excluded by
+          # the check above, so together they establish that the pool did the work.
+          if "Hashing files" not in err:
+              sys.exit("::error::no sign the parallel hashing loop ran; this test would not "
+                       "have detected a broken process pool")
+          print("frozen content scan OK: parallel hashing ran, no re-execution markers")
           PY
       - name: Upload frozen build
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
