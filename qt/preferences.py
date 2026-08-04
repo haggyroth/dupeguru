@@ -176,6 +176,7 @@ class Preferences(PreferencesBase):
 
         self.tableFontSize = get("TableFontSize", self.tableFontSize)
         self.reference_bold_font = get("ReferenceBoldFont", self.reference_bold_font)
+        self.details_dialog_preview_visible = get("DetailsDialogPreviewVisible", self.details_dialog_preview_visible)
         self.details_dialog_titlebar_enabled = get("DetailsDialogTitleBarEnabled", self.details_dialog_titlebar_enabled)
         self.details_dialog_vertical_titlebar = get(
             "DetailsDialogVerticalTitleBar", self.details_dialog_vertical_titlebar
@@ -247,6 +248,7 @@ class Preferences(PreferencesBase):
 
         self.tableFontSize = QApplication.font().pointSize()
         self.reference_bold_font = True
+        self.details_dialog_preview_visible = True
         self.details_dialog_titlebar_enabled = True
         self.details_dialog_vertical_titlebar = True
         self.details_table_delta_foreground_color = QColor(250, 20, 20)  # red
@@ -304,6 +306,7 @@ class Preferences(PreferencesBase):
 
         set_("TableFontSize", self.tableFontSize)
         set_("ReferenceBoldFont", self.reference_bold_font)
+        set_("DetailsDialogPreviewVisible", self.details_dialog_preview_visible)
         set_("DetailsDialogTitleBarEnabled", self.details_dialog_titlebar_enabled)
         set_("DetailsDialogVerticalTitleBar", self.details_dialog_vertical_titlebar)
         set_("DetailsDialogOverrideThemeIcons", self.details_dialog_override_theme_icons)
