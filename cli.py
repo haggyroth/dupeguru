@@ -51,7 +51,7 @@ import sys
 from pathlib import Path
 
 from core import fs, se
-from core.app import AppMode, DupeGuru
+from core.app import AppMode, DeleteStatus, DupeGuru, check_deletable
 from core.directories import AlreadyThereError, DirectoryState, InvalidPathError
 from core.scanner import ScanType
 from hscommon.jobprogress.job import Job
@@ -364,6 +364,17 @@ def _load_results_json(path: str) -> list[dict]:
     return groups
 
 
+# Short, path-free reasons for CLI output. check_deletable's own messages embed the path,
+# which the GUI problem dialog needs but which would be repeated here: problems are printed
+# as "skipped <path>: <reason>".
+_DELETE_STATUS_REASON = {
+    DeleteStatus.GONE: "file no longer exists",
+    DeleteStatus.SYMLINK: "skipped: path is a symlink",
+    DeleteStatus.UNREADABLE: "skipped: could not read file metadata",
+    DeleteStatus.CHANGED: "skipped: file changed since last scan",
+}
+
+
 def _saved_partial_counts(groups: list[dict]) -> tuple[int, bool]:
     """Return (partial_count, recorded) for the deletable entries in saved results.
 
@@ -400,19 +411,11 @@ def _delete_from_saved_results(
             if dupe.get("is_ref_folder"):
                 continue
             p = Path(dupe["path"])
-            if not p.exists():
-                problems.append((dupe["path"], "file no longer exists"))
-                continue
-            if p.is_symlink():
-                problems.append((dupe["path"], "skipped: path is a symlink"))
-                continue
-            try:
-                st = p.stat()
-            except OSError as e:
-                problems.append((dupe["path"], str(e)))
-                continue
-            if st.st_size != dupe["size"] or abs(st.st_mtime - dupe["mtime"]) > 2:
-                problems.append((dupe["path"], "skipped: file changed since last scan"))
+            status, _ = check_deletable(p, dupe["size"], dupe["mtime"])
+            if status != DeleteStatus.OK:
+                # Unlike the live scan path, a vanished file is worth reporting here: these
+                # results may be days old, and the user explicitly asked to delete it.
+                problems.append((dupe["path"], _DELETE_STATUS_REASON[status]))
                 continue
             try:
                 if direct_delete:
