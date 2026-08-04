@@ -18,10 +18,11 @@ breakage that are silent at runtime. They do not attempt to assert layout or beh
 
 import pytest
 
-# Skipped wholesale where no Qt binding is present. requirements.txt installs one only off
-# Linux (`sys_platform != 'linux'`), so the Linux CI legs report these as skipped, not failed.
-# qtpy raises QtBindingsNotFoundError when it can find no binding, and that is an ImportError
-# subclass, so importorskip handles it.
+# requirements.txt now installs a binding on every platform, so these are expected to run
+# everywhere, Linux included. The guard stays because a Qt binding is still not strictly
+# required to use the CLI: qtpy raises QtBindingsNotFoundError when it finds none, and that
+# is an ImportError subclass, so importorskip turns a bindings-free checkout into skips
+# rather than errors.
 pytest.importorskip("qtpy.QtWidgets", reason="no Qt bindings installed")
 
 

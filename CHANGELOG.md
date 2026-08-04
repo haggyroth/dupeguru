@@ -11,6 +11,20 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **PyQt6 is now the default Qt binding, with PyQt5 as a supported fallback** (issue #27,
+  phase 3b): `requirements.txt` installs PyQt6; `requirements-pyqt5.txt` installs the
+  fallback. Nothing in the tree imports a binding directly, so both work unchanged, and CI
+  runs a PyQt5 leg — with PyQt6 uninstalled rather than merely overridden by `QT_API` — so
+  the fallback cannot rot unnoticed. The full suite passes identically under both, and the
+  app was verified to construct, load all resources, build every dialog and run its event
+  loop on each.
+  **The Linux Qt exclusion is gone.** `requirements.txt` carried
+  `PyQt5 ...; sys_platform != 'linux'` because PyQt5 lacked usable Linux wheels; PyQt6 ships
+  manylinux wheels, so Linux installs a binding like everything else. The practical effect is
+  that the Qt tests now run on the Linux legs, which previously skipped them — the coverage
+  gap that let `--full-verify` ship unreachable from the GUI. Qt wheels do not bundle the
+  system libraries Qt links against, so CI installs `libegl1`, `libgl1`, `libxkbcommon-x11-0`
+  and `libdbus-1-3`; this is documented in the README for bare Linux images generally.
 - **Qt is imported through qtpy rather than a binding directly** (`qt/`, `hscommon/`,
   `run.py`, issue #27, phase 3a): 90 import lines across 41 files moved from `PyQt5.*` to
   `qtpy.*`, and the signal/slot names qtpy does not export followed — 25 `pyqtSignal` and 48

@@ -1,0 +1,14 @@
+# The PyQt5 fallback.
+#
+# PyQt6 is the default binding and is what requirements.txt installs. Nothing in the tree
+# imports a binding directly -- everything goes through qtpy -- so PyQt5 remains supported,
+# and CI runs a leg against it so the fallback cannot rot unnoticed.
+#
+# Use it instead of PyQt6 with:
+#     pip install -r requirements.txt -r requirements-pyqt5.txt
+#     QT_API=pyqt5 python run.py
+#
+# QT_API is only needed when both bindings are installed; qtpy selects whichever it finds
+# otherwise. Note PyQt5 has no wheels for some newer platform and Python combinations, which
+# is why it is not the default.
+PyQt5>=5.15.0,<6.0
