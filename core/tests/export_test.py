@@ -53,7 +53,7 @@ def test_xhtml_handles_no_rows():
     path = export_to_xhtml(COLNAMES, [])
     content = open(path, encoding="utf-8").read()
     assert "<h1>dupeGuru Results</h1>" in content
-    assert '<td class=' not in content
+    assert "<td class=" not in content
 
 
 def test_xhtml_rejects_rows_of_the_wrong_width():
