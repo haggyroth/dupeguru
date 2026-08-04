@@ -9,6 +9,41 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **`--filter-hardlinks` now defaults off, matching the GUI** (`cli.py`, issue #21): the CLI
+  defaulted it *on* while the GUI defaults `ignore_hardlink_matches` off, so the same folders
+  scanned through the two front ends returned different results and nothing said so. The CLI
+  now matches the GUI; pass `--filter-hardlinks` to opt in. **This changes CLI behaviour**:
+  scripts relying on the old default need the flag added.
+- **`--rehash-ignore-mtime` renamed to `--trust-cache-ignore-mtime`** (`cli.py`, issue #21):
+  the old name and its help text ("Always rehash files even if their modification time is
+  unchanged") described the opposite of the effect. The flag sets `FilesDB.ignore_mtime`,
+  which drops `mtime_ns` from the cache lookup and so makes hits *more* likely — fewer
+  rehashes, and specifically reuse of a cached digest for a file edited without changing size.
+  The old spelling still works as an alias.
+
+### Fixed
+
+- **Declared Python support is now consistent** (`setup.cfg`, `tox.ini`, issue #22):
+  `python_requires` said `>=3.7`, classifiers stopped at 3.10, `tox.ini` listed py37–py311,
+  and CI tested 3.10–3.14. 3.7 was claimed by three of them and tested by none, and the code
+  cannot import below 3.10. All sources now say 3.10–3.14. `tests_require` also said
+  `pytest >=6,<7` while `requirements-extra.txt` said `>=7,<8`; the two ranges did not overlap.
+
+### Removed
+
+- **`.tx/`** (issue #31): the Transifex client config targeted the upstream maintainer's
+  project (`voltaicideas/dupeguru-1`). The workflow that used it automatically is long gone,
+  but a developer running `tx push` would still have written into somebody else's resource.
+  This fork does not manage translations.
+
+### Security
+
+- **`pre-commit/action` is now SHA-pinned** (`.github/workflows/default.yml`, issue #31): it
+  was the only action referenced by mutable tag while every other action in both workflows is
+  pinned to a full commit SHA. That job runs over the whole checkout.
+
 ## [4.5.0] - 2026-08-03
 
 Minor rather than patch: `--dry-run` changes behaviour, `--allow-partial-matches` is new, and

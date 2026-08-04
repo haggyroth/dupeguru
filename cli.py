@@ -463,14 +463,17 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--filter-hardlinks",
         action="store_true",
-        default=True,
-        help="Exclude hardlinked file pairs from results (default: on).",
+        default=False,
+        help=(
+            "Exclude hardlinked file pairs from results. Off by default, matching the GUI: "
+            "the same folders scanned either way return the same results."
+        ),
     )
     parser.add_argument(
         "--no-filter-hardlinks",
         dest="filter_hardlinks",
         action="store_false",
-        help="Include hardlinked file pairs in results.",
+        help="Include hardlinked file pairs in results (the default).",
     )
 
     # --- Scanner knobs -------------------------------------------------------
@@ -528,10 +531,17 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     knobs.add_argument(
-        "--rehash-ignore-mtime",
+        "--trust-cache-ignore-mtime",
+        "--rehash-ignore-mtime",  # old spelling, kept so existing scripts keep working
+        dest="trust_cache_ignore_mtime",
         action="store_true",
         default=False,
-        help="Always rehash files even if their modification time is unchanged.",
+        help=(
+            "Reuse a cached hash for any file whose size matches, even if its modification "
+            "time changed. Faster on large rescans, but will miss an edit that left the size "
+            "unchanged. The old name for this was --rehash-ignore-mtime, which described the "
+            "opposite of what it does."
+        ),
     )
 
     # --- Output format -------------------------------------------------------
@@ -791,7 +801,8 @@ def main(argv=None) -> int:
     app.options["size_threshold"] = args.min_size * 1024  # KB -> bytes
     app.options["large_size_threshold"] = args.max_size * 1024 * 1024  # MB -> bytes
     app.options["big_file_size_threshold"] = args.partial_hash_threshold * 1024 * 1024  # MiB -> bytes
-    app.options["rehash_ignore_mtime"] = args.rehash_ignore_mtime
+    # The core option keeps its original name; only the CLI spelling changed.
+    app.options["rehash_ignore_mtime"] = args.trust_cache_ignore_mtime
 
     # Add directories -----------------------------------------------------
     for folder in folders:

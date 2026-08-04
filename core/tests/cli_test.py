@@ -717,3 +717,58 @@ class TestInvocation:
         assert 'if __name__ == "__main__":' in source
         body = source.split('if __name__ == "__main__":', 1)[0]
         assert "sys.exit(main())" not in body, "main() must not be invoked at import time"
+
+
+# ---------------------------------------------------------------------------
+# CLI defaults must agree with the GUI, and flag names must describe reality (issue #21)
+# ---------------------------------------------------------------------------
+
+
+class TestScannerFlagSemantics:
+    def test_hardlink_filtering_defaults_match_the_gui(self, tmp_path):
+        """Same folders, same results, whichever front end you use.
+
+        The CLI defaulted --filter-hardlinks on while the GUI defaults
+        ignore_hardlink_matches off, so a CLI scan silently dropped hardlinked pairs a
+        GUI scan would report. Compared against the live core default rather than a
+        copy of it, so the two cannot drift apart again.
+        """
+        from core.tests.base import TestApp
+
+        gui_default = TestApp().app.options["ignore_hardlink_matches"]
+        args = cli._build_parser().parse_args([str(tmp_path)])
+        eq_(args.filter_hardlinks, gui_default)
+        eq_(gui_default, False)
+
+    def test_filter_hardlinks_flag_still_opts_in(self, tmp_path):
+        args = cli._build_parser().parse_args([str(tmp_path), "--filter-hardlinks"])
+        eq_(args.filter_hardlinks, True)
+
+    def test_trust_cache_flag_has_an_accurate_name(self, tmp_path):
+        """The old --rehash-ignore-mtime described the opposite of its effect.
+
+        It sets FilesDB.ignore_mtime, which drops mtime from the cache lookup and so
+        makes hits *more* likely -- fewer rehashes, not more.
+        """
+        args = cli._build_parser().parse_args([str(tmp_path), "--trust-cache-ignore-mtime"])
+        assert args.trust_cache_ignore_mtime is True
+
+    def test_old_rehash_spelling_still_works(self, tmp_path):
+        """Existing scripts must not break on the rename."""
+        args = cli._build_parser().parse_args([str(tmp_path), "--rehash-ignore-mtime"])
+        assert args.trust_cache_ignore_mtime is True
+
+    def test_trust_cache_flag_defaults_off(self, tmp_path):
+        args = cli._build_parser().parse_args([str(tmp_path)])
+        eq_(args.trust_cache_ignore_mtime, False)
+
+    def test_trust_cache_flag_reaches_the_core_option(self, tmp_path, monkeypatch):
+        captured = {}
+
+        def _capture(app, verbose, progress_json=False):
+            captured["ignore_mtime"] = app.options["rehash_ignore_mtime"]
+            app.results.groups = []
+
+        monkeypatch.setattr(cli, "_run_scan", _capture)
+        main([str(tmp_path), "--trust-cache-ignore-mtime"])
+        eq_(captured["ignore_mtime"], True)
