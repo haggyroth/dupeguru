@@ -1,3 +1,11 @@
+=== 4.5.0 (2026-08-03)
+* Fix delete-and-replace-with-link destroying the file when the link could not be created
+* Fix the hash caches serving digests made by a different algorithm after an xxhash change
+* Fix dupeguru-scan --help crashing on a Windows console
+* Make the documented CLI invocations work, including python -m dupeguru
+* Add --allow-partial-matches; --dry-run now prevents deletion instead of being ignored
+* Clear Cache now clears the cache scans actually read, and that cache is purged
+
 === 4.4.1 (2026-08-03)
 * Fix the update check crashing when a release has a human-readable title
 * Add test coverage for core/util.py, which previously had none

@@ -9,6 +9,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [4.5.0] - 2026-08-03
+
+Minor rather than patch: `--dry-run` changes behaviour, `--allow-partial-matches` is new, and
+`python -m dupeguru` starts working.
+
+The headline is the deletion path. 4.4.x could destroy a file and leave nothing in its place on
+a default Windows install, and report it as a success.
+
 ### Fixed (safety)
 
 - **Delete-and-replace-with-link no longer destroys the file when the link cannot be made**
@@ -299,6 +307,7 @@ fork no longer routes anyone or anything upstream, and CI runs for the first tim
 
 See `git log` for changes prior to this changelog.
 
-[Unreleased]: https://github.com/haggyroth/dupeguru/compare/v4.4.1...HEAD
+[Unreleased]: https://github.com/haggyroth/dupeguru/compare/v4.5.0...HEAD
+[4.5.0]: https://github.com/haggyroth/dupeguru/compare/v4.4.1...v4.5.0
 [4.4.1]: https://github.com/haggyroth/dupeguru/compare/v4.4.0...v4.4.1
 [4.4.0]: https://github.com/haggyroth/dupeguru/releases/tag/v4.4.0
