@@ -243,8 +243,17 @@ Section "Uninstall"
   RMDir /r "$SMPROGRAMS\$StartMenuFolder"
 
   ; Remove Files & Folders in Install Folder
+  ; PyInstaller 6.x onedir puts the entire payload under _internal, so removing
+  ; that one directory covers the app packages, the Qt binding and every bundled
+  ; DLL. Do not enumerate package names here: which binding qtpy freezes is a
+  ; property of the build machine, and naming the wrong one strands the runtime.
+  RMDir /r "$INSTDIR\_internal"
+
+  ; Layout used by PyInstaller 5.x and earlier. Kept so that uninstalling over an
+  ; install produced by <= 4.7.0 still cleans up; no-ops on a current install.
   RMDir /r "$INSTDIR\core"
   RMDir /r "$INSTDIR\help"
+  RMDir /r "$INSTDIR\PyQt5"
   RMDir /r "$INSTDIR\PyQt6"
   RMDir /r "$INSTDIR\qt"
   RMDir /r "$INSTDIR\locale"

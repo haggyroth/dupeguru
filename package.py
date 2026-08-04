@@ -29,6 +29,17 @@ from hscommon.build import (
 ENTRY_SCRIPT = "run.py"
 LOCALE_DIR = "build/locale"
 HELP_DIR = "build/help"
+DEFAULT_QT_API = "pyqt6"
+
+
+def pin_qt_binding():
+    # qtpy picks whichever binding it finds first, and it prefers PyQt5 over PyQt6. On a build
+    # machine with both installed that silently freezes the fallback binding instead of the
+    # default one, which also leaves the uninstaller looking for a directory that is not there.
+    # Set QT_API explicitly so the frozen build does not depend on what else is on the machine.
+    # An override is honoured, so the PyQt5 fallback can still be packaged on purpose.
+    api = os.environ.setdefault("QT_API", DEFAULT_QT_API)
+    print("Freezing against Qt binding: {}".format(api))
 
 
 def parse_args():
@@ -169,6 +180,7 @@ def package_windows():
         print("Error creating version info file, exiting...")
         return
     # run pyinstaller from here:
+    pin_qt_binding()
     import PyInstaller.__main__
 
     # UCRT dlls are included if the system has the windows kit installed
@@ -202,6 +214,7 @@ def package_macos():
         print("Exiting")
         return
     # run pyinstaller from here:
+    pin_qt_binding()
     import PyInstaller.__main__
 
     PyInstaller.__main__.run(
