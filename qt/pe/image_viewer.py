@@ -196,7 +196,10 @@ class BaseController(QObject):
         else:
             self.referencePixmap = QPixmap(str(ref.path))
             self.parent.verticalToolBar.buttonImgSwap.setEnabled(True)
-            if ref.dimensions != dupe.dimensions:
+            # Compared on the loaded pixmaps rather than a `dimensions` attribute, which
+            # only picture-mode files carry. Equivalent for those, and lets this controller
+            # serve the standard-mode preview pane as well.
+            if self.referencePixmap.size() != self.selectedPixmap.size():
                 self.same_dimensions = False
             self.parent.verticalToolBar.buttonNormalSize.setEnabled(True)
         self.updateButtonsAsPerDimensions(previous_same_dimensions)
@@ -611,7 +614,7 @@ class GraphicsViewController(BaseController):
         else:
             self.referencePixmap = QPixmap(str(ref.path))
             self.parent.verticalToolBar.buttonImgSwap.setEnabled(True)
-            if ref.dimensions != dupe.dimensions:
+            if self.referencePixmap.size() != self.selectedPixmap.size():
                 self.same_dimensions = False
             self.parent.verticalToolBar.buttonNormalSize.setEnabled(True)
         self.updateButtonsAsPerDimensions(previous_same_dimensions)

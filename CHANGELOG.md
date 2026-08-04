@@ -9,6 +9,22 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **A preview pane in standard mode** (`qt/preview_pane.py`, `qt/se/details_dialog.py`): the
+  details dialog was a bare table outside picture mode. It now leads with a preview, in the
+  spirit of the Windows Explorer one — images are shown side by side with their reference,
+  and everything else gets its system icon plus location, size, modified and created dates.
+  The pane is collapsible from a "Show preview" checkbox, and the state persists.
+  The image half reuses picture mode's viewer rather than reimplementing it, so zoom, swap
+  and best-fit behave identically in both modes. That required removing the viewer's one
+  picture-mode coupling: it compared a `dimensions` attribute that only picture files carry,
+  and now compares the loaded pixmaps' sizes instead — equivalent for pictures, and available
+  for any file.
+  Creation date is shown only where the platform actually has one. On Linux `st_ctime` is the
+  inode change time rather than creation, so the row is hidden there instead of displaying a
+  date that would change when a file is renamed.
+
 ### Fixed
 
 - **Build and packaging steps no longer fail open** (`hscommon/build.py`, `package.py`): a
