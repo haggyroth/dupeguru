@@ -26,11 +26,46 @@ from typing import Any, AnyStr, Callable, Dict, List, Union
 from hscommon.plat import ISWINDOWS
 
 
+class BuildError(Exception):
+    """A build or packaging step failed, or produced nothing."""
+
+
 def print_and_do(cmd: str) -> int:
-    """Prints ``cmd`` and executes it in the shell."""
+    """Prints ``cmd`` and executes it in the shell.
+
+    Returns the exit code. Note that this **fails open**: ignoring the return value is
+    silent, and callers have done exactly that repeatedly. Prefer :func:`run_checked` for
+    anything whose failure should stop the build.
+    """
     print(cmd)
     p = Popen(cmd, shell=True)
     return p.wait()
+
+
+def run_checked(cmd: str, produces: Union[os.PathLike, None] = None, min_size: int = 1) -> None:
+    """Run ``cmd``, raising :class:`BuildError` unless it succeeds and produces its artifact.
+
+    The counterpart to :func:`print_and_do`, and the difference is the point. print_and_do
+    returns a code that is silently ignorable, and build steps in this project have been
+    ignoring it: a missing ``pyrcc5`` produced an empty ``dg_rc.py`` and a "build succeeded"
+    (issue #50), an uninstaller matched nothing and reported success (#27), and a failed
+    ``makensis`` exited 0 with no installer (#63). Each was invisible because the surrounding
+    output looked normal.
+
+    This raises instead, so ignoring a failure requires actively catching it rather than
+    merely forgetting to look. ``produces`` additionally asserts the artifact exists and is
+    not empty, because a tool can report success and still write nothing -- which is the half
+    an exit-code check alone does not cover.
+    """
+    result = print_and_do(cmd)
+    if result != 0:
+        raise BuildError(f"command failed with exit code {result}: {cmd}")
+    if produces is None:
+        return
+    if not op.exists(produces):
+        raise BuildError(f"command reported success but did not create {produces}: {cmd}")
+    if op.isfile(produces) and op.getsize(produces) < min_size:
+        raise BuildError(f"command created {produces} but it is empty (< {min_size} bytes): {cmd}")
 
 
 def _perform(src: os.PathLike, dst: os.PathLike, action: Callable, actionname: str) -> None:
@@ -152,16 +187,20 @@ def build_dmg(app_path: os.PathLike, destfolder: os.PathLike) -> None:
     workpath = tempfile.mkdtemp()
     dmgpath = op.join(workpath, plist["CFBundleName"])
     os.mkdir(dmgpath)
-    print_and_do('cp -R "{}" "{}"'.format(app_path, dmgpath))
-    print_and_do('ln -s /Applications "%s"' % op.join(dmgpath, "Applications"))
+    run_checked('cp -R "{}" "{}"'.format(app_path, dmgpath))
+    run_checked('ln -s /Applications "%s"' % op.join(dmgpath, "Applications"))
     dmgname = "{}_osx_{}.dmg".format(
         plist["CFBundleName"].lower().replace(" ", "_"),
         plist["CFBundleVersion"].replace(".", "_"),
     )
+    dmgpath_out = op.join(destfolder, dmgname)
     print("Building %s" % dmgname)
     # UDBZ = bzip compression. UDZO (zip compression) was used before, but it compresses much less.
-    print_and_do(
-        'hdiutil create "{}" -format UDBZ -nocrossdev -srcdir "{}"'.format(op.join(destfolder, dmgname), dmgpath)
+    # Checked, and the .dmg asserted to exist: this used to print "Build Complete" whether or
+    # not hdiutil had produced anything.
+    run_checked(
+        'hdiutil create "{}" -format UDBZ -nocrossdev -srcdir "{}"'.format(dmgpath_out, dmgpath),
+        produces=dmgpath_out,
     )
     print("Build Complete")
 

@@ -16,7 +16,9 @@ import distro
 import re
 
 from hscommon.build import (
+    BuildError,
     print_and_do,
+    run_checked,
     copy_packages,
     build_debian_changelog,
     get_module_version,
@@ -151,9 +153,10 @@ def package_debian_distribution(distribution):
     )
     shutil.copy(op.join("images", "dgse_logo_128.png"), srcpath)
     os.chdir(destpath)
-    cmd = "dpkg-buildpackage -F -us -uc"
-    os.system(cmd)
-    os.chdir("../..")
+    try:
+        run_checked("dpkg-buildpackage -F -us -uc")
+    finally:
+        os.chdir("../..")
 
 
 def package_debian():
@@ -182,8 +185,8 @@ def package_source_txz():
     base_path = os.getcwd()
     build_path = op.join(base_path, "build")
     dest = op.join(build_path, name)
-    print_and_do("git archive -o {} HEAD".format(dest))
-    print_and_do("xz {}".format(dest))
+    run_checked("git archive -o {} HEAD".format(dest), produces=dest)
+    run_checked("xz {}".format(dest), produces=dest + ".xz")
 
 
 def package_windows():
@@ -224,6 +227,7 @@ def package_windows():
             "--name=dupeguru-win{0}".format(bits),
             "--windowed",
             "--noconfirm",
+            "--clean",
             "--icon=images/dgse_logo.ico",
             "--add-data={0};locale".format(LOCALE_DIR),
             "--add-data={0};help".format(HELP_DIR),
@@ -273,6 +277,7 @@ def package_macos():
             "--name=dupeguru",
             "--windowed",
             "--noconfirm",
+            "--clean",
             "--icon=images/dupeguru.icns",
             "--osx-bundle-identifier=com.hardcoded-software.dupeguru",
             "--add-data={0}:locale".format(LOCALE_DIR),
@@ -285,12 +290,22 @@ def package_macos():
 def main():
     """Return a process exit status: 0 on success, non-zero when packaging failed.
 
-    Previously this returned None regardless, so `python package.py` exited 0 even when no
-    artifact had been produced. The Windows and macOS paths report properly; the Linux
-    packagers still return None and are treated as success, which is unchanged behaviour
-    rather than a claim that they detect failure.
+    This returned None regardless, so `python package.py` exited 0 even when no artifact had
+    been produced. Failures now arrive two ways: the Windows and macOS paths return a status
+    directly, and any step run through run_checked raises BuildError, which is caught here.
+
+    Still not covered: package_arch does no subprocess work at all, and the copy/filereplace
+    helpers report problems by printing rather than raising, so a packaging run can still be
+    incomplete without failing. Narrower than it was, not airtight.
     """
-    args = parse_args()
+    try:
+        return _dispatch(parse_args())
+    except BuildError as e:
+        print("Packaging failed: {0}".format(e))
+        return 1
+
+
+def _dispatch(args):
     if args.src_pkg:
         print("Creating source package for dupeGuru")
         return package_source_txz() or 0
