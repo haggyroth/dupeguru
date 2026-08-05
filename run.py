@@ -17,7 +17,7 @@ from qt import resources
 from qt.error_report_dialog import install_excepthook
 from qt.util import setup_qt_logging, create_qsettings
 from qt.platform import BASE_PATH
-from core import __version__, __appname__
+from core import __version__, __appname__, __orgname__
 
 # SIGQUIT is not defined on Windows
 if sys.platform == "win32":
@@ -47,7 +47,7 @@ def setup_signals():
 
 def main():
     app = QApplication(sys.argv)
-    QCoreApplication.setOrganizationName("Hardcoded Software")
+    QCoreApplication.setOrganizationName(__orgname__)
     QCoreApplication.setApplicationName(__appname__)
     QCoreApplication.setApplicationVersion(__version__)
     setup_qt_logging()
