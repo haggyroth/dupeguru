@@ -1,3 +1,9 @@
+=== 4.9.0 (2026-08-04)
+* Large picture scans no longer run out of memory holding block signatures
+* Compare pictures around fourteen times faster
+* Analyze pictures on several cores instead of one
+* Read and write the picture cache in batches rather than one row at a time
+
 === 4.8.0 (2026-08-04)
 * Add a preview pane to standard mode: images side by side, icon and details for other files
 * Fix packaging steps reporting success when they had produced nothing

@@ -20,10 +20,10 @@ it renders links for *historical* upstream ticket numbers in `help/changelog`. D
 | | |
 |---|---|
 | Branch | `master` (not `main`) |
-| Version | 4.8.0, released |
-| Releases | v4.4.0, v4.4.1, v4.5.0, v4.6.0, v4.7.0, v4.7.1, v4.8.0 |
+| Version | 4.9.0, released |
+| Releases | v4.4.0, v4.4.1, v4.5.0, v4.6.0, v4.7.0, v4.7.1, v4.8.0, v4.9.0 |
 | Issues | 26 closed, 1 open |
-| Tests | **887 passing, 6 skipped** on macOS. Windows/Linux counts differ (see below) |
+| Tests | **919 passing, 6 skipped** on macOS. Windows/Linux counts differ (see below) |
 | Qt bindings | PyQt6 by default, PyQt5 as a fallback with its own CI leg |
 | CI | Linux on 3.10 / 3.12 / 3.14, plus Windows, macOS and a PyQt5 leg; `master` is protected |
 
@@ -75,9 +75,9 @@ move and a green run looks different.
 | 3 Windows junction tests | run | **skip** | **skip** |
 | 1 case-sensitivity test | skip | skip (APFS is case-insensitive) | run |
 | 2 exclude union-mode tests | skip | skip | skip |
-| **Totals** | 890 / 3 skipped | **887 / 6 skipped** | 888 / 5 skipped |
+| **Totals** | 922 / 3 skipped | **919 / 6 skipped** | 920 / 5 skipped |
 
-893 tests collected in total. The macOS column is measured; the other two are that total
+925 tests collected in total. The macOS column is measured; the other two are that total
 less the tests their platform skips, and were last measured on CI at #56. If a count is
 off by a little, check which group changed rather than assuming the suite broke.
 
