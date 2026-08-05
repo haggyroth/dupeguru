@@ -1,3 +1,14 @@
+=== 4.10.0 (2026-08-05)
+* Optionally remember folder listings and picture comparisons between scans, so rescanning an unchanged drive is near-instant
+* Fix duplicate folders being impossible to delete
+* Fix scans getting slower the more the application was used
+* Fix unplugging a drive discarding everything cached from it
+* Fix copying or moving a scanned folder abandoning the rest of the batch
+* Picture mode now works from the command line, with an option to match resized copies
+* Build Windows installers and macOS disk images automatically
+* Name the icon-only buttons so screen readers can announce them
+* Fix number formatting falling back to a default locale on macOS
+
 === 4.9.0 (2026-08-04)
 * Large picture scans no longer run out of memory holding block signatures
 * Compare pictures around fourteen times faster
