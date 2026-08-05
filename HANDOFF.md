@@ -167,16 +167,56 @@ file and set `PYTHONPATH` to the repo root.
 ## Packaging
 
 Nothing here has ever shipped a binary — every release has zero assets — so packaging bugs
-are latent rather than live. `.github/workflows/packaging.yml` is **manual only**
-(`workflow_dispatch`): it freezes the CLI on Windows and macOS and runs a real content scan
-through the frozen binary, which is the only automated way to exercise the process-pool path
-that issue #10 concerns.
+are latent rather than live. That is a real property, not an oversight: the moment a release
+carries an installer, every bug below stops being theoretical. Attaching binaries to a release
+should be a deliberate decision with a manual pass on both platforms first, not a side effect
+of tagging. `.github/workflows/packaging.yml` is **manual only** (`workflow_dispatch`) for
+that reason, and has two jobs:
 
-Two things it cannot do, and that therefore still need a person: launch the GUI (the symptom
-in #10 is extra windows), and run the NSIS installer/uninstaller (#27's `setup.nsi` item).
+- **`freeze`** — freezes the *CLI* on Windows and macOS and runs a real content scan through
+  the frozen binary. This is the only automated way to exercise the process-pool path that
+  issue #10 concerned.
+- **`applications`** — builds the actual deliverables: the NSIS installer on Windows
+  (`dist/dupeGuru_win*_*.exe`) and a disk image on macOS (`dist-dmg/*.dmg`), uploaded as
+  artifacts. It runs `build.py --modules --loc --doc` first, because `package.py` will
+  happily produce an app with no translations and no help if those have not run, and then
+  asserts an artifact of plausible size exists — `package.py` exiting 0 is not proof it
+  wrote anything (that was #63). The macOS side uploads a `.dmg` rather than the `.app`:
+  GitHub zips artifacts and zip does not carry the executable bit, so a bare bundle would
+  download un-runnable.
 
-Findings from the first real packaging run, on macOS with PyInstaller 6.21 — worth knowing
-before anyone "fixes" #10 again:
+`tests/packaging_test.py` pins that job's shape — both platforms present, resources built
+before packaging, a `.dmg` and not a bare `.app`, and the workflow staying manual — so those
+properties have to be changed on purpose.
+
+Two things CI still cannot do, and that therefore need a person: launch the GUI, and run the
+NSIS installer/uninstaller end to end.
+
+To build locally on macOS:
+
+```
+python build.py --modules && python build.py --loc && python build.py --doc
+python package.py
+python -c "from hscommon.build import build_dmg; build_dmg('dist/dupeguru.app', 'dist-dmg')"
+```
+
+Findings from the first real *application* build on macOS (PyInstaller 6.21) — both were
+invisible to every test that does not open a built bundle's `Info.plist`:
+
+- **PyInstaller writes no `CFBundleVersion` at all.** `build_dmg` indexed it directly and died
+  with `KeyError` *after* the slow part had already succeeded. It now falls back through
+  `CFBundleShortVersionString` to `"unknown"`.
+- **`CFBundleShortVersionString` was left at `0.0.0`**, so a 4.9.0 build reported itself as
+  0.0.0 in Finder and in the About box. `package.py::stamp_macos_bundle_version` now writes
+  both keys from `core.__version__` after PyInstaller runs.
+
+Verified end to end on macOS at 4.9.0: `dupeguru_osx_4_9_0.dmg` (34M) mounts, contains the app
+plus the `/Applications` symlink, preserves the executable bit, reports 4.9.0, and the app
+launches clean with PyQt6 bundled and `locale/` and `help/` present.
+
+Findings from the earlier *CLI* freeze run, worth knowing before anyone "fixes" #10 again
+(it is closed, and was closed on evidence from a real Windows build — 198,000 files scanned
+with no extra windows):
 
 - The **frozen CLI is not affected**. Measured: 11 concurrent worker processes, 300 groups
   found, exit 1, no re-execution markers. `cli.py` imports at module scope, so anything that
@@ -200,20 +240,13 @@ nobody is running 4.4.0.
 
 ## Open issues
 
-- **[#10](https://github.com/haggyroth/dupeguru/issues/10)** — parallel hashing has no
-  `freeze_support()`. The only remaining bug, and deliberately unfixed: it manifests *only* in
-  a frozen build, so from a source checkout `sys.frozen` is unset and the call is a no-op.
-  Writing the fix without a PyInstaller run to test it would mean shipping something
-  unverified and calling it done. Pair it with actual packaging work. Note macOS packaging
-  differs from Windows, so a fix verified on one doesn't prove the other.
-- **[#27](https://github.com/haggyroth/dupeguru/issues/27)** — PyQt6 alongside PyQt5, with
-  PyQt6 as the default and PyQt5 as the fallback. Phased: **phase 0** (Qt smoke tests, #52)
-  **phase 1** (#53), **phase 2** (#54), **phase 3a** (#55) and **phase 3b** (#56) are all
-  done: PyQt6 is the default binding, PyQt5 is a supported fallback with its own CI leg, and
-  nothing in the tree imports a binding directly. What remains of #27 is **packaging** — and
-  that half is unverifiable here, since nobody can run a frozen build; see #10.
-- **[#28](https://github.com/haggyroth/dupeguru/issues/28)** — resumable scans. The largest
-  item; the hash cache already delivers most of the practical benefit.
+- **[#28](https://github.com/haggyroth/dupeguru/issues/28)** — resumable scans. The only one
+  left, and the largest item; the hash cache already delivers most of the practical benefit.
+
+Closed, but the reasoning is worth keeping: **#10** (`freeze_support()`) and **#27** (PyQt6
+alongside PyQt5) both needed a real frozen build to settle, which is why they sat open so
+long. #27 was phased across #52–#56; PyQt6 is now the default binding with PyQt5 a supported
+fallback on its own CI leg, and nothing in the tree imports a binding directly.
 
 **Read the code before the issue text.** #25 and #26 were both written against a state of the
 world that had already moved by the time they were picked up — #25 still asserted `--dry-run`
