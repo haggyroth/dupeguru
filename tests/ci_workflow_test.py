@@ -111,3 +111,34 @@ def test_artifact_uploads_exclude_the_fallback_leg():
             f"upload step {step.get('name')!r} must exclude the fallback leg by value; "
             f"testing for the key's presence suppresses the wrong job. Found: {condition!r}"
         )
+
+
+def test_every_job_runs_with_least_privilege_permissions():
+    """A job with no `permissions:` block inherits the repository default.
+
+    That default is `write` unless someone changes it, which hands a token able to push to
+    master and edit releases to jobs that `pip install` a large third-party dependency tree.
+    Nothing in these workflows needs to write contents, so an absent block is an oversight
+    rather than a choice -- and an invisible one, because CI stays green either way.
+
+    Checked per job against the effective value (job-level overrides workflow-level) rather
+    than against a pinned list, so a newly added workflow or job cannot slip in without a
+    decision. Scopes other than `contents` are left alone: CodeQL genuinely needs
+    `security-events: write` to upload its results.
+    """
+    workflows = sorted(WORKFLOW.parent.glob("*.yml"))
+    assert workflows, "no workflows found; the glob or the path is wrong"
+    for path in workflows:
+        workflow = yaml.safe_load(path.read_text(encoding="utf-8"))
+        default = workflow.get("permissions")
+        for job_name, job in workflow["jobs"].items():
+            effective = job.get("permissions", default)
+            assert effective is not None, (
+                f"{path.name}: job {job_name!r} declares no permissions and the workflow "
+                "sets no default, so it inherits the repository default. Add "
+                "`permissions:\n  contents: read` at the top of the workflow."
+            )
+            assert effective.get("contents") in ("read", "none"), (
+                f"{path.name}: job {job_name!r} runs with contents: "
+                f"{effective.get('contents')!r}; none of these jobs write to the repository."
+            )

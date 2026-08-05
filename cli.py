@@ -55,6 +55,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from core import fs, se, __version__
+from core import fs, se, file_list_cache
 from core.app import AppMode, DeleteStatus, DupeGuru, check_deletable
 from core.directories import AlreadyThereError, DirectoryState, InvalidPathError
 from core.scanner import ScanType
@@ -144,6 +145,31 @@ class _HeadlessView:
 # --- Synchronous scan ------------------------------------------------------
 
 
+def _wire_photo_class():
+    """Point core.pe.photo at a concrete photo class.
+
+    core/pe/photo.py leaves PLAT_SPECIFIC_PHOTO_CLASS as None for the UI layer to fill in,
+    and qt/app.py does it when the GUI starts. The CLI never constructs the Qt application,
+    so without this every picture-mode scan died on the first file with
+    "AttributeError: 'NoneType' object has no attribute 'can_handle'".
+
+    The Qt photo class decodes headlessly -- QImage needs no QApplication to read a file --
+    so the CLI can use it directly rather than needing a second decoder.
+    """
+    import core.pe.photo
+
+    if core.pe.photo.PLAT_SPECIFIC_PHOTO_CLASS is not None:
+        return
+    try:
+        from qt.pe.photo import File as PlatSpecificPhoto
+    except ImportError as e:
+        raise SystemExit(
+            "Picture mode needs a Qt binding for image decoding, and none could be "
+            f"imported ({e}). Install one with: pip install -r requirements.txt"
+        )
+    core.pe.photo.PLAT_SPECIFIC_PHOTO_CLASS = PlatSpecificPhoto
+
+
 def _run_scan(app: DupeGuru, verbose: bool, progress_json: bool = False) -> None:
     """Run the scan synchronously on the calling thread (no Qt event loop needed)."""
     scanner = app.SCANNER_CLASS()
@@ -159,6 +185,7 @@ def _run_scan(app: DupeGuru, verbose: bool, progress_json: bool = False) -> None
 
     if app.app_mode == AppMode.PICTURE:
         scanner.cache_path = app._get_picture_cache_path()
+        _wire_photo_class()
 
     def _progress(progress: int, desc: str = "") -> bool:
         if progress_json and desc:
@@ -840,6 +867,28 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Minimum match percentage to consider two files duplicates (default: 80).",
     )
     knobs.add_argument(
+        "--file-list-cache",
+        metavar="DB",
+        default=None,
+        help=(
+            "Cache directory listings in DB so a rescan does not re-stat every file. Off by "
+            "default. Validated per directory: a directory whose mtime is unchanged is not "
+            "read again. Adding, removing or renaming a file is detected; editing one in "
+            "place is NOT, so a rescan can miss a duplicate whose size changed. Never causes "
+            "a wrong deletion -- files are re-checked immediately before removal."
+        ),
+    )
+    knobs.add_argument(
+        "--match-scaled",
+        action="store_true",
+        default=False,
+        help=(
+            "Picture mode: also match images of different dimensions. Off by default, "
+            "matching the GUI. Without it a resized copy of an image is never reported as "
+            "a duplicate, at any --min-match value."
+        ),
+    )
+    knobs.add_argument(
         "--word-weighting",
         action="store_true",
         default=False,
@@ -1213,7 +1262,12 @@ def main(argv=None) -> int:
     app.options["ignore_hardlink_matches"] = args.filter_hardlinks
 
     # Scanner knobs -------------------------------------------------------
+    if args.file_list_cache:
+        flcache = file_list_cache.FileListCache()
+        flcache.connect(args.file_list_cache)
+        app.directories.file_list_cache = flcache
     app.options["min_match_percentage"] = args.min_match
+    app.options["match_scaled"] = args.match_scaled
     app.options["word_weighting"] = args.word_weighting
     app.options["match_similar_words"] = args.match_similar
     app.options["mix_file_kind"] = args.mix_file_kind
