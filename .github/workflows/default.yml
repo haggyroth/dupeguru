@@ -27,6 +27,15 @@ jobs:
     needs: [pre-commit]
     runs-on: ${{ matrix.os }}
     strategy:
+      # One failing leg must not cancel the others. With the default (true), a failure on any
+      # leg cancels the rest mid-run, and a cancelled job reports as a failure with no test
+      # output at all -- so a single real failure becomes six, five of which say nothing about
+      # why. Diagnosing one of those meant reading the raw log to find "The operation was
+      # canceled". Knowing whether a failure is one platform or all of them is usually the
+      # first question, and fail-fast destroys exactly that information.
+      #
+      # The other two workflows already set this; default.yml was the outlier.
+      fail-fast: false
       matrix:
         os: [ubuntu-latest]
         # Floor, ceiling, and the version that produces the artifacts. Version-specific
