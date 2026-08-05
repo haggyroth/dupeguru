@@ -1,6 +1,6 @@
 # Handoff
 
-Written 2026-08-03, moving development from Windows 11 to a MacBook Air.
+Written 2026-08-03 moving development from Windows 11 to a MacBook Air; refreshed 2026-08-05 after 4.10.0.
 
 ## The one rule
 
@@ -140,7 +140,7 @@ in the diff rather than something to discover later.
 Commits follow Conventional Commits. `commitlint` is configured but not enforced locally
 unless you `pre-commit install`.
 
-## Two traps that cost time here
+## Traps that cost time here
 
 **`pre-commit run --all-files` silently skips untracked files.** It reads `git ls-files`, so a
 newly created file is invisible until `git add`. This produced a false "all six hooks passed"
@@ -161,18 +161,52 @@ testing; the habit below is the mitigation. Ask what actually ran, not whether i
 whether or not the bug was present. Every fix in the last stretch of work was verified this
 way, and it's worth continuing.
 
+**Check that a mutation actually applied.** Reverting a fix to confirm the test fails is only
+meaningful if the revert landed. A `str.replace` with the wrong indentation silently does
+nothing, and the result — tests still passing — is indistinguishable from a surviving mutation.
+That happened in #109 and made three sound tests look weak; the fix is to `assert old in s`
+before replacing. The tool that checks your tests needs checking too.
+
+**Measure before optimising, and be willing to throw the plan away.** Three obvious fixes for
+the collection bottleneck were measured and rejected: threading gave **1.0x** (16, 64 and 128
+workers all matched serial, because the resource is serialized below us), halving the syscalls
+per file gave **0.96x** (the second call hits the cache the first populated), and per-file
+revalidation on resume — which issue #28 explicitly proposed — would have cost one stat per
+file, precisely what the feature exists to avoid. All three were in a written plan before being
+measured. None survived.
+
+**A benchmark outside a real app instance is probably lying.** A phase-timing harness reported
+hash+match as 98.5% of a *warm* rescan, which would have made the hash cache look useless. It
+never connected `filesdb`/`hashcachedb`, which `DupeGuru.__init__` normally does, so every
+digest was recomputed from disk. Connecting them moved the warm total from 10.3s to 0.25s.
+
+**Warm caches make measurements meaningless.** The corpus metadata gets cached by the first
+walk, so a second measurement of the same tree is measuring RAM, not the disk. Cold and warm
+differ by ~3,000x on an external volume. Either measure untouched directories or unmount and
+remount the volume between runs.
+
 Minor: running throwaway scripts via `python - <<EOF` breaks `ProcessPoolExecutor`, because
 the main module becomes `<stdin>` and spawn workers can't re-import it. Write to a real `.py`
-file and set `PYTHONPATH` to the repo root.
+file with an `if __name__ == "__main__"` guard and set `PYTHONPATH` to the repo root.
 
 ## Packaging
 
-Nothing here has ever shipped a binary — every release has zero assets — so packaging bugs
-are latent rather than live. That is a real property, not an oversight: the moment a release
-carries an installer, every bug below stops being theoretical. Attaching binaries to a release
-should be a deliberate decision with a manual pass on both platforms first, not a side effect
-of tagging. `.github/workflows/packaging.yml` is **manual only** (`workflow_dispatch`) for
-that reason, and has two jobs:
+**Releases carry binaries from 4.9.0 onward**, so packaging bugs are live rather than latent.
+That changes the stakes of everything in this section: a packaging bug now reaches whoever
+downloads the installer.
+
+The binaries are still built and attached **deliberately**, not as a side effect of tagging —
+`.github/workflows/packaging.yml` is `workflow_dispatch` only. The flow used for 4.10.0 was:
+merge the release PR, tag, dispatch packaging **on the tag**, download the artifacts, verify
+them, then upload to the release. Building from the tag matters: for 4.9.0 the first artifacts
+were built from a branch three commits ahead and had to be rebuilt, because a binary stamped
+4.9.0 containing code 4.9.0 never shipped is a mislabelled release.
+
+Neither release has had the manual pass described below. Nobody has run the NSIS
+installer *or* its uninstaller end to end. That is the largest known gap in the release
+process.
+
+The workflow has two jobs:
 
 - **`freeze`** — freezes the *CLI* on Windows and macOS and runs a real content scan through
   the frozen binary. This is the only automated way to exercise the process-pool path that
@@ -230,6 +264,67 @@ with no extra windows):
 - `freeze_support()` now sits in the `__main__` block of all three entry points regardless.
   That is the documented contract, and it does not depend on the packaging tool's behaviour.
 
+## The caches, and what each one trusts
+
+Five SQLite caches now, all under `~/Library/Application Support/Hardcoded Software/dupeGuru`
+(and the platform equivalents). They differ in what they are willing to believe, which is the
+part worth understanding before touching any of them.
+
+| File | Holds | Invalidated by |
+|---|---|---|
+| `hash_cache.db` (`FilesDB`) | file digests | path + size + mtime |
+| `hash_cache2.db` | content hashes for the parallel path | path + size + mtime |
+| `cached_pictures.db` (`SqliteCache`) | 15x15 block signatures | per-file mtime |
+| `file_list_cache.db` | directory listings | the **directory's** mtime |
+| `picture_matches.db` (`MatchCache`) | the match set | every file's identity + all matching params |
+
+The last two arrived in 4.10.0 and are opt-in behind one preference.
+
+**Why the listing cache validates per directory.** Measured on an external exFAT volume: a cold
+`lstat` costs 4.5-13.3 ms, a warm one 0.004 ms — about 3,000x. Collecting a 412,589-file corpus
+takes 31-92 minutes before a byte is hashed. Validating each cached path individually would
+cost one stat per file, which is the entire expense being avoided. One stat per *directory*
+instead means 397 stats rather than 412,589 on that corpus.
+
+**The tradeoff that buys.** A directory's mtime moves when an entry is added, removed or
+renamed, but **not** when a file is edited in place. Verified on both APFS and exFAT. So a
+cache hit can return a stale size for a file whose contents changed. That cannot cause a wrong
+deletion — digests come from real content and `check_deletable` re-stats immediately before
+removing anything — but it can cause a *missed* duplicate, because files are grouped by size
+before hashing. Under-reporting is the safe direction, which is why it is opt-in.
+
+**A directory touched in the last 2 seconds is never cached** (`MTIME_SETTLE_NS`). FAT and
+exFAT store 2-second mtimes and NTFS updates directory timestamps lazily, so a change landing
+inside one tick would leave the mtime unmoved and the addition invisible. This shipped broken
+in #95 with a green CI run and was caught on Windows two PRs later.
+
+**The match cache is deliberately stricter.** Its key covers size and mtime, not just paths, so
+an in-place edit invalidates it. In the listing cache a stale entry costs a missed match; here
+it would show the user duplicates that no longer exist, and a results table that disagrees with
+the disk is the kind of wrong that costs trust. Invalidation is all-or-nothing under a key
+covering every matching parameter — per-row invalidation would mean working out which matches a
+changed file could have participated in, which is the comparison being avoided.
+
+**`purge_outdated` is scoped.** It used to re-stat every directory the picture cache had ever
+seen, so cost grew with usage history rather than with the scan: two 12 KB local files against
+a cache holding 20,000 external-drive rows took 331s. Scoped to the directories actually being
+scanned it takes 0.23s. It also no longer deletes rows for an unreachable directory — unplugging
+a drive used to discard everything cached from it.
+
+## Where the time actually goes
+
+Measured per phase, 15,294 files with 5,723 duplicate groups, both caches warm:
+
+| | standard content mode | picture mode |
+|---|---:|---:|
+| collect | 0.117s | 0.128s |
+| hash / block + match | 0.113s | 15.856s → **0.015s** with the match cache |
+| group | 0.023s | 0.023s |
+
+Content mode has nothing left worth caching — that is why checkpoint 2 of #28 was declined
+rather than built. Picture matching was 99.1% of a warm rescan and is now the thing the match
+cache removes.
+
 ## Releases
 
 The process is in [CONTRIBUTING.md](CONTRIBUTING.md#cutting-a-release). Two things there are
@@ -257,6 +352,42 @@ Closed, but the reasoning is worth keeping:
   user data went from 12/18/3/66% to 100/100/100/86%. What remained was plumbing.
 - **#10** (`freeze_support()`) and **#27** (PyQt6 alongside PyQt5) both needed a real frozen
   build to settle, which is why they sat open so long. #27 was phased across #52–#56.
+
+## What to do next
+
+No issue is open for any of these; they are judgement calls rather than tracked work.
+
+**1. Run the installer and uninstaller on Windows.** The largest gap. Two releases now carry
+binaries and nobody has run the NSIS installer end to end, or its uninstaller — whose
+`RMDir /r "$INSTDIR\_internal"` has never been executed. If it is wrong it either strands files
+or removes too much. This needs the Windows machine; CI cannot do it.
+
+**2. Decide about signing.** Neither binary is signed or notarized, so macOS Gatekeeper refuses
+the app on first launch and Windows SmartScreen warns. The release notes say so, but every
+downloader hits it. Apple notarization needs a paid developer account; that is a spending
+decision, not a technical one.
+
+**3. Measure the caches cold, on a corpus that is not already warm.** Every speedup quoted in
+this file was measured on macOS against one exFAT volume, mostly with warm metadata. The
+cold-path numbers are extrapolations from per-file costs, not observations of a full run. An
+unmount/remount between passes gives the real figure.
+
+**4. Consider a GUI progress signal for the caches.** When the listing cache hits, collection
+finishes so fast that the progress window barely appears; when it misses on a cold external
+drive, the same phase takes tens of minutes with no indication of why. The user cannot tell
+which happened.
+
+**5. The Qt layer is still smoke-only at ~60%.** The preview pane, results table and preferences
+dialogs construct and are barely exercised. This is the largest untested surface left now that
+`core/app.py` is at 77%, and it is where a change renders wrongly without failing anything.
+
+**6. Watch `merge_similar_words`.** It is genuinely quadratic — 4.0x per doubling, measured. The
+test now guards against a return to *cubic*, which is what an O(n) membership check in the loop
+produces, but the quadratic cost itself is real and will bite on a large filename scan.
+
+Deliberately not proposed: chasing coverage percentages in `exif.py`, `core/me/fs.py` or the
+remaining plumbing in `core/app.py`. Those numbers would improve without the risk improving,
+which is the argument #82 was closed on.
 
 **Read the code before the issue text.** #25 and #26 were both written against a state of the
 world that had already moved by the time they were picked up — #25 still asserted `--dry-run`
