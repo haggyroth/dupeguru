@@ -420,6 +420,9 @@ class ColorPickerButton(QPushButton):
         super().__init__(parent)
         self.parent = parent
         self.color = None
+        # The button's whole content is a colour swatch drawn as an icon, so there is no text
+        # for a screen reader to read. Callers may override with something more specific.
+        self.setAccessibleName(tr("Choose Color"))
         self.clicked.connect(self.onClicked)
 
     @Slot()
