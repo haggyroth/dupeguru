@@ -114,8 +114,8 @@ class ViewerToolBar(QToolBar):
             if ISLINUX and not self.parent.app.prefs.details_dialog_override_theme_icons
             else resources.icon("exchange")
         )
-        self.buttonImgSwap.setText("Swap images")
-        self.buttonImgSwap.setToolTip("Swap images")
+        self.buttonImgSwap.setText(tr("Swap images"))
+        self.buttonImgSwap.setToolTip(tr("Swap images"))
         self.buttonImgSwap.pressed.connect(self.controller.swapImages)
         self.buttonImgSwap.released.connect(self.controller.swapImages)
 

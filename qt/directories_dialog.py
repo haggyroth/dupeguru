@@ -212,9 +212,17 @@ class DirectoriesDialog(QMainWindow):
         self.removeFolderButton = QPushButton(self.centralwidget)
         self.removeFolderButton.setIcon(resources.icon("minus"))
         self.removeFolderButton.setShortcut("Del")
+        # An icon-only button exposes no text to assistive technology, so a screen reader
+        # announces it as an unlabelled button. These two are the primary controls of the
+        # main window -- adding a folder is the first thing anyone does -- so without a name
+        # the application's entry point is unreachable by anyone using one.
+        self.removeFolderButton.setAccessibleName(tr("Remove Folder"))
+        self.removeFolderButton.setToolTip(tr("Remove the selected folder from the list"))
         self.horizontalLayout.addWidget(self.removeFolderButton)
         self.addFolderButton = QPushButton(self.centralwidget)
         self.addFolderButton.setIcon(resources.icon("plus"))
+        self.addFolderButton.setAccessibleName(tr("Add Folder"))
+        self.addFolderButton.setToolTip(tr("Add a folder to scan"))
         self.horizontalLayout.addWidget(self.addFolderButton)
         spacer_item = QSpacerItem(40, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
         self.horizontalLayout.addItem(spacer_item)

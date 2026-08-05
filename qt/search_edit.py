@@ -25,6 +25,9 @@ class LineEditButton(QToolButton):
         super().__init__(parent, **kwargs)
         pixmap = resources.pixmap("search_clear_13")
         self.setIcon(QIcon(pixmap))
+        # Icon-only and no text, so assistive technology has nothing to announce.
+        self.setAccessibleName(tr("Clear Search"))
+        self.setToolTip(tr("Clear the search field"))
         self.setIconSize(pixmap.size())
         self.setCursor(Qt.CursorShape.ArrowCursor)
         self.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
