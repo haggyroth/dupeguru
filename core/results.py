@@ -310,6 +310,14 @@ class Results(Markable):
                 to_remove.append(dupe)
             except (OSError, UnicodeEncodeError) as e:
                 self.problems.append((dupe, str(e)))
+            except Exception as e:
+                # Deliberately broad. An unexpected exception here used to unwind the whole
+                # loop, so every dupe already processed was moved or deleted on disk but never
+                # removed from the results below -- the table then disagreed with the
+                # filesystem, and a second run operated on entries whose sources were gone.
+                # Recording it keeps the batch consistent; the traceback still reaches the log.
+                logging.exception("Unexpected error while processing %r", dupe)
+                self.problems.append((dupe, str(e)))
         if remove_from_results:
             self.remove_duplicates(to_remove)
             self.mark_none()

@@ -21,6 +21,7 @@ from hscommon.jobprogress.job import Job
 from core.tests.base import TestApp
 from core.tests.results_test import GetTestGroups
 from core import app, fs, engine
+from core.results import Results
 from core.scanner import ScanType
 
 
@@ -969,3 +970,93 @@ class TestAppWithDirectoriesInTree:
         subnode = node[0]
         eq_(subnode.state, 1)
         self.dtree.view.check_gui_calls(["refresh_states"])
+
+
+class TestCopyMoveWhenDupeIsAScanDirectory:
+    """A folder-mode dupe is often a scanned folder itself, not a file inside one (issue #78)."""
+
+    @staticmethod
+    def _app(dirs):
+        class Standalone(app.DupeGuru):
+            def __init__(self, directories):
+                self.directories = directories
+
+        return Standalone(dirs)
+
+    def test_relative_destination_does_not_crash(self, tmpdir):
+        """first() returns None when no scan directory is a *parent* of the dupe.
+
+        That is true whenever the dupe is a scanned directory: `p in path.parents` is false
+        for p == path. The old code dereferenced it and raised AttributeError.
+        """
+        tmp_path = Path(str(tmpdir))
+        a = tmp_path / "A"
+        b = tmp_path / "B"
+        a.mkdir()
+        b.mkdir()
+        (b / "f.txt").write_text("data")
+        dest = tmp_path / "dest"
+        dest.mkdir()
+
+        dgapp = self._app([a, b])
+        dgapp.copy_or_move(fs.Folder(b), copy=True, destination=str(dest), dest_type=app.DestType.RELATIVE)
+        # With no location to be relative *to*, the fallback keeps the absolute layout, so the
+        # folder lands under its full source path rather than directly in dest.
+        assert any(dest.rglob("B")), "the folder was not copied anywhere under dest"
+
+    def test_absolute_destination_still_uses_the_full_layout(self, tmpdir):
+        """The fallback must not quietly change ABSOLUTE behaviour."""
+        tmp_path = Path(str(tmpdir))
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "f.txt").write_text("data")
+        dest = tmp_path / "dest"
+        dest.mkdir()
+
+        dgapp = self._app([tmp_path])
+        dgapp.copy_or_move(fs.File(src / "f.txt"), copy=True, destination=str(dest), dest_type=app.DestType.ABSOLUTE)
+        assert any(dest.rglob("f.txt"))
+
+
+class TestPerformOnMarkedKeepsResultsConsistent:
+    """An unexpected exception must not abandon the batch (issue #78).
+
+    perform_on_marked caught only OSError and UnicodeEncodeError. Anything else unwound the
+    loop, so dupes already moved or deleted on disk were never removed from the results --
+    the table then disagreed with the filesystem, and a second run operated on entries whose
+    sources no longer existed.
+    """
+
+    def test_unexpected_error_is_recorded_rather_than_raised(self):
+        results = Results(TestApp().app)
+        objects, matches, groups = GetTestGroups()
+        results.groups = groups
+        first_dupe, second_dupe = objects[1], objects[2]
+        results.mark(first_dupe)
+        results.mark(second_dupe)
+
+        def op(dupe):
+            if dupe is second_dupe:
+                raise AttributeError("boom")
+
+        results.perform_on_marked(op, True)
+
+        assert len(results.problems) == 1, "the unexpected error was not recorded as a problem"
+        assert results.problems[0][0] is second_dupe
+        assert first_dupe not in results.dupes, (
+            "the dupe processed before the failure stayed in the results; the table now "
+            "disagrees with what happened on disk"
+        )
+
+    def test_oserror_still_behaves_as_before(self):
+        results = Results(TestApp().app)
+        objects, matches, groups = GetTestGroups()
+        results.groups = groups
+        dupe = objects[1]
+        results.mark(dupe)
+
+        def op(d):
+            raise OSError("nope")
+
+        results.perform_on_marked(op, True)
+        eq_(len(results.problems), 1)
