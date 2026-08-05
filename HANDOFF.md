@@ -64,6 +64,10 @@ Two things the old one-line install got wrong, both found setting this machine u
 
 `requirements.txt`, PyQt6 included, installs cleanly on 3.14.
 
+The existing `env/` in this checkout has **both** bindings installed, because the PyQt5
+fallback was exercised in it. That changes which one qtpy resolves — see the trap about it
+below. A venv built from the commands above has only PyQt6 and resolves correctly.
+
 ## What changes when you move to macOS
 
 This matters more than it sounds — several tests are platform-gated, so the pass/skip counts
@@ -160,6 +164,29 @@ testing; the habit below is the mitigation. Ask what actually ran, not whether i
 *fails*, then `git stash pop`. This caught several tests that would otherwise have passed
 whether or not the bug was present. Every fix in the last stretch of work was verified this
 way, and it's worth continuing.
+
+**A local test run may be exercising PyQt5, not PyQt6.** qtpy's preference order is
+`['pyqt5', 'pyside2', 'pyqt6', 'pyside6']`, so when both bindings are installed it picks
+**PyQt5** — the fallback — regardless of PyQt6 being the project default. `requirements.txt`
+alone installs only PyQt6, so a clean environment picks PyQt6 correctly; but this checkout's
+`env/` has both, because `requirements-pyqt5.txt` was installed into it at some point to
+exercise the fallback. Nothing warns you.
+
+That means a green local suite here is testing the *fallback* binding, and the default is
+covered only by CI. It bit immediately: `Qt.CheckState.Checked.value` works on PyQt6 and
+raises on PyQt5, `int(Qt.CheckState.Checked)` does the reverse, and writing a Qt test locally
+gets you the half that passes on whichever binding happens to be resolved. Use
+`getattr(x, "value", x)` for enum values, and check which binding you are on before trusting a
+Qt result:
+
+```bash
+python -c "import qtpy; print(qtpy.API_NAME)"
+QT_API=pyqt6 pytest qt          # force the default binding
+```
+
+Note that reading `QT_API` from the environment does not tell you anything on its own: qtpy
+*sets* it during import to whatever it resolved, so after `import qtpy` it always looks as if
+someone configured it deliberately. Read `qtpy.API_NAME` instead.
 
 **Check that a mutation actually applied.** Reverting a fix to confirm the test fails is only
 meaningful if the revert landed. A `str.replace` with the wrong indentation silently does
