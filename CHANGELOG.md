@@ -9,20 +9,59 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [4.10.0] - 2026-08-05
+
+### Added
+
+- **Remember scan results between scans** (opt-in, Preferences → "Remember scan results
+  between scans", or `--file-list-cache` on the command line). Folder listings are reused when
+  a folder has not changed, and in Picture mode the comparison results are reused too. On an
+  external drive these are the slow parts: re-reading 15,294 folders' worth of metadata went
+  from 0.80s to 0.12s, and picture matching from 17.9s to 0.015s. Files added, removed or
+  renamed are still noticed; a file edited in place without its folder changing may be missed
+  until the next full scan. Nothing is ever deleted on the basis of stale information.
+- **Picture mode works from the command line.** `--mode picture` had never run — it aborted on
+  the first file — because the image decoder was only ever wired up by the GUI.
+- **`--match-scaled`** so command-line picture scans can find resized copies. Without it only
+  images of identical dimensions match, at any `--min-match` value.
+- Windows installers and macOS disk images are now built by CI, and the packaging workflow
+  produces the real deliverables rather than only a frozen CLI.
+- Accessible names on the icon-only controls, so screen readers announce the Add and Remove
+  folder buttons, the search field's clear button and the colour picker.
+
 ### Fixed
 
-- **`--from-results` reports malformed files instead of crashing** (`cli.py`): pointing it at
-  the wrong file produced a Python traceback rather than an error message. JSON that was not
-  an object raised `AttributeError` from `data.get` — a bare `[]`, `42` or `"text"` was
-  enough — an NDJSON group record missing its keys raised `KeyError`, and a binary file
-  raised `UnicodeDecodeError`, because the caller caught only `OSError` and
-  `JSONDecodeError`. It now catches `ValueError`, which covers both of those (they are
-  subclasses) as well as the structural checks the loader gained: the document must be an
-  object, `groups` must be a list, NDJSON records must be objects carrying `reference` and
-  `duplicates`, and errors name the offending line. An empty file is rejected rather than
-  reported as "no duplicates", which would look like a successful answer about the wrong
-  file. Found by looking at what CI does *not* cover: the uncovered lines in `cli.py` were
-  almost entirely error paths.
+- **Duplicate folders could not be deleted at all.** Every attempt reported that the folder had
+  changed since the scan and refused, because a folder's total size was being compared against
+  the size of its directory entry. `--scan-type folders` was unusable in both the GUI and the
+  command line.
+- **Copying or moving a folder that was itself one of the scanned folders** raised an error
+  that abandoned the whole batch, leaving files moved on disk but still listed in the results.
+  Unexpected errors are now recorded per file instead of stopping everything.
+- **Scans got slower the more the application was used.** Every picture scan re-checked every
+  folder the cache had ever seen, whether or not it was being scanned. Scanning two small local
+  files against a cache holding 20,000 entries from an external drive took over five minutes;
+  it now takes a fifth of a second.
+- **Unplugging a drive threw away everything cached from it**, so the next scan of that drive
+  started from nothing.
+- **The command line wrote its caches into the wrong directory**, so the command line and the
+  GUI never shared cached work and a 119 MB file was left loose in the user's application data
+  folder.
+- Number formatting on macOS fell back to a default locale on every run.
+- `--from-results` reports malformed files instead of crashing on them.
+
+### Changed
+
+- Continuous integration runs with a read-only token, and the build tooling passes file paths
+  as arguments rather than composing shell commands from them.
+
+### Internal
+
+- The test suite no longer writes into the real application data directory, and no longer
+  leaks database connections.
+- Tests now cover the checks that stand between a user and data loss: the sampled-hash
+  warning, the multiple-drives warning, copy-versus-move result handling, and what the
+  application reports after an operation finishes.
 
 ## [4.9.0] - 2026-08-04
 
@@ -700,7 +739,8 @@ fork no longer routes anyone or anything upstream, and CI runs for the first tim
 
 See `git log` for changes prior to this changelog.
 
-[Unreleased]: https://github.com/haggyroth/dupeguru/compare/v4.9.0...HEAD
+[Unreleased]: https://github.com/haggyroth/dupeguru/compare/v4.10.0...HEAD
+[4.10.0]: https://github.com/haggyroth/dupeguru/compare/v4.9.0...v4.10.0
 [4.9.0]: https://github.com/haggyroth/dupeguru/compare/v4.8.0...v4.9.0
 [4.8.0]: https://github.com/haggyroth/dupeguru/compare/v4.7.1...v4.8.0
 [4.7.1]: https://github.com/haggyroth/dupeguru/compare/v4.7.0...v4.7.1
