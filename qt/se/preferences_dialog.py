@@ -112,16 +112,17 @@ class PreferencesDialog(PreferencesDialogBase):
         self.verticalLayout_4.addWidget(self.fullVerifyBox)
         self._setupAddCheckbox(
             "cacheFileListBox",
-            tr("Remember folder listings between scans"),
+            tr("Remember scan results between scans"),
             self.widget,
         )
         self.cacheFileListBox.setToolTip(
             tr(
-                "Skips re-reading folders whose contents have not changed, which is the slow "
-                "part of scanning an external or network drive. Files added, removed or "
-                "renamed are still noticed. A file edited in place without its folder changing "
-                "may be missed until the next full scan; nothing is ever deleted on the basis "
-                "of stale information."
+                "Reuses what the last scan found when nothing has changed: folder listings, "
+                "and in Picture mode the comparison results too. This is the slow part of "
+                "scanning an external or network drive, and of comparing a large photo "
+                "library. Files added, removed or renamed are still noticed. A file edited in "
+                "place without its folder changing may be missed until the next full scan; "
+                "nothing is ever deleted on the basis of stale information."
             )
         )
         self.verticalLayout_4.addWidget(self.cacheFileListBox)

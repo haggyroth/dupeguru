@@ -230,6 +230,9 @@ class DupeGuru(Broadcaster):
         Broadcaster.__init__(self)
         self.view = view
         self.appdata = desktop.special_folder_path(desktop.SpecialFolder.APPDATA, portable=portable)
+        # Optional core.pe.match_cache.MatchCache, attached by the front end when the user
+        # opts in. None means picture matching is recomputed on every scan.
+        self.picture_match_cache = None
         if not op.exists(self.appdata):
             os.makedirs(self.appdata)
         self.app_mode = AppMode.STANDARD
@@ -979,6 +982,9 @@ class DupeGuru(Broadcaster):
         self.notify("save_session")
 
     def close(self):
+        if self.picture_match_cache is not None:
+            self.picture_match_cache.close()
+            self.picture_match_cache = None
         fs.filesdb.close()
         from core.hash_cache import hashcachedb
 
@@ -1036,6 +1042,7 @@ class DupeGuru(Broadcaster):
                 setattr(scanner, k, v)
         if self.app_mode == AppMode.PICTURE:
             scanner.cache_path = self._get_picture_cache_path()
+            scanner.match_cache = self.picture_match_cache
         self.results.groups = []
         self._recreate_result_table()
         self._results_changed()
