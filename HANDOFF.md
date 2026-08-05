@@ -25,7 +25,7 @@ it renders links for *historical* upstream ticket numbers in `help/changelog`. D
 | Issues | 26 closed, 1 open |
 | Tests | **887 passing, 6 skipped** on macOS. Windows/Linux counts differ (see below) |
 | Qt bindings | PyQt6 by default, PyQt5 as a fallback with its own CI leg |
-| CI | green on Python 3.10–3.14 (Linux) plus Windows and macOS; `master` is protected |
+| CI | Linux on 3.10 / 3.12 / 3.14, plus Windows, macOS and a PyQt5 leg; `master` is protected |
 
 Work is tracked as GitHub issues on the fork. Don't keep a parallel roadmap file — check the
 tracker.
@@ -110,12 +110,19 @@ is fully green without checking in each time.
 `master` is **protected**, and this is enforced by GitHub rather than by remembering:
 
 - Direct pushes are rejected — `GH006: ... Changes must be made through a pull request`.
-- **9 required status checks**: `pre-commit` and all eight `test (...)` legs. A PR cannot be
+- **7 required status checks**: `pre-commit` and all six `test (...)` legs. A PR cannot be
   merged while any is pending or failing, which is the point: judging "green" by reading a
   check list is what nearly merged #47 with Windows still running.
 - `enforce_admins` is on, so there is no bypass. Zero approvals are required, so
   merge-on-green still needs nobody else.
 - Force pushes and branch deletion are off. Tag pushes are unaffected, so releases work.
+
+The matrix deliberately does **not** test every supported Python. It runs the floor (3.10),
+the ceiling (3.14) and the version that builds the artifacts (3.12). Version-specific breakage
+has only ever appeared at the boundaries — PEP 604 at the floor, setuptools seeding and the
+PyInstaller pin at the ceiling — and the intermediate versions never caught anything those did
+not. `requirements.txt` still supports the full range, and `tox.ini` still lists every version
+for anyone who wants to check locally.
 
 **Adding or renaming a CI leg breaks merging until the required-contexts list is updated**,
 because contexts are matched by name. That is deliberate — a leg silently vanishing is the

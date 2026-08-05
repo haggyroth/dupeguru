@@ -32,9 +32,7 @@ WORKFLOW = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "defa
 # quietly disappearing or merging into another has to be an explicit edit here too.
 EXPECTED_TEST_JOBS = {
     ("ubuntu-latest", "3.10", "pyqt6"),
-    ("ubuntu-latest", "3.11", "pyqt6"),
     ("ubuntu-latest", "3.12", "pyqt6"),
-    ("ubuntu-latest", "3.13", "pyqt6"),
     ("ubuntu-latest", "3.14", "pyqt6"),
     ("windows-latest", "3.12", "pyqt6"),
     ("macos-latest", "3.12", "pyqt6"),
