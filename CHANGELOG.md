@@ -11,6 +11,22 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Picture preparation runs on a process pool** (`core/pe/matchblock.py`): decoding images
+  and computing their block signatures is the dominant cost of a first picture scan and was
+  entirely serial, while content-scan hashing has used a worker per core for some time.
+  It now uses the same pattern, with the same sequential fallback if the pool cannot start.
+  Workers return encoded bytes rather than lists of tuples — a signature pickles as ~700 B
+  encoded against ~37 KB inflated, so that decides the cost of crossing the process boundary
+  as well as the memory.
+  The gain is real but smaller than the core count suggests: **measured 1.2–1.4x** on
+  preparation for 1000 pictures, because starting workers and importing Qt in each costs
+  about 1.3 s, and the parent still writes every result to SQLite one row at a time. Below
+  250 pictures the pool is not used at all — measured, an unchunked pool was *five times
+  slower* than the serial path at 240 pictures, and chunking the work was needed on top of
+  the threshold.
+
+### Changed
+
 - **Picture block signatures stay compact in memory** (`core/pe/modules/block.c`,
   `core/pe/cache_sqlite.py`, `core/pe/matchblock.py`): signatures are stored as bytes but
   were inflated into lists of 3-tuples on every read — measured at 37 KB against 708 B for

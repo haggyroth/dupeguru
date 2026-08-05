@@ -13,4 +13,9 @@ def colors_to_bytes(colors):
     [(0,100,255)] --> b'\x00d\xff'
     [(1,2,3),(4,5,6)] --> b'\x01\x02\x03\x04\x05\x06'
     """
+    if isinstance(colors, (bytes, bytearray)):
+        # bytes(int) builds a zero-filled buffer, so passing already-encoded blocks here
+        # returns silent zeros rather than failing. Workers hand back encoded bytes now,
+        # which makes that an easy mistake; refuse it instead of corrupting the cache.
+        raise TypeError("colors_to_bytes received already-encoded bytes; use them directly")
     return b"".join(map(bytes, colors))
