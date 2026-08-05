@@ -604,7 +604,7 @@ def test_symlinked_directory_is_not_traversed(tmpdir):
     root = Path(str(tmpdir))
     real = root.joinpath("real")
     real.mkdir()
-    real.joinpath("payload.txt").open("wt").write("data")
+    real.joinpath("payload.txt").write_text("data")
     os.symlink(str(real), str(root.joinpath("link")), target_is_directory=True)
 
     d = Directories()
@@ -621,7 +621,7 @@ def test_symlink_cycle_does_not_recurse_forever(tmpdir):
     root = Path(str(tmpdir))
     sub = root.joinpath("sub")
     sub.mkdir()
-    sub.joinpath("file.txt").open("wt").write("data")
+    sub.joinpath("file.txt").write_text("data")
     # sub/loop -> sub
     os.symlink(str(sub), str(sub.joinpath("loop")), target_is_directory=True)
 
@@ -645,8 +645,8 @@ def test_symlink_does_not_escape_selected_folders(tmpdir):
     outside = root.joinpath("outside")
     scanned.mkdir()
     outside.mkdir()
-    scanned.joinpath("inside.txt").open("wt").write("in")
-    outside.joinpath("secret.txt").open("wt").write("out")
+    scanned.joinpath("inside.txt").write_text("in")
+    outside.joinpath("secret.txt").write_text("out")
     os.symlink(str(outside), str(scanned.joinpath("escape")), target_is_directory=True)
 
     d = Directories()
@@ -661,7 +661,7 @@ def test_symlinked_file_is_still_excluded(tmpdir):
     """Regression guard: symlinked files were already excluded, and must stay that way."""
     root = Path(str(tmpdir))
     real = root.joinpath("real.txt")
-    real.open("wt").write("data")
+    real.write_text("data")
     os.symlink(str(real), str(root.joinpath("link.txt")))
 
     d = Directories()
@@ -702,7 +702,7 @@ def test_junction_is_not_traversed(tmpdir):
     root = Path(str(tmpdir))
     real = root.joinpath("real")
     real.mkdir()
-    real.joinpath("payload.txt").open("wt").write("data")
+    real.joinpath("payload.txt").write_text("data")
     if not _make_junction(root.joinpath("link"), real):
         pytest.skip("could not create a junction here")
 
@@ -721,8 +721,8 @@ def test_junction_does_not_escape_selected_folders(tmpdir):
     outside = root.joinpath("outside")
     scanned.mkdir()
     outside.mkdir()
-    scanned.joinpath("inside.txt").open("wt").write("in")
-    outside.joinpath("secret.txt").open("wt").write("out")
+    scanned.joinpath("inside.txt").write_text("in")
+    outside.joinpath("secret.txt").write_text("out")
     if not _make_junction(scanned.joinpath("escape"), outside):
         pytest.skip("could not create a junction here")
 
@@ -738,7 +738,7 @@ def test_junction_cycle_does_not_recurse_forever(tmpdir):
     root = Path(str(tmpdir))
     sub = root.joinpath("sub")
     sub.mkdir()
-    sub.joinpath("file.txt").open("wt").write("data")
+    sub.joinpath("file.txt").write_text("data")
     if not _make_junction(sub.joinpath("loop"), sub):
         pytest.skip("could not create a junction here")
 
@@ -755,8 +755,8 @@ def test_ordinary_directory_is_still_traversed(tmpdir):
     root = Path(str(tmpdir))
     sub = root.joinpath("sub")
     sub.mkdir()
-    sub.joinpath("nested.txt").open("wt").write("data")
-    root.joinpath("top.txt").open("wt").write("data")
+    sub.joinpath("nested.txt").write_text("data")
+    root.joinpath("top.txt").write_text("data")
 
     d = Directories()
     d.add_path(root)
@@ -799,8 +799,8 @@ def test_exclusions_still_apply_after_clear(tmpdir):
     junk = root.joinpath("node_modules")
     keep.mkdir()
     junk.mkdir()
-    keep.joinpath("wanted.txt").open("wt").write("data")
-    junk.joinpath("unwanted.txt").open("wt").write("data")
+    keep.joinpath("wanted.txt").write_text("data")
+    junk.joinpath("unwanted.txt").write_text("data")
 
     exclude_list = ExcludeList()
     exclude_list.add(r"node_modules")

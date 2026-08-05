@@ -11,3 +11,17 @@ force-exclude = "qt/resources_data\\.py"
 # make it compatible with black
 profile = "black"
 skip_gitignore = true
+
+[tool.pytest.ini_options]
+# ResourceWarning is escalated where it can be. Note the limit, because it is easy to assume
+# more protection than this gives: sqlite3 and file objects emit ResourceWarning from their
+# finalisers, and an exception raised there is swallowed by the interpreter, so a leaked
+# connection is still only *reported* and cannot fail a run. Verified by deliberately leaking
+# one -- the test passed with a warning.
+#
+# The real guarantee is the autouse fixtures in core/tests/conftest.py and qt/tests/conftest.py,
+# which close what the tests open. This entry keeps the warnings visible and catches the cases
+# that are raised outside a finaliser.
+filterwarnings = [
+    "error::ResourceWarning",
+]

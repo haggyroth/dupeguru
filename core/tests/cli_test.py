@@ -1360,17 +1360,6 @@ def restore_photo_class():
     core.pe.photo.PLAT_SPECIFIC_PHOTO_CLASS = original
 
 
-@pytest.fixture
-def isolated_appdata(tmp_path, monkeypatch):
-    """Keep the picture cache and hash cache out of the developer's real appdata."""
-    from hscommon import desktop
-
-    appdata = tmp_path / "appdata"
-    appdata.mkdir()
-    monkeypatch.setattr(desktop, "special_folder_path", lambda *a, **k: str(appdata))
-    return appdata
-
-
 class TestPictureMode:
     """Picture mode must work without the Qt application ever being constructed.
 
@@ -1380,7 +1369,7 @@ class TestPictureMode:
     advertised in --help and had never once run.
     """
 
-    def test_picture_mode_finds_identical_images(self, tmp_path, restore_photo_class, isolated_appdata):
+    def test_picture_mode_finds_identical_images(self, tmp_path, restore_photo_class):
         """The regression test: this raised AttributeError before the wiring existed."""
         pytest.importorskip("qtpy", reason="picture mode decodes through a Qt binding")
         (tmp_path / "a.bmp").write_bytes(_bmp())
@@ -1388,7 +1377,7 @@ class TestPictureMode:
         rc = main([str(tmp_path), "--mode", "picture", "--dry-run"])
         assert rc == EXIT_DUPES_FOUND
 
-    def test_picture_mode_does_not_match_unrelated_images(self, tmp_path, restore_photo_class, isolated_appdata):
+    def test_picture_mode_does_not_match_unrelated_images(self, tmp_path, restore_photo_class):
         """Guards the opposite failure: wiring that reports everything as a duplicate."""
         pytest.importorskip("qtpy", reason="picture mode decodes through a Qt binding")
         (tmp_path / "a.bmp").write_bytes(_bmp(colour=(0x00, 0x00, 0x00)))
@@ -1416,7 +1405,7 @@ class TestPictureMode:
             cli._wire_photo_class()
         assert "Picture mode needs a Qt binding" in str(exc.value)
 
-    def test_standard_mode_does_not_import_qt(self, tmp_path, restore_photo_class, isolated_appdata):
+    def test_standard_mode_does_not_import_qt(self, tmp_path, restore_photo_class):
         """The Qt import is deferred; a standard scan must not pay for it."""
         import core.pe.photo
 
@@ -1435,7 +1424,7 @@ class TestPictureMode:
         args = cli._build_parser().parse_args(["--mode", "picture", "/tmp"])
         assert args.match_scaled is False
 
-    def test_resized_duplicates_are_found_only_with_match_scaled(self, tmp_path, restore_photo_class, isolated_appdata):
+    def test_resized_duplicates_are_found_only_with_match_scaled(self, tmp_path, restore_photo_class):
         """The behavioural test: the flag is what gates cross-dimension matching.
 
         Without it, matchblock.prepare_pictures buckets by dimension, so a resized copy is

@@ -264,7 +264,7 @@ class TestCaseOpenIfFilename:
 
     def test_file_name(self, tmpdir):
         filepath = str(tmpdir.join(self.FILE_NAME))
-        open(filepath, "wb").write(b"test_data")
+        Path(filepath).write_bytes(b"test_data")
         file, close = open_if_filename(filepath)
         assert close
         eq_(b"test_data", file.read())
@@ -291,7 +291,7 @@ class TestCaseFileOrPath:
 
     def test_path(self, tmpdir):
         filepath = str(tmpdir.join(self.FILE_NAME))
-        open(filepath, "wb").write(b"test_data")
+        Path(filepath).write_bytes(b"test_data")
         with FileOrPath(filepath) as fp:
             eq_(b"test_data", fp.read())
 

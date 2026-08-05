@@ -77,6 +77,12 @@ def dgapp(qapp):
 
     app = DupeGuru()
     yield app
+    # Disconnect the module-level caches this connected. Without it the two SQLite
+    # connections survive to interpreter exit and are finalised by the garbage collector,
+    # which is what produced "ResourceWarning: unclosed database" on every run (issue #84).
+    # FilesDB batches writes and flushes on close, so an unclosed connection is also the
+    # shape of a bug that loses cached hashes -- worth eliminating rather than silencing.
+    app.model.close()
 
 
 @pytest.fixture
