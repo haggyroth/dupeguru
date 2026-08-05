@@ -1301,3 +1301,128 @@ class TestCopyOrMoveMarkedGuards:
         func(nulljob)
 
         assert calls == [(True, "/chosen", app.DestType.ABSOLUTE)]
+
+
+class TestJobCompleted:
+    """What the user is told, and what is made durable, when a job finishes (issue #82).
+
+    _job_completed was 3% covered. It is not the view glue it looks like from the outside:
+    it decides between four different success messages, whether the results window or the
+    problem dialog appears, and it is where the hash caches are committed.
+
+    The message chain is the part worth guarding. Telling someone their files went to the
+    Trash when they were permanently deleted is a statement about whether the operation can
+    be undone, and it is decided by a single `elif` on deletion_options.direct.
+    """
+
+    @staticmethod
+    def _app():
+        dgapp = TestApp().app
+        calls = {"results_window": 0, "problem_dialog": 0}
+        dgapp.view.show_results_window = lambda: calls.__setitem__("results_window", calls["results_window"] + 1)
+        dgapp.view.show_problem_dialog = lambda: calls.__setitem__("problem_dialog", calls["problem_dialog"] + 1)
+        dgapp.problem_dialog.refresh = lambda: None
+        return dgapp, calls
+
+    # --- scan ---
+
+    def test_scan_with_no_groups_says_so_and_opens_nothing(self):
+        dgapp, calls = self._app()
+        dgapp.results.groups = []
+        dgapp._job_completed(app.JobType.SCAN)
+        assert "No duplicates found." in dgapp.view.messages
+        assert calls["results_window"] == 0
+
+    def test_scan_with_groups_opens_the_results_window_silently(self):
+        dgapp, calls = self._app()
+        objects, matches, groups = GetTestGroups()
+        dgapp.results.groups = groups
+        dgapp._job_completed(app.JobType.SCAN)
+        assert calls["results_window"] == 1
+        assert dgapp.view.messages == []
+
+    def test_scan_commits_both_hash_caches(self, monkeypatch):
+        """Durability: FilesDB batches writes and only a commit makes them survive.
+
+        Losing this would not fail anything visibly -- the scan still works, the next one is
+        just slow again for no apparent reason.
+
+        monkeypatch, not plain assignment: filesdb and hashcachedb are module-level
+        singletons, so replacing a method on them without restoring would leak a stub into
+        every test that ran afterwards.
+        """
+        from core.hash_cache import hashcachedb
+
+        dgapp, _ = self._app()
+        dgapp.results.groups = []
+        committed = []
+        monkeypatch.setattr(fs.filesdb, "commit", lambda: committed.append("filesdb"))
+        monkeypatch.setattr(hashcachedb, "commit", lambda: committed.append("hashcachedb"))
+        dgapp._job_completed(app.JobType.SCAN)
+        assert committed == ["filesdb", "hashcachedb"]
+
+    # --- load ---
+
+    def test_load_rebuilds_the_table_and_opens_the_results_window(self):
+        dgapp, calls = self._app()
+        rebuilt = []
+        dgapp._recreate_result_table = lambda: rebuilt.append(True)
+        dgapp._job_completed(app.JobType.LOAD)
+        assert rebuilt == [True]
+        assert calls["results_window"] == 1
+
+    # --- problems take priority over any success message ---
+
+    def test_problems_open_the_problem_dialog_instead_of_reporting_success(self):
+        dgapp, calls = self._app()
+        objects, matches, groups = GetTestGroups()
+        dgapp.results.groups = groups
+        dgapp.results.problems = [(objects[1], "nope")]
+        dgapp._job_completed(app.JobType.DELETE)
+        assert calls["problem_dialog"] == 1
+        assert dgapp.view.messages == [], "a success message was shown despite failures"
+
+    def test_the_problem_dialog_is_refreshed_before_being_shown(self):
+        """Showing a stale dialog would list the previous run's failures."""
+        dgapp, calls = self._app()
+        objects, matches, groups = GetTestGroups()
+        dgapp.results.groups = groups
+        dgapp.results.problems = [(objects[1], "nope")]
+        order = []
+        dgapp.problem_dialog.refresh = lambda: order.append("refresh")
+        dgapp.view.show_problem_dialog = lambda: order.append("show")
+        dgapp._job_completed(app.JobType.COPY)
+        assert order == ["refresh", "show"]
+
+    # --- the four success messages ---
+
+    def test_copy_reports_copying(self):
+        dgapp, _ = self._app()
+        dgapp._job_completed(app.JobType.COPY)
+        assert dgapp.view.messages == ["All marked files were copied successfully."]
+
+    def test_move_reports_moving(self):
+        dgapp, _ = self._app()
+        dgapp._job_completed(app.JobType.MOVE)
+        assert dgapp.view.messages == ["All marked files were moved successfully."]
+
+    def test_direct_delete_reports_deletion_not_trash(self):
+        """The distinction is whether the files can be recovered."""
+        dgapp, _ = self._app()
+        dgapp.deletion_options.direct = True
+        dgapp._job_completed(app.JobType.DELETE)
+        assert dgapp.view.messages == ["All marked files were deleted successfully."]
+
+    def test_trash_delete_reports_trash_not_deletion(self):
+        dgapp, _ = self._app()
+        dgapp.deletion_options.direct = False
+        dgapp._job_completed(app.JobType.DELETE)
+        assert dgapp.view.messages == ["All marked files were successfully sent to Trash."]
+
+    def test_scan_reports_no_success_message(self):
+        """Only copy, move and delete report success; a scan opening a window is enough."""
+        dgapp, _ = self._app()
+        objects, matches, groups = GetTestGroups()
+        dgapp.results.groups = groups
+        dgapp._job_completed(app.JobType.SCAN)
+        assert dgapp.view.messages == []
