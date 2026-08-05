@@ -171,6 +171,43 @@ PyDoc_STRVAR(block_avgdiff_doc,
 If the result surpasses limit, limit + 1 is returned, except if less than min_iterations\n\
 iterations have been made in the blocks.\n");
 
+/* Fast path for block signatures held as raw bytes (3 bytes per block, RGB).
+ *
+ * The generic path below walks a Python list of 3-tuples, which costs six
+ * PySequence_ITEM / PyLong_AsLong / Py_DECREF calls per block pair -- around
+ * 1350 object operations for a 15x15 signature. It also forces callers to keep
+ * signatures inflated in memory: the same data is ~675 bytes as bytes and
+ * ~37000 bytes as a list of tuples, which is what made large scans thrash.
+ *
+ * Semantics are identical to the generic path, including early termination and
+ * the final division. Note the divisor is the BLOCK count, not the byte count.
+ */
+static PyObject *avgdiff_bytes(const unsigned char *first,
+                               const unsigned char *second, Py_ssize_t length,
+                               int limit, int min_iterations) {
+  Py_ssize_t count, i;
+  int sum, result;
+
+  count = length / 3;
+  sum = 0;
+  for (i = 0; i < count; i++) {
+    Py_ssize_t offset = i * 3;
+    Py_ssize_t iteration_count = i + 1;
+    sum += abs((int)first[offset] - (int)second[offset]) +
+           abs((int)first[offset + 1] - (int)second[offset + 1]) +
+           abs((int)first[offset + 2] - (int)second[offset + 2]);
+    if ((sum > limit * iteration_count) && (iteration_count >= min_iterations)) {
+      return PyLong_FromLong(limit + 1);
+    }
+  }
+
+  result = (int)(sum / count);
+  if (!result && sum) {
+    result = 1;
+  }
+  return PyLong_FromLong(result);
+}
+
 static PyObject *block_avgdiff(PyObject *self, PyObject *args) {
   PyObject *first, *second;
   int limit, min_iterations;
@@ -180,6 +217,22 @@ static PyObject *block_avgdiff(PyObject *self, PyObject *args) {
   if (!PyArg_ParseTuple(args, "OOii", &first, &second, &limit,
                         &min_iterations)) {
     return NULL;
+  }
+
+  if (PyBytes_Check(first) && PyBytes_Check(second)) {
+    Py_ssize_t len1 = PyBytes_GET_SIZE(first);
+    Py_ssize_t len2 = PyBytes_GET_SIZE(second);
+    if (len1 != len2) {
+      PyErr_SetString(DifferentBlockCountError, "");
+      return NULL;
+    }
+    if (!len1) {
+      PyErr_SetString(NoBlocksError, "");
+      return NULL;
+    }
+    return avgdiff_bytes((const unsigned char *)PyBytes_AS_STRING(first),
+                         (const unsigned char *)PyBytes_AS_STRING(second), len1,
+                         limit, min_iterations);
   }
 
   count = PySequence_Length(first);

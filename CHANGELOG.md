@@ -9,6 +9,20 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **Picture block signatures stay compact in memory** (`core/pe/modules/block.c`,
+  `core/pe/cache_sqlite.py`, `core/pe/matchblock.py`): signatures are stored as bytes but
+  were inflated into lists of 3-tuples on every read — measured at 37 KB against 708 B for
+  a 15x15 signature, a 52x expansion — and `getmatches` holds one per picture for the whole
+  corpus simultaneously. On a 500,000-picture scan that is 18.5 GB of block data, or
+  148 GB with `match_rotated`, which is what made large scans thrash rather than compute.
+  `avgdiff` now accepts raw bytes, and the matching path reads them without inflating.
+  The same change is **14x faster** per comparison: the generic path spends six
+  `PySequence_ITEM`/`PyLong_AsLong`/`Py_DECREF` calls per block pair, against pointer
+  arithmetic for bytes. Measured at 3.2 us versus 0.2 us for a 225-block signature.
+  The list-of-tuples path is unchanged and still works, so nothing else has to move.
+
 ## [4.8.0] - 2026-08-04
 
 ### Added

@@ -65,6 +65,32 @@ class SqliteCache:
         else:
             raise KeyError(key)
 
+    def get_blocks_raw(self, key):
+        """Block signatures exactly as stored: a list of 8 bytes objects.
+
+        __getitem__ inflates each signature into a list of 3-tuples, which is what
+        avgdiff historically required. That representation is roughly 52 times larger
+        than the stored bytes -- 37 KB against 708 B for a 15x15 signature -- and
+        getmatches holds one per picture for the whole corpus at once, so on a large
+        scan the inflation, not the comparison, is what runs the machine out of memory.
+        avgdiff now accepts bytes directly, so callers on that path use this instead.
+        """
+        if isinstance(key, int):
+            sql = (
+                "select blocks, blocks2, blocks3, blocks4, blocks5, blocks6, blocks7, blocks8 "
+                "from pictures where rowid = ?"
+            )
+        else:
+            sql = (
+                "select blocks, blocks2, blocks3, blocks4, blocks5, blocks6, blocks7, blocks8 "
+                "from pictures where path = ?"
+            )
+        row = self.con.execute(sql, [key]).fetchone()
+        if not row:
+            raise KeyError(key)
+        # sqlite hands back bytes for BLOB columns; normalise NULLs to empty.
+        return [bytes(block) if block else b"" for block in row]
+
     def __iter__(self):
         sql = "select path from pictures"
         result = self.con.execute(sql)

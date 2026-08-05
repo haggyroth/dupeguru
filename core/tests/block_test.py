@@ -187,3 +187,77 @@ class TestCaseavgdiff:
         blocks1 = [ref, ref]
         blocks2 = [ref, ref]
         eq_(0, my_avgdiff(blocks1, blocks2))
+
+
+class TestAvgdiffBytesFastPath:
+    """avgdiff accepts raw block bytes as well as lists of 3-tuples.
+
+    Block signatures are stored as bytes and were inflated into lists of tuples on every
+    read -- about 52 times larger, 37 KB against 708 B for a 15x15 signature -- and
+    getmatches holds one per picture for an entire corpus at once. Accepting bytes removes
+    that inflation, and is also ~14x faster because the generic path spends six
+    PySequence_ITEM/PyLong_AsLong/Py_DECREF calls per block pair.
+
+    These pin the two things that could silently drift: the result must equal the
+    list-of-tuples result exactly, and the divisor must be the block count rather than the
+    byte count.
+    """
+
+    @staticmethod
+    def _to_bytes(colors):
+        return b"".join(bytes(c) for c in colors)
+
+    def test_matches_the_tuple_path_on_random_signatures(self):
+        import random
+
+        random.seed(7)
+        for _ in range(500):
+            n = random.choice([1, 2, 3, 5, 15, 225])
+            a = [tuple(random.randrange(256) for _ in range(3)) for _ in range(n)]
+            b = [tuple(random.randrange(256) for _ in range(3)) for _ in range(n)]
+            limit = random.choice([0, 1, 5, 50, 200, 768, 769])
+            min_iter = random.choice([1, 2, 3, 10])
+            eq_(
+                avgdiff(a, b, limit, min_iter),
+                avgdiff(self._to_bytes(a), self._to_bytes(b), limit, min_iter),
+            )
+
+    def test_identical_signatures_are_zero(self):
+        blocks = [(10, 20, 30)] * 225
+        eq_(0, avgdiff(self._to_bytes(blocks), self._to_bytes(blocks), 769, 1))
+
+    def test_maximum_distance(self):
+        white = self._to_bytes([(255, 255, 255)] * 225)
+        black = self._to_bytes([(0, 0, 0)] * 225)
+        eq_(765, avgdiff(white, black, 769, 1))
+
+    def test_divisor_is_the_block_count_not_the_byte_count(self):
+        """The subtle one. len(bytes) is 3x the block count, so dividing by it would
+        report a third of the true distance and quietly match unrelated pictures."""
+        # Two blocks differing by 30 in each channel: per-block diff 90, average 90.
+        a = self._to_bytes([(0, 0, 0), (0, 0, 0)])
+        b = self._to_bytes([(30, 30, 30), (30, 30, 30)])
+        eq_(90, avgdiff(a, b, 769, 1))
+        eq_(avgdiff([(0, 0, 0), (0, 0, 0)], [(30, 30, 30), (30, 30, 30)], 769, 1), avgdiff(a, b, 769, 1))
+
+    def test_early_termination_matches_the_tuple_path(self):
+        a = [(0, 0, 0)] * 100
+        b = [(255, 255, 255)] * 100
+        for limit in (0, 1, 10, 100):
+            eq_(
+                avgdiff(a, b, limit, 3),
+                avgdiff(self._to_bytes(a), self._to_bytes(b), limit, 3),
+            )
+
+    def test_empty_bytes_raise_no_blocks(self):
+        with raises(NoBlocksError):
+            avgdiff(b"", b"", 769, 1)
+
+    def test_different_lengths_raise(self):
+        with raises(DifferentBlockCountError):
+            avgdiff(b"\x01\x02\x03", b"\x01\x02\x03\x04\x05\x06", 769, 1)
+
+    def test_mixed_argument_types_use_the_generic_path(self):
+        """Only both-bytes takes the fast path; a mixed call must still be correct."""
+        colors = [(1, 2, 3), (4, 5, 6)]
+        eq_(0, avgdiff(colors, colors, 769, 1))
