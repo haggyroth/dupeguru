@@ -6,6 +6,7 @@
 
 """Tests for core.export, which previously had none (26% covered)."""
 
+from pathlib import Path
 import csv
 import os.path as op
 
@@ -32,7 +33,7 @@ ROWS = [
 def test_xhtml_writes_a_file_that_contains_every_value():
     path = export_to_xhtml(COLNAMES, ROWS)
     assert op.exists(path)
-    content = open(path, encoding="utf-8").read()
+    content = Path(path).read_text(encoding="utf-8")
     for name in COLNAMES:
         assert f"<th>{name}</th>" in content
     for row in ROWS:
@@ -43,7 +44,7 @@ def test_xhtml_writes_a_file_that_contains_every_value():
 def test_xhtml_indents_only_non_reference_rows():
     """The first row of each group is the keeper and must not be indented."""
     path = export_to_xhtml(COLNAMES, ROWS)
-    content = open(path, encoding="utf-8").read()
+    content = Path(path).read_text(encoding="utf-8")
     # Two group changes (0 then 1) produce two unindented rows; one repeat produces one indented.
     eq_(content.count('class="indented"'), 1)
     eq_(content.count('class=""'), 2)
@@ -51,7 +52,7 @@ def test_xhtml_indents_only_non_reference_rows():
 
 def test_xhtml_handles_no_rows():
     path = export_to_xhtml(COLNAMES, [])
-    content = open(path, encoding="utf-8").read()
+    content = Path(path).read_text(encoding="utf-8")
     assert "<h1>dupeGuru Results</h1>" in content
     assert "<td class=" not in content
 
@@ -63,7 +64,7 @@ def test_xhtml_rejects_rows_of_the_wrong_width():
 
 def test_xhtml_writes_utf8():
     path = export_to_xhtml(COLNAMES, [[0, "café – naïve.txt", "/a", "1"]])
-    content = open(path, encoding="utf-8").read()
+    content = Path(path).read_text(encoding="utf-8")
     assert "café – naïve.txt" in content
 
 

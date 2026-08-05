@@ -146,7 +146,7 @@ class TestCaseDupeGuru:
         # If the ignore_hardlink_matches option is set, don't match files hardlinking to the same
         # inode.
         tmppath = Path(str(tmpdir))
-        tmppath.joinpath("myfile").open("wt").write("foo")
+        tmppath.joinpath("myfile").write_text("foo")
         os.link(str(tmppath.joinpath("myfile")), str(tmppath.joinpath("hardlink")))
         app = TestApp().app
         app.directories.add_path(tmppath)
