@@ -622,7 +622,12 @@ class DupeGuru(Broadcaster):
         if dest_type in {DestType.RELATIVE, DestType.ABSOLUTE}:
             # no filename, no windows drive letter
             source_base = source_path.relative_to(source_path.anchor).parent
-            if dest_type == DestType.RELATIVE:
+            # location_path is None when the dupe *is* one of the scanned folders rather than
+            # living inside one, which is the ordinary shape of a folder-mode result: add
+            # /photos/2023 and /photos/2024, scan with --scan-type folders, and the dupes are
+            # the added directories themselves. There is no meaningful path relative to
+            # itself, so fall back to the absolute layout instead of dereferencing None.
+            if dest_type == DestType.RELATIVE and location_path is not None:
                 source_base = source_base.relative_to(location_path.relative_to(location_path.anchor))
             dest_path = dest_path.joinpath(source_base)
         if not dest_path.exists():
