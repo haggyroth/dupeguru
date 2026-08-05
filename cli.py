@@ -860,6 +860,16 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Minimum match percentage to consider two files duplicates (default: 80).",
     )
     knobs.add_argument(
+        "--match-scaled",
+        action="store_true",
+        default=False,
+        help=(
+            "Picture mode: also match images of different dimensions. Off by default, "
+            "matching the GUI. Without it a resized copy of an image is never reported as "
+            "a duplicate, at any --min-match value."
+        ),
+    )
+    knobs.add_argument(
         "--word-weighting",
         action="store_true",
         default=False,
@@ -1234,6 +1244,7 @@ def main(argv=None) -> int:
 
     # Scanner knobs -------------------------------------------------------
     app.options["min_match_percentage"] = args.min_match
+    app.options["match_scaled"] = args.match_scaled
     app.options["word_weighting"] = args.word_weighting
     app.options["match_similar_words"] = args.match_similar
     app.options["mix_file_kind"] = args.mix_file_kind
