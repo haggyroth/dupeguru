@@ -135,7 +135,10 @@ def prepare_pictures(pictures, cache_path, with_dimensions, match_rotated, j=job
     # MemoryError happens when trying to read an image file, which is freed from memory by the
     # time that MemoryError is raised.
     cache = get_cache(cache_path)
-    cache.purge_outdated()
+    # Scoped to the directories actually being scanned. Unscoped, this re-stats every
+    # directory the cache has ever held, which makes the cost grow with usage history and
+    # drags an unrelated slow or unmounted volume into every scan (issue #93).
+    cache.purge_outdated(scoped_to={str(p.path.parent) for p in pictures})
     prepared = []  # only pictures for which there was no error getting blocks
 
     # Decoding and hashing images is the dominant cost of a first scan and is entirely
