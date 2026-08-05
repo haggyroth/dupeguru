@@ -23,6 +23,9 @@ PyYAML is declared in requirements-extra.txt for that reason.
 
 import itertools
 from pathlib import Path
+import pytest
+import core
+import cli
 
 import yaml
 
@@ -111,3 +114,17 @@ def test_artifact_uploads_exclude_the_fallback_leg():
             f"upload step {step.get('name')!r} must exclude the fallback leg by value; "
             f"testing for the key's presence suppresses the wrong job. Found: {condition!r}"
         )
+
+def test_version_flag_prints_the_version(capsys):
+    parser = cli._build_parser()
+    with pytest.raises(SystemExit) as exc:
+        parser.parse_args(["--version"])
+    assert exc.value.code == 0
+    assert core.__version__ in capsys.readouterr().out
+
+def test_version_flag_works_without_a_folder_argument():
+    """--version must not require the positional argument."""
+    parser = cli._build_parser()
+    with pytest.raises(SystemExit) as exc:
+        parser.parse_args(["--version"])
+    assert exc.value.code == 0
