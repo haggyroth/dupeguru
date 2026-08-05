@@ -20,6 +20,8 @@ import sys
 
 import pytest
 
+from hscommon.plat import ISWINDOWS
+
 from hscommon.build import BuildError, run_checked
 
 
@@ -91,6 +93,15 @@ class TestSequenceCommands:
     'ln -s /Applications "{}"' to create INJECTED.
     """
 
+    @pytest.mark.skipif(
+        ISWINDOWS,
+        reason=(
+            "unreachable on Windows: the characters needed to break out of the old code's "
+            "double-quoting -- notably '\"' -- are illegal in Windows filenames, so mkdir "
+            "raises before the command is ever built. Characters that *are* legal there, "
+            "like '&', are not special inside the quotes the old code emitted."
+        ),
+    )
     def test_a_path_containing_shell_metacharacters_is_not_executed(self, tmp_path, monkeypatch):
         """The injection itself. The marker file must not appear."""
         monkeypatch.chdir(tmp_path)
