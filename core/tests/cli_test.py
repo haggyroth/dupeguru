@@ -1425,3 +1425,26 @@ class TestPictureMode:
         rc = main([str(tmp_path), "--dry-run"])
         assert rc == EXIT_DUPES_FOUND
         assert core.pe.photo.PLAT_SPECIFIC_PHOTO_CLASS is None
+
+    def test_match_scaled_flag_reaches_the_options(self):
+        args = cli._build_parser().parse_args(["--mode", "picture", "--match-scaled", "/tmp"])
+        assert args.match_scaled is True
+
+    def test_match_scaled_defaults_off_to_agree_with_the_gui(self):
+        """The CLI's stated convention is that defaults match the GUI's, and the GUI's is off."""
+        args = cli._build_parser().parse_args(["--mode", "picture", "/tmp"])
+        assert args.match_scaled is False
+
+    def test_resized_duplicates_are_found_only_with_match_scaled(self, tmp_path, restore_photo_class, isolated_appdata):
+        """The behavioural test: the flag is what gates cross-dimension matching.
+
+        Without it, matchblock.prepare_pictures buckets by dimension, so a resized copy is
+        excluded before scoring -- which is why lowering --min-match never surfaces one.
+        The two parser tests above would pass even if the option were dropped on the floor
+        between argparse and the scanner; this one would not.
+        """
+        pytest.importorskip("qtpy", reason="picture mode decodes through a Qt binding")
+        (tmp_path / "big.bmp").write_bytes(_bmp(64, 64))
+        (tmp_path / "small.bmp").write_bytes(_bmp(32, 32))
+        assert main([str(tmp_path), "--mode", "picture", "--dry-run"]) == EXIT_OK
+        assert main([str(tmp_path), "--mode", "picture", "--match-scaled", "--dry-run"]) == EXIT_DUPES_FOUND
