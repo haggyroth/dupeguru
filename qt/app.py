@@ -183,6 +183,7 @@ class DupeGuru(QObject):
         # Only meaningful alongside partial hashing: with no partial matches there is
         # nothing to verify, and the scanner's verification pass is a no-op.
         self.model.options["full_verify"] = self.prefs.full_verify and self.prefs.big_file_partial_hashes
+        self._apply_file_list_cache()
         scanned_tags = set()
         if self.prefs.scan_tag_track:
             scanned_tags.add("track")
@@ -208,6 +209,31 @@ class DupeGuru(QObject):
         self._set_style("dark" if self.prefs.use_dark_style else "light")
 
     # --- Private
+
+    def _apply_file_list_cache(self):
+        """Attach or detach the directory listing cache to match the preference.
+
+        Not an entry in model.options: the cache is a collaborator on Directories rather than
+        a scanner knob, so it has to be connected and disconnected explicitly. Handling the
+        off case matters as much as the on case -- unticking the box has to actually stop the
+        cache being used, not merely stop refreshing it.
+
+        The default location only became sane once every front end resolved the same appdata
+        directory (#94); before that this would have written into the root of the user's
+        application data folder.
+        """
+        from core.file_list_cache import FileListCache, default_cache_path
+
+        directories = self.model.directories
+        if self.prefs.cache_file_list:
+            if directories.file_list_cache is None:
+                cache = FileListCache()
+                cache.connect(default_cache_path(self.model.appdata))
+                directories.file_list_cache = cache
+        elif directories.file_list_cache is not None:
+            directories.file_list_cache.close()
+            directories.file_list_cache = None
+
     def _get_details_dialog_class(self):
         if self.model.app_mode == AppMode.PICTURE:
             return DetailsDialogPicture

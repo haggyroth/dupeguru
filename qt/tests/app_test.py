@@ -211,3 +211,50 @@ class TestDialogAttributeNaming:
             assert assigned == 2, (
                 f"expected self.{name} to be assigned in both _setup branches, " f"found {assigned} assignment(s)"
             )
+
+
+class TestFileListCachePreference:
+    """The preference must reach Directories, and unticking must actually detach it.
+
+    A preference that is stored and displayed but never connected is the failure mode this
+    project keeps hitting -- a scanner knob that reaches the dialog and not the scan looks
+    identical to a working one from the UI.
+    """
+
+    def test_enabling_attaches_a_cache(self, dgapp, restore_prefs):
+        dgapp.prefs.cache_file_list = True
+        dgapp._update_options()
+        assert dgapp.model.directories.file_list_cache is not None
+
+    def test_disabling_detaches_it(self, dgapp, restore_prefs):
+        """Unticking has to stop the cache being used, not just stop refreshing it."""
+        dgapp.prefs.cache_file_list = True
+        dgapp._update_options()
+        assert dgapp.model.directories.file_list_cache is not None
+
+        dgapp.prefs.cache_file_list = False
+        dgapp._update_options()
+        assert dgapp.model.directories.file_list_cache is None
+
+    def test_enabling_twice_reuses_the_same_cache(self, dgapp, restore_prefs):
+        """_update_options runs before every scan; each one must not open another connection."""
+        dgapp.prefs.cache_file_list = True
+        dgapp._update_options()
+        first = dgapp.model.directories.file_list_cache
+        dgapp._update_options()
+        assert dgapp.model.directories.file_list_cache is first
+
+    def test_cache_lands_in_appdata(self, dgapp, restore_prefs):
+        """Beside the other caches, not in the root of the application data folder (#94)."""
+        from core.file_list_cache import default_cache_path
+
+        dgapp.prefs.cache_file_list = True
+        dgapp._update_options()
+        expected = default_cache_path(dgapp.model.appdata)
+        assert expected.startswith(dgapp.model.appdata)
+        assert expected.endswith("file_list_cache.db")
+
+    def test_default_is_off(self, dgapp, restore_prefs):
+        """The cache trades a missed in-place edit for speed, so it must be opt-in."""
+        dgapp.prefs.reset()
+        assert dgapp.prefs.cache_file_list is False
