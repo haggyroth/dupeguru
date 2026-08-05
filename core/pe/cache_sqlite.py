@@ -94,6 +94,71 @@ class SqliteCache:
         except sqlite.DatabaseError as e:
             logging.warning("DatabaseError while setting blocks for %r: %s", path_str, str(e))
 
+    def set_blocks_raw_many(self, entries):
+        """Store many pre-encoded signatures in one transaction.
+
+        The connection runs with isolation_level=None, so every individual write is its own
+        transaction and its own commit. That is fine for a handful of pictures and ruinous
+        for a large scan: preparing 500,000 pictures means 500,000 commits, which became the
+        limiting factor once preparation itself was parallelised.
+
+        *entries* is an iterable of (path_str, blocks) where blocks is 8 bytes objects.
+        """
+        rows_update, rows_insert = [], []
+        for path_str, blocks in entries:
+            if len(blocks) != 8:
+                raise ValueError(f"expected 8 block signatures for {path_str}, got {len(blocks)}")
+            mtime = int(os.stat(path_str).st_mtime) if op.exists(path_str) else 0
+            payload = list(blocks) + [mtime * 1000000000, path_str]
+            (rows_update if path_str in self else rows_insert).append(payload)
+
+        if not rows_update and not rows_insert:
+            return
+        try:
+            # One explicit transaction around the batch rather than one per row.
+            self.con.execute("begin")
+            if rows_insert:
+                self.con.executemany(
+                    "insert into pictures(blocks,blocks2,blocks3,blocks4,blocks5,blocks6,blocks7,"
+                    "blocks8,mtime_ns,path) values(?,?,?,?,?,?,?,?,?,?)",
+                    rows_insert,
+                )
+            if rows_update:
+                self.con.executemany(
+                    "update pictures set blocks = ?, blocks2 = ?, blocks3 = ?, blocks4 = ?, "
+                    "blocks5 = ?, blocks6 = ?, blocks7 = ?, blocks8 = ?, mtime_ns = ? where path = ?",
+                    rows_update,
+                )
+            self.con.execute("commit")
+        except sqlite.Error as e:
+            logging.warning("Picture cache batch write failed (%s); rolling back", e)
+            try:
+                self.con.execute("rollback")
+            except sqlite.Error:
+                pass
+            raise
+
+    def get_blocks_raw_for_paths(self, paths):
+        """Return {path: (rowid, [8 bytes objects])} for the paths present in the cache.
+
+        Replaces a get_id plus a get_blocks_raw per picture -- two queries each, so a million
+        round trips for a 500,000-picture scan. One sequential pass over the table is far
+        cheaper than that many indexed lookups, and the rows are filtered here rather than
+        with a huge IN clause, which would exceed SQLite's parameter limit anyway.
+        """
+        wanted = set(paths)
+        if not wanted:
+            return {}
+        sql = (
+            "select rowid, path, blocks, blocks2, blocks3, blocks4, blocks5, blocks6, blocks7, blocks8 " "from pictures"
+        )
+        result = {}
+        for row in self.con.execute(sql):
+            path = row[1]
+            if path in wanted:
+                result[path] = (row[0], [bytes(b) if b else b"" for b in row[2:]])
+        return result
+
     def get_blocks_raw(self, key):
         """Block signatures exactly as stored: a list of 8 bytes objects.
 
