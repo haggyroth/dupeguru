@@ -224,15 +224,31 @@ class DupeGuru(QObject):
         """
         from core.file_list_cache import FileListCache, default_cache_path
 
+        from core.pe.match_cache import MatchCache
+        from core.pe.match_cache import default_cache_path as match_cache_path
+
         directories = self.model.directories
         if self.prefs.cache_file_list:
             if directories.file_list_cache is None:
                 cache = FileListCache()
                 cache.connect(default_cache_path(self.model.appdata))
                 directories.file_list_cache = cache
-        elif directories.file_list_cache is not None:
-            directories.file_list_cache.close()
-            directories.file_list_cache = None
+            if self.model.picture_match_cache is None:
+                # Same preference, deliberately. Both caches answer one user-facing question --
+                # "may dupeGuru remember what it saw last time" -- and they carry the same
+                # tradeoff. Two checkboxes would ask it twice and invite the half-on state,
+                # where listings are reused but matching is not, which is the slow path with
+                # none of the safety.
+                match_cache = MatchCache()
+                match_cache.connect(match_cache_path(self.model.appdata))
+                self.model.picture_match_cache = match_cache
+        else:
+            if directories.file_list_cache is not None:
+                directories.file_list_cache.close()
+                directories.file_list_cache = None
+            if self.model.picture_match_cache is not None:
+                self.model.picture_match_cache.close()
+                self.model.picture_match_cache = None
 
     def _get_details_dialog_class(self):
         if self.model.app_mode == AppMode.PICTURE:

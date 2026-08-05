@@ -1268,6 +1268,14 @@ def main(argv=None) -> int:
         flcache = file_list_cache.FileListCache()
         flcache.connect(cache_path)
         app.directories.file_list_cache = flcache
+        # Same flag covers picture matching, which is 99% of a warm picture rescan. Enabling
+        # listings but not matching would be the slow path with none of the safety.
+        if app.app_mode == AppMode.PICTURE:
+            from core.pe.match_cache import MatchCache, default_cache_path as match_cache_path
+
+            mcache = MatchCache()
+            mcache.connect(match_cache_path(app.appdata))
+            app.picture_match_cache = mcache
     app.options["min_match_percentage"] = args.min_match
     app.options["match_scaled"] = args.match_scaled
     app.options["word_weighting"] = args.word_weighting

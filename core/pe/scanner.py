@@ -15,6 +15,9 @@ class ScannerPE(Scanner):
     cache_path = None
     match_scaled = False
     match_rotated = False
+    # Optional core.pe.match_cache.MatchCache. Set by the app when the user opts in; None
+    # means matching is recomputed every scan, which is the behaviour before issue #28.
+    match_cache = None
 
     @staticmethod
     def get_scan_options():
@@ -32,6 +35,7 @@ class ScannerPE(Scanner):
                 match_scaled=self.match_scaled,
                 match_rotated=self.match_rotated,
                 j=j,
+                match_cache=self.match_cache,
             )
         elif self.scan_type == ScanType.EXIFTIMESTAMP:
             return matchexif.getmatches(files, self.match_scaled, j)
