@@ -34,6 +34,30 @@ Preferences
     If this option is enabled, dupeGuru will verify duplicates to see if they refer to the same
     `inode`_. If they do, they will not be considered duplicates. (Only for OS X and Linux)
 
+**Partially hash files bigger than:**
+    Above this size, dupeGuru compares three sampled chunks of a file instead of reading it
+    from end to end. Large scans get much faster, but it is a real trade: two different files
+    can agree on every sampled chunk and still be reported as duplicates. Such a pair still
+    scores 100%, so the match percentage alone will not tell you. Set it to 0 to always
+    compare full contents.
+
+**Verify partially hashed matches by comparing full contents:**
+    Re-reads only the files involved in a partial match and discards any pair that does not
+    match in full. This gives you the speed of partial hashing with the certainty of a full
+    comparison, at the cost of reading the matched files a second time. Has no effect unless
+    partial hashing is enabled above.
+
+**Remember scan results between scans:**
+    Reuses what the previous scan found when nothing has changed: folder listings, and in
+    Picture mode the comparison results too. Re-reading folders is the slow part of scanning
+    an external or network drive, and comparing a large photo library is slower still, so a
+    repeat scan of an unchanged drive becomes close to instant.
+
+    Files added, removed or renamed are still noticed. A file edited *in place* without its
+    folder changing may be missed until the next full scan, which is why this is off by
+    default. Nothing is ever deleted on the basis of remembered information -- every file is
+    re-checked against the disk immediately before it is removed.
+
 **Use regular expressions when filtering:**
     If you check this box, the filtering feature will treat your filter query as a
     **regular expression**. Explaining them is beyond the scope of this document. A good place to

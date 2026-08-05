@@ -54,7 +54,9 @@ To use PyQt5 instead:
     $ QT_API=pyqt5 python run.py
 
 `QT_API` is only needed when both bindings are installed; qtpy picks whichever it finds
-otherwise. The CLI (`dupeguru-scan`) needs no Qt binding at all.
+otherwise. The CLI needs no Qt binding for standard or music scans — the import is deferred —
+but `--mode picture` decodes images through Qt, so a binding is required for that and the CLI
+says so rather than failing obscurely.
 
 ### System Setup
 When running in a linux based environment the following system packages or equivalents are needed to build:
@@ -112,9 +114,70 @@ This fork ships a headless CLI for scripted and automated scans. It is installed
 
     $ dupeguru-scan <folder> [<folder> ...] [options]
     $ python cli.py <folder> [<folder> ...] [options]
-    $ python -m dupeguru <folder> [<folder> ...] [options]
 
 There is no `scan` subcommand — folders are positional arguments.
+
+`python -m dupeguru` also works, but only from the directory *containing* the checkout, since
+that is where `dupeguru` is importable as a package:
+
+    $ cd <parent of dupeGuru directory>
+    $ python -m dupeguru <folder> [<folder> ...] [options]
+
+### Scan modes
+
+`--mode` selects what is being compared. It defaults to `standard`.
+
+    $ dupeguru-scan ~/Photos --mode picture      # visually similar images
+    $ dupeguru-scan ~/Music --mode music         # tracks, by tag
+    $ dupeguru-scan ~/data                       # standard: file contents
+
+`--scan-type` picks the algorithm within a mode; the default suits the mode
+(`standard` → `contents`, `music` → `tag`, `picture` → `picture-contents`). `folders` compares
+whole directories rather than files.
+
+    $ dupeguru-scan ~/Backups --scan-type folders
+    $ dupeguru-scan ~/Music --scan-type fields-noorder
+
+Picture mode compares images of the **same dimensions** unless told otherwise, so a resized copy
+is not reported at any `--min-match` value. `--match-scaled` lifts that, at the cost of a larger
+comparison space:
+
+    $ dupeguru-scan ~/Photos --mode picture --match-scaled --min-match 90
+
+### Reference folders
+
+Files in a `--ref` folder are scanned but never offered for deletion. This is how you protect an
+original when scanning it alongside a backup:
+
+    $ dupeguru-scan /backup --ref /originals
+
+### Remembering results between scans
+
+Re-reading folder listings is the slow part of scanning an external or network drive, and in
+picture mode the comparisons are slower still. `--file-list-cache` reuses both when nothing has
+changed. Pass a path, or the flag alone to use the default location alongside the other caches:
+
+    $ dupeguru-scan /media/photos --mode picture --file-list-cache
+
+Folders whose contents have not changed are not read again, and in picture mode the previous
+comparison results are reused. Files added, removed or renamed are still noticed; a file edited
+in place without its folder changing may be missed until the next full scan. Nothing is deleted
+on the basis of stale information — every file is re-checked immediately before removal.
+
+The GUI equivalent is **Preferences → "Remember scan results between scans"**. Both are off by
+default, because they trade a possible missed match for the speed.
+
+### Other matching options
+
+| Option | Effect |
+|---|---|
+| `--min-match PERCENT` | minimum match percentage (default 80) |
+| `--word-weighting` | weight word matches by frequency (filename/fields modes) |
+| `--match-similar` | match similar words, not just identical ones |
+| `--mix-file-kind` | allow matches between different file extensions |
+| `--filter-hardlinks` / `--no-filter-hardlinks` | whether hardlinks to the same file count as duplicates |
+| `--trust-cache-ignore-mtime` | reuse cached hashes even when mtime changed |
+| `--verbose` | progress to stderr |
 
 Scan a folder and write JSON results:
 
