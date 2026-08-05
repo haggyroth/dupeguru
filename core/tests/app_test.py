@@ -228,6 +228,80 @@ class TestCaseDupeGuru:
         eq_(app.check_deletable(f, st.st_size, st.st_mtime - 1)[0], app.DeleteStatus.OK)
         eq_(app.check_deletable(f, st.st_size, st.st_mtime - 3)[0], app.DeleteStatus.CHANGED)
 
+    # --- Folders (issue #77) ---
+
+    def _folder_dupe(self, path):
+        """A Folder with size/mtime populated the way a scan would leave them."""
+        folder = fs.Folder(path)
+        folder._read_info("size")
+        folder._read_info("mtime")
+        return folder
+
+    def test_check_deletable_accepts_an_unchanged_folder(self, tmpdir):
+        """The regression: a folder's aggregate size is not its directory entry size.
+
+        Folder.size sums everything underneath (8000 bytes here); path.stat().st_size is the
+        directory entry (128 on APFS, 4096 on ext4). Comparing them classified every folder
+        as CHANGED, so folder-mode deletion could never happen at all.
+        """
+        sub = Path(str(tmpdir)) / "sub"
+        sub.mkdir()
+        (sub / "a.txt").write_text("x" * 5000)
+        (sub / "b.txt").write_text("y" * 3000)
+        folder = self._folder_dupe(sub)
+        assert folder.size != sub.stat().st_size, "test is meaningless if these agree"
+        status, message = app.check_deletable(sub, folder.size, folder.mtime)
+        eq_(status, app.DeleteStatus.OK)
+        eq_(message, "")
+
+    def test_check_deletable_still_refuses_a_changed_folder(self, tmpdir):
+        """The safety property has to survive the fix.
+
+        Skipping the size check for directories would make the test above pass while
+        silently removing the protection, so this asserts the refusal directly.
+        """
+        sub = Path(str(tmpdir)) / "sub"
+        sub.mkdir()
+        (sub / "a.txt").write_text("x" * 5000)
+        folder = self._folder_dupe(sub)
+        (sub / "b.txt").write_text("y" * 100)  # contents grew after the "scan"
+        eq_(app.check_deletable(sub, folder.size, folder.mtime)[0], app.DeleteStatus.CHANGED)
+
+    def test_check_deletable_counts_a_nested_folder(self, tmpdir):
+        """Folder.size recurses; the recomputed total must too."""
+        sub = Path(str(tmpdir)) / "sub"
+        (sub / "nested").mkdir(parents=True)
+        (sub / "top.txt").write_text("x" * 1000)
+        (sub / "nested" / "deep.txt").write_text("y" * 2000)
+        folder = self._folder_dupe(sub)
+        eq_(app.check_deletable(sub, folder.size, folder.mtime)[0], app.DeleteStatus.OK)
+
+    def test_check_deletable_ignores_symlinks_inside_a_folder(self, tmpdir):
+        """Folder.size never counts symlinks, because File.can_handle rejects them.
+
+        Counting one here would inflate the recomputed total and refuse the deletion -- the
+        same mismatch the fix exists to remove, just from the other direction.
+        """
+        sub = Path(str(tmpdir)) / "sub"
+        sub.mkdir()
+        (sub / "a.txt").write_text("x" * 5000)
+        try:
+            os.symlink(str(sub / "a.txt"), str(sub / "link.txt"))
+        except (OSError, NotImplementedError):
+            pytest.skip("no privilege to create symlinks on this platform")
+        folder = self._folder_dupe(sub)
+        eq_(app.check_deletable(sub, folder.size, folder.mtime)[0], app.DeleteStatus.OK)
+
+    def test_folder_dupe_is_actually_deleted(self, tmpdir):
+        """End to end: the predicate passing did not mean deletion worked."""
+        sub = Path(str(tmpdir)) / "sub"
+        sub.mkdir()
+        (sub / "a.txt").write_text("x" * 5000)
+        folder = self._folder_dupe(sub)
+        dgapp = TestApp().app
+        dgapp._do_delete_dupe(folder, False, False, True)
+        assert not sub.exists()
+
     def test_check_deletable_refuses_a_symlink(self, tmpdir):
         tmppath = Path(str(tmpdir))
         target = tmppath / "target.txt"

@@ -11,6 +11,7 @@ import os
 import os.path as op
 import logging
 import shlex
+import stat
 import subprocess
 import sys
 import shutil
@@ -102,6 +103,31 @@ class DeleteStatus:
 _MTIME_TOLERANCE = 2
 
 
+def _aggregate_size(path):
+    """Total size of every file under *path*, matching how :class:`~core.fs.Folder` sizes itself.
+
+    Symlinks are skipped, because ``Folder`` never counts them: its files come from
+    ``fs.get_files``, and ``File.can_handle`` rejects anything symlinked. Counting them here
+    would inflate the total against a folder that contains one and refuse the deletion --
+    the same class of mismatch this function was fixed for. ``os.walk`` likewise does not
+    descend into symlinked directories, matching ``Folder.subfolders``.
+
+    Unreadable entries are skipped rather than raising. A permission error partway through
+    would otherwise turn "verify before deleting" into "cannot delete at all", which is the
+    failure this whole function exists to prevent.
+    """
+    total = 0
+    for dirpath, _, filenames in os.walk(str(path)):
+        for name in filenames:
+            try:
+                st = os.lstat(op.join(dirpath, name))
+                if not stat.S_ISLNK(st.st_mode):
+                    total += st.st_size
+            except OSError:
+                pass
+    return total
+
+
 def check_deletable(path, expected_size, expected_mtime):
     """Decide whether *path* can still be deleted, without deleting anything.
 
@@ -132,7 +158,13 @@ def check_deletable(path, expected_size, expected_mtime):
             DeleteStatus.UNREADABLE,
             tr("Could not verify '{}' before deletion: {}").format(str(path), e),
         )
-    if st.st_size != expected_size or abs(st.st_mtime - expected_mtime) > _MTIME_TOLERANCE:
+    # A directory's st_size is the size of its own directory entry -- 128 bytes on APFS, 4096
+    # on ext4 -- while Folder.size is the aggregate of everything underneath it. Comparing the
+    # two can never match, so every folder was classified CHANGED and folder-mode deletion was
+    # impossible. Recompute the comparable quantity rather than dropping the check: a folder
+    # whose contents changed after the scan must still be refused.
+    actual_size = _aggregate_size(path) if path.is_dir() else st.st_size
+    if actual_size != expected_size or abs(st.st_mtime - expected_mtime) > _MTIME_TOLERANCE:
         return (
             DeleteStatus.CHANGED,
             tr(
