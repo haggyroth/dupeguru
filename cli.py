@@ -561,24 +561,55 @@ def _delete_dupes(app: DupeGuru, direct_delete: bool, verbose: bool) -> list[tup
 
 # --- Load saved results (--from-results) ------------------------------------
 
+# Sentinel: None is a legitimate JSON document, so it cannot mark 'did not parse'.
+_NOT_JSON = object()
+
 
 def _load_results_json(path: str) -> list[dict]:
-    """Parse a prior JSON or NDJSON results file into a flat list of group dicts."""
-    text = Path(path).read_text(encoding="utf-8")
+    """Parse a prior JSON or NDJSON results file into a flat list of group dicts.
+
+    Raises ValueError for anything that is not a results file. Every failure here is a user
+    pointing --from-results at the wrong path, so it has to arrive as a message rather than
+    a traceback: this used to raise AttributeError on JSON that was not an object, KeyError
+    on a group record missing its keys, and UnicodeDecodeError on a binary file.
+
+    json.JSONDecodeError and UnicodeDecodeError are both ValueError subclasses, so a single
+    except in the caller covers those and the checks below.
+    """
+    text = Path(path).read_text(encoding="utf-8")  # UnicodeDecodeError is a ValueError
+    if not text.strip():
+        # A scan with no duplicates still writes {"groups": [], "stats": {...}}, so an empty
+        # file is never something this produced. Reporting "no duplicates" would be worse
+        # than useless: it looks like a successful answer about the wrong file.
+        raise ValueError("file is empty")
     # Try regular JSON first (the default output format, even when pretty-printed).
     try:
         data = json.loads(text)
-        return data.get("groups", [])
     except json.JSONDecodeError:
-        pass
+        data = _NOT_JSON
+    if data is not _NOT_JSON:
+        if not isinstance(data, dict):
+            raise ValueError(f'expected a JSON object with a "groups" key, got {type(data).__name__}')
+        groups = data.get("groups", [])
+        if not isinstance(groups, list):
+            raise ValueError(f'"groups" must be a list, got {type(groups).__name__}')
+        return groups
     # Fall back to NDJSON: one JSON object per line.
     groups = []
-    for line in text.splitlines():
+    for lineno, line in enumerate(text.splitlines(), 1):
         line = line.strip()
         if not line:
             continue
-        obj = json.loads(line)  # let parse errors propagate
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"line {lineno}: {e}") from e
+        if not isinstance(obj, dict):
+            raise ValueError(f"line {lineno}: expected a JSON object, got {type(obj).__name__}")
         if obj.get("type") == "group":
+            missing = [k for k in ("reference", "duplicates") if k not in obj]
+            if missing:
+                raise ValueError(f"line {lineno}: group record is missing {', '.join(missing)}")
             groups.append({"reference": obj["reference"], "duplicates": obj["duplicates"]})
     return groups
 
@@ -1015,7 +1046,7 @@ def main(argv=None) -> int:
 
         try:
             groups = _load_results_json(args.from_results)
-        except (OSError, json.JSONDecodeError) as exc:
+        except (OSError, ValueError) as exc:  # JSONDecodeError/UnicodeDecodeError are ValueErrors
             print(f"error reading results file: {exc}", file=sys.stderr)
             return EXIT_BAD_ARGS
 

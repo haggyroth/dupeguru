@@ -1213,3 +1213,101 @@ class TestDryRunSummary:
         err = capsys.readouterr().err
         assert "1 file(s) in 1 group(s)" in err
         assert "1 matched on full content" in err
+
+
+# ---------------------------------------------------------------------------
+# Malformed --from-results input
+# ---------------------------------------------------------------------------
+
+
+class TestMalformedResultsFiles:
+    """Pointing --from-results at the wrong file must produce a message, not a traceback.
+
+    Every one of these previously crashed: JSON that is not an object raised AttributeError
+    from `data.get`, an NDJSON group record missing its keys raised KeyError, and a binary
+    file raised UnicodeDecodeError. The caller only caught OSError and JSONDecodeError.
+
+    It catches ValueError now, which covers JSONDecodeError and UnicodeDecodeError (both
+    subclasses) as well as the structural checks in the loader.
+    """
+
+    def _run(self, tmp_path, name, content, capsys):
+        path = tmp_path / name
+        if isinstance(content, bytes):
+            path.write_bytes(content)
+        else:
+            path.write_text(content)
+        rc = main(["--from-results", str(path)])
+        return rc, capsys.readouterr().err
+
+    @pytest.mark.parametrize(
+        "name,content",
+        [
+            ("list.json", "[]"),
+            ("number.json", "42"),
+            ("string.json", '"hello"'),
+            ("null.json", "null"),
+            ("bool.json", "true"),
+        ],
+    )
+    def test_json_that_is_not_an_object(self, tmp_path, capsys, name, content):
+        rc, err = self._run(tmp_path, name, content, capsys)
+        eq_(rc, EXIT_BAD_ARGS)
+        assert "error reading results file" in err
+        assert "Traceback" not in err
+
+    def test_binary_file(self, tmp_path, capsys):
+        rc, err = self._run(tmp_path, "bin.dat", b"\x00\x01\x02\xff\xfe", capsys)
+        eq_(rc, EXIT_BAD_ARGS)
+        assert "error reading results file" in err
+        assert "Traceback" not in err
+
+    def test_groups_key_is_not_a_list(self, tmp_path, capsys):
+        rc, err = self._run(tmp_path, "g.json", '{"groups": {"not": "a list"}}', capsys)
+        eq_(rc, EXIT_BAD_ARGS)
+        assert "must be a list" in err
+
+    def test_ndjson_group_missing_keys_names_the_line(self, tmp_path, capsys):
+        rc, err = self._run(tmp_path, "a.ndjson", '{"type":"group"}\n{"type":"stats","groups":0}\n', capsys)
+        eq_(rc, EXIT_BAD_ARGS)
+        assert "line 1" in err, err
+        assert "reference" in err
+
+    def test_ndjson_non_object_line(self, tmp_path, capsys):
+        rc, err = self._run(tmp_path, "b.ndjson", '{"type":"group","reference":{},"duplicates":[]}\n[1,2]\n', capsys)
+        eq_(rc, EXIT_BAD_ARGS)
+        assert "line 2" in err, err
+
+    def test_unparseable_line_names_the_line(self, tmp_path, capsys):
+        rc, err = self._run(tmp_path, "c.ndjson", '{"type":"group","reference":{},"duplicates":[]}\nnot json\n', capsys)
+        eq_(rc, EXIT_BAD_ARGS)
+        assert "line 2" in err, err
+
+    def test_missing_file(self, tmp_path, capsys):
+        rc = main(["--from-results", str(tmp_path / "nope.json")])
+        eq_(rc, EXIT_BAD_ARGS)
+        assert "error reading results file" in capsys.readouterr().err
+
+    def test_valid_file_still_loads(self, tmp_path, capsys):
+        """The guard rails must not reject legitimate output."""
+        scan = tmp_path / "scan"
+        scan.mkdir()
+        _write_files(scan, {"a.txt": b"same", "b.txt": b"same"})
+        out = tmp_path / "r.json"
+        eq_(main([str(scan), "--output", str(out)]), EXIT_DUPES_FOUND)
+        capsys.readouterr()
+        eq_(main(["--from-results", str(out)]), EXIT_DUPES_FOUND)
+
+    def test_valid_ndjson_still_loads(self, tmp_path, capsys):
+        scan = tmp_path / "scan"
+        scan.mkdir()
+        _write_files(scan, {"a.txt": b"same", "b.txt": b"same"})
+        out = tmp_path / "r.ndjson"
+        eq_(main([str(scan), "--ndjson", "--output", str(out)]), EXIT_DUPES_FOUND)
+        capsys.readouterr()
+        eq_(main(["--from-results", str(out)]), EXIT_DUPES_FOUND)
+
+    def test_empty_file_is_rejected_cleanly(self, tmp_path, capsys):
+        rc, err = self._run(tmp_path, "empty.json", "", capsys)
+        eq_(rc, EXIT_BAD_ARGS)
+        assert "Traceback" not in err

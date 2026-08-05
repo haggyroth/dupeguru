@@ -9,6 +9,21 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`--from-results` reports malformed files instead of crashing** (`cli.py`): pointing it at
+  the wrong file produced a Python traceback rather than an error message. JSON that was not
+  an object raised `AttributeError` from `data.get` — a bare `[]`, `42` or `"text"` was
+  enough — an NDJSON group record missing its keys raised `KeyError`, and a binary file
+  raised `UnicodeDecodeError`, because the caller caught only `OSError` and
+  `JSONDecodeError`. It now catches `ValueError`, which covers both of those (they are
+  subclasses) as well as the structural checks the loader gained: the document must be an
+  object, `groups` must be a list, NDJSON records must be objects carrying `reference` and
+  `duplicates`, and errors name the offending line. An empty file is rejected rather than
+  reported as "no duplicates", which would look like a successful answer about the wrong
+  file. Found by looking at what CI does *not* cover: the uncovered lines in `cli.py` were
+  almost entirely error paths.
+
 ## [4.9.0] - 2026-08-04
 
 ### Changed
