@@ -186,8 +186,10 @@ def package_source_txz():
     base_path = os.getcwd()
     build_path = op.join(base_path, "build")
     dest = op.join(build_path, name)
-    run_checked("git archive -o {} HEAD".format(dest), produces=dest)
-    run_checked("xz {}".format(dest), produces=dest + ".xz")
+    # Sequences, not interpolated strings: dest comes from the version and the repo name,
+    # so the shell would parse anything unusual in either (issue #80).
+    run_checked(["git", "archive", "-o", dest, "HEAD"], produces=dest)
+    run_checked(["xz", dest], produces=dest + ".xz")
 
 
 def package_windows():
@@ -249,8 +251,19 @@ def package_windows():
             "Program Files. Looked in: PATH, " + ", ".join(_nsis_fallback_paths())
         )
         return 1
-    cmd = '"{0}" /DVERSIONMAJOR={1} /DVERSIONMINOR={2} /DVERSIONPATCH={3} /DBITS={4} setup.nsi'
-    result = print_and_do(cmd.format(makensis, version_array[0], version_array[1], version_array[2], bits))
+    # A sequence, so the makensis path is an argument rather than shell syntax. It comes from
+    # PATH or Program Files, both of which can contain spaces, and "Program Files (x86)"
+    # contains parentheses that cmd.exe treats specially (issue #80).
+    result = print_and_do(
+        [
+            makensis,
+            f"/DVERSIONMAJOR={version_array[0]}",
+            f"/DVERSIONMINOR={version_array[1]}",
+            f"/DVERSIONPATCH={version_array[2]}",
+            f"/DBITS={bits}",
+            "setup.nsi",
+        ]
+    )
     if result != 0:
         print("makensis failed with exit code {0}; no installer was produced.".format(result))
         return result
