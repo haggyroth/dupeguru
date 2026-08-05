@@ -1448,3 +1448,44 @@ class TestPictureMode:
         (tmp_path / "small.bmp").write_bytes(_bmp(32, 32))
         assert main([str(tmp_path), "--mode", "picture", "--dry-run"]) == EXIT_OK
         assert main([str(tmp_path), "--mode", "picture", "--match-scaled", "--dry-run"]) == EXIT_DUPES_FOUND
+
+
+class TestFileListCache:
+    """The --file-list-cache flag (issue #28).
+
+    Correctness first: a cached scan must agree with an uncached one. The speed is only
+    worth having if the answer is the same.
+    """
+
+    def test_results_match_an_uncached_scan(self, tmp_path):
+        db = tmp_path / "fl.db"
+        scan = tmp_path / "scan"
+        scan.mkdir()
+        _write_files(scan, {"a.txt": b"same", "b.txt": b"same", "c.txt": b"different"})
+        uncached = main([str(scan), "--dry-run"])
+        first = main([str(scan), "--file-list-cache", str(db), "--dry-run"])
+        second = main([str(scan), "--file-list-cache", str(db), "--dry-run"])
+        assert uncached == first == second == EXIT_DUPES_FOUND
+
+    def test_a_file_added_after_the_first_scan_is_found(self, tmp_path):
+        """Directory mtime moves on add, so the cached listing must be discarded."""
+        db = tmp_path / "fl.db"
+        scan = tmp_path / "scan"
+        scan.mkdir()
+        _write_files(scan, {"a.txt": b"unique one"})
+        assert main([str(scan), "--file-list-cache", str(db), "--dry-run"]) == EXIT_OK
+        _write_files(scan, {"b.txt": b"unique one"})  # now a duplicate of a.txt
+        assert main([str(scan), "--file-list-cache", str(db), "--dry-run"]) == EXIT_DUPES_FOUND
+
+    def test_flag_is_off_by_default(self):
+        args = cli._build_parser().parse_args(["/tmp"])
+        assert args.file_list_cache is None
+
+    def test_missing_cache_file_is_created_rather_than_failing(self, tmp_path):
+        db = tmp_path / "sub" / "fl.db"
+        db.parent.mkdir()
+        scan = tmp_path / "scan"
+        scan.mkdir()
+        _write_files(scan, {"a.txt": b"x"})
+        assert main([str(scan), "--file-list-cache", str(db), "--dry-run"]) == EXIT_OK
+        assert db.exists()

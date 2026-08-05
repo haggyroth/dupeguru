@@ -5,6 +5,7 @@
 # http://www.gnu.org/licenses/gpl-3.0.html
 
 import os
+import os.path as op
 import stat
 from xml.etree import ElementTree as ET
 import logging
@@ -14,7 +15,7 @@ from hscommon.jobprogress import job
 from hscommon.util import FileOrPath
 from hscommon.trans import tr
 
-from core import fs
+from core import fs, file_list_cache
 
 __all__ = [
     "Directories",
@@ -89,6 +90,9 @@ class Directories:
         # {path: state}
         self.states = {}
         self._exclude_list = exclude_list
+        # Off unless a caller attaches one. Collection is identical either way; the cache only
+        # changes how many stat calls it costs. See core/file_list_cache.py.
+        self.file_list_cache = None
 
     def clear(self):
         """Drop the folder selection and its states, keeping the exclusion list.
@@ -137,52 +141,92 @@ class Directories:
             return DirectoryState.EXCLUDED
         return DirectoryState.NORMAL
 
+    def _entries_for(self, from_path):
+        """Directory entries for *from_path*, from the cache when it is still valid.
+
+        Yields os.DirEntry on a miss and core.fs.CachedDirEntry on a hit; both satisfy the
+        same interface, so the caller cannot tell them apart and the filtering below is
+        identical either way.
+
+        A hit costs one stat -- the directory's own mtime -- instead of one per file in it.
+        See core/file_list_cache.py for the measurements that justify this and for the
+        staleness tradeoff it accepts.
+        """
+        cache = self.file_list_cache
+        if cache is None:
+            with os.scandir(from_path) as it:
+                return list(it)
+        dir_path = str(from_path)
+        dir_mtime_ns = file_list_cache.directory_mtime_ns(from_path)
+        if dir_mtime_ns is not None:
+            cached = cache.get(dir_path, dir_mtime_ns)
+            if cached is not None:
+                return [
+                    fs.CachedDirEntry(name, op.join(dir_path, name), bool(is_dir), bool(is_symlink), size, mtime)
+                    for name, is_dir, is_symlink, size, mtime in cached
+                ]
+        with os.scandir(from_path) as it:
+            entries = list(it)
+        if dir_mtime_ns is not None:
+            rows = []
+            for e in entries:
+                try:
+                    st = e.stat(follow_symlinks=False)
+                    rows.append((e.name, e.is_dir(follow_symlinks=False), e.is_symlink(), st.st_size, st.st_mtime))
+                except OSError:
+                    # Unreadable now means unreadable later; recording it would cache a lie.
+                    rows = None
+                    break
+            if rows is not None:
+                cache.put(dir_path, dir_mtime_ns, rows)
+        return entries
+
     def _get_files(self, from_path, fileclasses, j):
         try:
-            with os.scandir(from_path) as iter:
-                root_path = Path(from_path)
-                state = self.get_state(root_path)
-                # if we have no un-excluded dirs under this directory skip going deeper
-                skip_dirs = state == DirectoryState.EXCLUDED and not any(
-                    p.parts[: len(root_path.parts)] == root_path.parts for p in self.states
-                )
-                count = 0
-                for item in iter:
-                    j.check_if_cancelled()
-                    try:
-                        # This walk used to recurse through symlinked directories and
-                        # Windows junctions, so a cycle became unbounded recursion and a
-                        # link out of the tree pulled foreign files in as deletion
-                        # candidates. Symlinked *files* were already excluded by
-                        # File.can_handle; this makes directories consistent with that, and
-                        # with fs.Folder.subfolders which already guards the folder-scan
-                        # path. A link now falls through to the file branch, where
-                        # can_handle rejects it, so it is skipped rather than walked.
-                        if is_traversable_dir(item):
-                            if skip_dirs:
-                                continue
-                            yield from self._get_files(item.path, fileclasses, j)
+            iter = self._entries_for(from_path)
+            root_path = Path(from_path)
+            state = self.get_state(root_path)
+            # if we have no un-excluded dirs under this directory skip going deeper
+            skip_dirs = state == DirectoryState.EXCLUDED and not any(
+                p.parts[: len(root_path.parts)] == root_path.parts for p in self.states
+            )
+            count = 0
+            for item in iter:
+                j.check_if_cancelled()
+                try:
+                    # This walk used to recurse through symlinked directories and
+                    # Windows junctions, so a cycle became unbounded recursion and a
+                    # link out of the tree pulled foreign files in as deletion
+                    # candidates. Symlinked *files* were already excluded by
+                    # File.can_handle; this makes directories consistent with that, and
+                    # with fs.Folder.subfolders which already guards the folder-scan
+                    # path. A link now falls through to the file branch, where
+                    # can_handle rejects it, so it is skipped rather than walked.
+                    if is_traversable_dir(item):
+                        if skip_dirs:
                             continue
-                        elif state == DirectoryState.EXCLUDED:
-                            continue
-                        # File excluding or not
-                        if (
-                            self._exclude_list is None
-                            or not self._exclude_list.mark_count
-                            or not self._exclude_list.is_excluded(str(from_path), item.name)
-                        ):
-                            file = fs.get_file(item, fileclasses=fileclasses)
-                            if file:
-                                file.is_ref = state == DirectoryState.REFERENCE
-                                count += 1
-                                yield file
-                    except (OSError, fs.InvalidPath):
-                        pass
-                logging.debug(
-                    "Collected %d files in folder %s",
-                    count,
-                    str(root_path),
-                )
+                        yield from self._get_files(item.path, fileclasses, j)
+                        continue
+                    elif state == DirectoryState.EXCLUDED:
+                        continue
+                    # File excluding or not
+                    if (
+                        self._exclude_list is None
+                        or not self._exclude_list.mark_count
+                        or not self._exclude_list.is_excluded(str(from_path), item.name)
+                    ):
+                        file = fs.get_file(item, fileclasses=fileclasses)
+                        if file:
+                            file.is_ref = state == DirectoryState.REFERENCE
+                            count += 1
+                            yield file
+                except (OSError, fs.InvalidPath):
+                    pass
+            logging.debug(
+                "Collected %d files in folder %s",
+                count,
+                str(root_path),
+            )
         except OSError:
             pass
 

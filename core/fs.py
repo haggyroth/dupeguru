@@ -328,6 +328,51 @@ class FilesDB:
 filesdb = FilesDB()  # Singleton
 
 
+class CachedDirEntry:
+    """A stand-in for :class:`os.DirEntry` built from cached metadata, issuing no syscalls.
+
+    Exposes only what the scan actually asks of a directory entry -- ``name``, ``path``,
+    ``is_dir()``, ``is_symlink()``, ``is_file()`` and ``stat()``. Every ``can_handle``
+    implementation in the tree uses exactly those, so the filtering logic runs unchanged
+    whether an entry came from ``os.scandir`` or from the cache. Diverging those two paths
+    would mean a cached scan could include files a fresh scan excludes, which is a far worse
+    bug than a slow scan.
+
+    See :mod:`core.file_list_cache` for why trusting stored metadata is worth it.
+    """
+
+    __slots__ = ("name", "path", "_is_dir", "_is_symlink", "_size", "_mtime")
+
+    def __init__(self, name, path, is_dir, is_symlink, size, mtime):
+        self.name = name
+        self.path = path
+        self._is_dir = is_dir
+        self._is_symlink = is_symlink
+        self._size = size
+        self._mtime = mtime
+
+    def is_dir(self, follow_symlinks=True):
+        # Matches os.DirEntry: with follow_symlinks=False a symlink is never a directory.
+        if self._is_symlink and not follow_symlinks:
+            return False
+        return self._is_dir
+
+    def is_file(self, follow_symlinks=True):
+        return not self._is_dir
+
+    def is_symlink(self):
+        return self._is_symlink
+
+    def is_junction(self):
+        # Junctions are a Windows concept the cache does not record; a cached entry is never
+        # reported as one. is_traversable_dir only consults this to *exclude*, so the
+        # conservative answer here is False -- and junctions are excluded before caching.
+        return False
+
+    def stat(self, follow_symlinks=True):
+        return os.stat_result((0, 0, 0, 0, 0, 0, self._size, 0, int(self._mtime), 0))
+
+
 class File:
     """Represents a file and holds metadata to be used for scanning."""
 
@@ -340,7 +385,7 @@ class File:
     def __init__(self, path):
         for attrname in self.INITIAL_INFO:
             setattr(self, attrname, NOT_SET)
-        if type(path) is os.DirEntry:
+        if isinstance(path, (os.DirEntry, CachedDirEntry)):
             self.path = Path(path.path)
             self.size = nonone(path.stat().st_size, 0)
             self.mtime = nonone(path.stat().st_mtime, 0)
