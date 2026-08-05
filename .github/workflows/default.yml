@@ -23,10 +23,13 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest]
-        # 3.10 is the floor: core/hash_cache.py uses PEP 604 unions (X | None) in
-        # function signatures that are evaluated at import time on Python <= 3.13,
-        # so 3.8 and 3.9 cannot import the package at all. See issue #22.
-        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        # Floor, ceiling, and the version that produces the artifacts. Version-specific
+        # breakage lives at the boundaries: 3.10 is the floor because core/hash_cache.py
+        # uses PEP 604 unions evaluated at import time, so 3.8 and 3.9 cannot import the
+        # package at all (issue #22); 3.14 is where the setuptools seeding change and the
+        # PyInstaller pin surfaced. The intermediate versions never caught anything the
+        # boundaries did not. requirements.txt still supports the whole range.
+        python-version: ["3.10", "3.12", "3.14"]
         # qt-binding has to be a real matrix dimension, not just an include key. An include
         # entry whose os and python-version both match an existing combination is *merged*
         # into that job rather than creating a new one -- which silently turned the ubuntu
