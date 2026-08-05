@@ -12,6 +12,7 @@ silently did no caching at all, which is the failure mode most worth guarding he
 """
 
 import os
+import time
 import pytest
 
 from core import fs, file_list_cache
@@ -32,7 +33,20 @@ def _tree(root, names=("a.txt", "b.txt", "c.txt")):
     root.mkdir(parents=True, exist_ok=True)
     for i, n in enumerate(names):
         (root / n).write_text("x" * (10 + i))
+    _settle(root)
     return root
+
+
+def _settle(path):
+    """Backdate the directory's mtime so the cache is willing to store it.
+
+    A directory modified within MTIME_SETTLE_NS is deliberately not cached, because its
+    mtime may not yet reflect a change that already happened. A test that builds a tree and
+    scans it immediately is always inside that window, so without this every test here would
+    exercise the uncached path and quietly prove nothing.
+    """
+    old = time.time() - 60
+    os.utime(path, (old, old))
 
 
 def _collect(directories):
@@ -211,3 +225,73 @@ class TestSchemaAndRobustness:
 
     def test_directory_mtime_ns_returns_none_when_absent(self, tmp_path):
         assert file_list_cache.directory_mtime_ns(tmp_path / "absent") is None
+
+
+class TestMtimeGranularity:
+    """A directory touched moments ago must not be cached.
+
+    Invalidation assumes the filesystem updates a directory's mtime promptly and finely.
+    Neither is universal: FAT and exFAT store 2-second mtimes and NTFS updates directory
+    timestamps lazily, so a file added and the directory rescanned inside one tick leaves the
+    mtime unchanged and the addition invisible -- and add/remove detection is the one thing
+    this cache promises.
+
+    The first version of this feature shipped without the guard. Its own CI run was green;
+    the failure appeared on Windows only, on a later PR, because whether it reproduces depends
+    on how much of the test fits inside a timestamp tick. Hence a deterministic test rather
+    than one that races.
+    """
+
+    def test_a_freshly_modified_directory_is_not_cached(self, tmp_path, cache):
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "a.txt").write_text("x")
+        # No _settle(): the directory's mtime is "now", exactly the untrustworthy case.
+        d = Directories()
+        d.file_list_cache = cache
+        d.add_path(src)
+        _collect(d)
+        assert cache.get(str(src), file_list_cache.directory_mtime_ns(src)) is None, (
+            "a directory modified within the settle window was cached; a filesystem with "
+            "coarse or lazy directory timestamps would then serve a stale listing"
+        )
+
+    def test_a_settled_directory_is_cached(self, tmp_path, cache):
+        """The other half: the guard must not disable caching altogether."""
+        src = _tree(tmp_path / "src")  # _tree backdates the mtime
+        d = Directories()
+        d.file_list_cache = cache
+        d.add_path(src)
+        _collect(d)
+        assert cache.get(str(src), file_list_cache.directory_mtime_ns(src)) is not None
+
+    def test_rapid_add_is_still_seen(self, tmp_path, cache):
+        """The Windows failure, modelled as the filesystem actually produces it.
+
+        The dangerous window is narrow: the cache is written while the directory's mtime is
+        already "now", and a file is added inside the same timestamp tick, so the mtime never
+        moves and the cached listing still looks valid.
+
+        Deliberately does not use _tree, which backdates the mtime -- a settled directory is
+        not the failing case. And the mtime is pinned to its pre-add value rather than a
+        contrived old one, because pinning it to something an hour old models no real
+        filesystem and would make the guard look broken when it is not.
+        """
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "a.txt").write_text("x")
+        d = Directories()
+        d.file_list_cache = cache
+        d.add_path(src)
+        _collect(d)  # directory mtime is "now": the cache must decline to store this
+
+        before = os.stat(src)
+        (src / "sudden.txt").write_text("new")
+        # NTFS and FAT do this on their own when the change lands inside one tick; forcing it
+        # makes a Windows-only failure reproducible everywhere.
+        os.utime(src, ns=(before.st_atime_ns, before.st_mtime_ns))
+
+        assert any("sudden.txt" in p for p in _collect(d)), (
+            "a file added without the directory's mtime moving was invisible -- exactly what "
+            "NTFS and FAT produce, and what CI caught on Windows"
+        )

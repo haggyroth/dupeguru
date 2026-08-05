@@ -5,6 +5,7 @@
 # http://www.gnu.org/licenses/gpl-3.0.html
 
 import os
+import time
 import os.path as op
 import stat
 from xml.etree import ElementTree as ET
@@ -167,7 +168,11 @@ class Directories:
                 ]
         with os.scandir(from_path) as it:
             entries = list(it)
-        if dir_mtime_ns is not None:
+        # Do not cache a directory that was modified within the filesystem's timestamp
+        # resolution: its mtime may not yet reflect a change that has already happened, so a
+        # later lookup would treat a stale listing as valid. See MTIME_SETTLE_NS.
+        settled = dir_mtime_ns is not None and (time.time_ns() - dir_mtime_ns) > file_list_cache.MTIME_SETTLE_NS
+        if settled:
             rows = []
             for e in entries:
                 try:
