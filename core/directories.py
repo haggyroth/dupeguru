@@ -94,6 +94,11 @@ class Directories:
         # Off unless a caller attaches one. Collection is identical either way; the cache only
         # changes how many stat calls it costs. See core/file_list_cache.py.
         self.file_list_cache = None
+        # How the last collection went, for the progress message. A cache hit and a cold read
+        # take wildly different amounts of time -- seconds against tens of minutes on an
+        # external drive -- and look identical to the user without this.
+        self.dirs_remembered = 0
+        self.dirs_read = 0
 
     def clear(self):
         """Drop the folder selection and its states, keeping the exclusion list.
@@ -162,12 +167,14 @@ class Directories:
         if dir_mtime_ns is not None:
             cached = cache.get(dir_path, dir_mtime_ns)
             if cached is not None:
+                self.dirs_remembered += 1
                 return [
                     fs.CachedDirEntry(name, op.join(dir_path, name), bool(is_dir), bool(is_symlink), size, mtime)
                     for name, is_dir, is_symlink, size, mtime in cached
                 ]
         with os.scandir(from_path) as it:
             entries = list(it)
+        self.dirs_read += 1
         # Do not cache a directory that was modified within the filesystem's timestamp
         # resolution: its mtime may not yet reflect a change that has already happened, so a
         # later lookup would treat a stale listing as valid. See MTIME_SETTLE_NS.
@@ -288,12 +295,30 @@ class Directories:
         if fileclasses is None:
             fileclasses = [fs.File]
         file_count = 0
+        self.dirs_remembered = 0
+        self.dirs_read = 0
         for path in self._dirs:
             for file in self._get_files(path, fileclasses=fileclasses, j=j):
                 file_count += 1
                 if not isinstance(j, job.NullJob):
-                    j.set_progress(-1, tr("Collected {} files to scan").format(file_count))
+                    j.set_progress(-1, self._collection_progress(file_count))
                 yield file
+
+    def _collection_progress(self, file_count):
+        """The collection message, saying whether folders are being read or remembered.
+
+        Without this the two cases are indistinguishable while they are happening, and they
+        differ by orders of magnitude: reading a cold external drive can take tens of minutes
+        where a cache hit takes moments. A user watching a progress window that says only
+        "Collected N files" cannot tell whether to wait or to go and do something else.
+
+        Only mentions the cache when one is attached, so the default message is unchanged.
+        """
+        if self.file_list_cache is None:
+            return tr("Collected {} files to scan").format(file_count)
+        return tr("Collected {} files to scan ({} folders read, {} remembered)").format(
+            file_count, self.dirs_read, self.dirs_remembered
+        )
 
     def get_folders(self, folderclass=None, j=job.nulljob):
         """Returns a list of all folders that are not excluded.

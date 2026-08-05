@@ -295,3 +295,68 @@ class TestMtimeGranularity:
             "a file added without the directory's mtime moving was invisible -- exactly what "
             "NTFS and FAT produce, and what CI caught on Windows"
         )
+
+
+class TestCollectionProgress:
+    """The progress message must say whether folders were read or remembered.
+
+    A cache hit and a cold read are indistinguishable while they are happening and differ by
+    orders of magnitude -- tens of minutes against moments on an external drive. A user
+    watching a window that says only "Collected N files" cannot tell whether to wait.
+    """
+
+    @staticmethod
+    def _messages(directories, root):
+        from hscommon.jobprogress.job import Job
+
+        msgs = []
+        directories.add_path(root)
+        list(directories.get_files(fileclasses=[fs.File], j=Job(1, lambda p, desc="": msgs.append(desc) or True)))
+        return msgs
+
+    def test_message_is_unchanged_without_a_cache(self, tmp_path):
+        """The default path must not grow a parenthetical about a cache nobody attached."""
+        src = _tree(tmp_path / "src")
+        msgs = self._messages(Directories(), src)
+        assert msgs[-1] == "Collected 3 files to scan"
+
+    def test_a_cold_scan_reports_folders_read(self, tmp_path, cache):
+        src = _tree(tmp_path / "src")
+        d = Directories()
+        d.file_list_cache = cache
+        msgs = self._messages(d, src)
+        assert "1 folders read, 0 remembered" in msgs[-1]
+
+    def test_a_warm_scan_reports_folders_remembered(self, tmp_path, cache):
+        """The case worth distinguishing: nothing was read, which is why it was instant."""
+        src = _tree(tmp_path / "src")
+        d = Directories()
+        d.file_list_cache = cache
+        self._messages(d, src)  # populate
+
+        d2 = Directories()
+        d2.file_list_cache = cache
+        msgs = self._messages(d2, src)
+        assert "0 folders read, 1 remembered" in msgs[-1]
+
+    def test_counters_reset_between_collections(self, tmp_path, cache):
+        """get_files is called once per scan; counts must not accumulate across scans."""
+        src = _tree(tmp_path / "src")
+        d = Directories()
+        d.file_list_cache = cache
+        d.add_path(src)
+        from hscommon.jobprogress.job import nulljob
+
+        list(d.get_files(fileclasses=[fs.File], j=nulljob))
+        first = d.dirs_read + d.dirs_remembered
+        list(d.get_files(fileclasses=[fs.File], j=nulljob))
+        assert d.dirs_read + d.dirs_remembered == first, "counters accumulated across scans"
+
+    def test_nested_folders_are_counted(self, tmp_path, cache):
+        src = _tree(tmp_path / "src")
+        _tree(src / "nested", names=("deep.txt",))
+        _settle(src)
+        d = Directories()
+        d.file_list_cache = cache
+        msgs = self._messages(d, src)
+        assert "2 folders read" in msgs[-1]
