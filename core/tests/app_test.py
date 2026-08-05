@@ -1060,3 +1060,135 @@ class TestPerformOnMarkedKeepsResultsConsistent:
 
         results.perform_on_marked(op, True)
         eq_(len(results.problems), 1)
+
+
+class TestDeleteMarkedGuards:
+    """The three checks that gate every deletion (issue #82).
+
+    delete_marked was 12% covered. The machinery underneath it -- _do_delete_dupe,
+    check_deletable, the link replacement -- is well tested, so a regression in these guards
+    would let deletion proceed while every other test in this file still passed.
+
+    The middle guard is the one that matters most: it warns that some marked duplicates were
+    matched on a *sampled* hash rather than full contents, so a false positive is possible.
+    Inverting it, or losing the return, would delete files the user was never asked about.
+
+    _start_job is spied on rather than allowed to run. These tests are about whether deletion
+    is *started*, not what it does once started, and letting a real job run would make a
+    failure here look like a filesystem problem.
+    """
+
+    @staticmethod
+    def _app_with_marked_dupes():
+        dgapp = TestApp().app
+        objects, matches, groups = GetTestGroups()
+        dgapp.results.groups = groups
+        dgapp.results.mark(objects[1])
+        started = []
+        dgapp._start_job = lambda *a, **k: started.append((a, k))
+
+        def accept(mark_count):
+            # The real show() initialises _link_deleted before returning; link_deleted reads
+            # it and DeletionOptions.__init__ does not set it, so a stub that skips this
+            # raises AttributeError from inside delete_marked rather than testing anything.
+            dgapp.deletion_options._link_deleted = False
+            return True
+
+        dgapp.deletion_options.show = accept
+        return dgapp, started
+
+    def test_nothing_marked_shows_a_message_and_starts_no_job(self):
+        dgapp = TestApp().app
+        objects, matches, groups = GetTestGroups()
+        dgapp.results.groups = groups
+        dgapp.results.mark_none()
+        started = []
+        dgapp._start_job = lambda *a, **k: started.append(a)
+
+        dgapp.delete_marked()
+
+        assert not started
+        assert app.MSG_NO_MARKED_DUPES in dgapp.view.messages
+
+    def test_partial_matches_prompt_the_user(self):
+        """The warning must actually be asked, not merely available."""
+        dgapp, started = self._app_with_marked_dupes()
+        dgapp.results.has_marked_partial_matches = lambda: True
+        asked = []
+        dgapp.view.ask_yes_no = lambda prompt: asked.append(prompt) or True
+
+        dgapp.delete_marked()
+
+        assert asked == [app.MSG_PARTIAL_HASH_WARNING], "the partial-match warning was not shown"
+        assert started, "deletion should proceed once the user accepts"
+
+    def test_declining_the_partial_match_prompt_aborts(self):
+        """The regression that would cost files: answering no must stop the deletion."""
+        dgapp, started = self._app_with_marked_dupes()
+        dgapp.results.has_marked_partial_matches = lambda: True
+        dgapp.view.ask_yes_no = lambda prompt: False
+
+        dgapp.delete_marked()
+
+        assert not started, "deletion started despite the user declining the warning"
+
+    def test_no_partial_matches_does_not_prompt(self):
+        """Asking every time would train people to click through it."""
+        dgapp, started = self._app_with_marked_dupes()
+        dgapp.results.has_marked_partial_matches = lambda: False
+        asked = []
+        dgapp.view.ask_yes_no = lambda prompt: asked.append(prompt) or True
+
+        dgapp.delete_marked()
+
+        assert asked == []
+        assert started
+
+    def test_cancelling_the_options_dialog_aborts(self):
+        dgapp, started = self._app_with_marked_dupes()
+        dgapp.results.has_marked_partial_matches = lambda: False
+        dgapp.deletion_options.show = lambda mark_count: False
+
+        dgapp.delete_marked()
+
+        assert not started, "deletion started even though the options dialog was cancelled"
+
+    def test_options_dialog_is_told_how_many_are_marked(self):
+        """It shows the count to the user, so passing the wrong one misinforms them."""
+        dgapp, started = self._app_with_marked_dupes()
+        dgapp.results.has_marked_partial_matches = lambda: False
+        seen = []
+
+        def record(mark_count):
+            seen.append(mark_count)
+            dgapp.deletion_options._link_deleted = False
+            return True
+
+        dgapp.deletion_options.show = record
+
+        dgapp.delete_marked()
+
+        assert seen == [dgapp.results.mark_count]
+
+    def test_job_receives_the_chosen_deletion_options(self):
+        """The options the user picked have to reach the job, or they silently do nothing."""
+        dgapp, started = self._app_with_marked_dupes()
+        dgapp.results.has_marked_partial_matches = lambda: False
+
+        def choose_everything(mark_count):
+            # The options are set *by* the dialog, so they have to be applied here: the real
+            # show() resets _link_deleted on entry, and anything set before it is discarded.
+            # Assigned to the backing attribute because the property's setter calls into the
+            # dialog's view to enable the hardlink widget, and there is no view here.
+            dgapp.deletion_options._link_deleted = True
+            dgapp.deletion_options.use_hardlinks = True
+            dgapp.deletion_options.direct = True
+            return True
+
+        dgapp.deletion_options.show = choose_everything
+
+        dgapp.delete_marked()
+
+        assert started, "no job was started"
+        _, kwargs = started[0]
+        assert kwargs["args"] == [True, True, True]
