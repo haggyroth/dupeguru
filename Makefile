@@ -49,6 +49,22 @@ all: | env i18n modules qt/dg_rc.py
 run:
 	$(VENV_PYTHON) run.py
 
+# The one command to run before pushing.
+#
+# `git add -A` first is not a convenience: pre-commit reads `git ls-files`, so a newly created
+# file is invisible to it. That produced a clean local run and a red CI run more than once --
+# the hooks reported passing on work they had never looked at.
+#
+# Runs the hooks twice on purpose. black and end-of-file-fixer *modify* files and report
+# failure when they do, so the first pass can legitimately fail while fixing everything; the
+# second pass is the one whose result means anything.
+check:
+	git add -A
+	$(VENV_PYTHON) -m pre_commit run --all-files || true
+	git add -A
+	$(VENV_PYTHON) -m pre_commit run --all-files
+	$(VENV_PYTHON) -m pytest core hscommon qt tests -q
+
 pyc: | env
 	${VENV_PYTHON} -m compileall ${packages}
 
@@ -120,4 +136,4 @@ clean:
 	-rm locale/*/LC_MESSAGES/*.mo
 	-rm core/pe/*.$(SO) qt/pe/*.$(SO)
 
-.PHONY: clean normpo mergepot modules i18n reqs run pyc install uninstall all
+.PHONY: check clean normpo mergepot modules i18n reqs run pyc install uninstall all
