@@ -52,9 +52,11 @@ class TestRoundTrip:
         key = compute_key(pics, 75, False, False)
         cache.put(key, _matches(pics))
         restored = cache.get(key, pics)
-        assert [(str(m.first.path), str(m.second.path), m.percentage) for m in restored] == [
-            ("/a.jpg", "/b.jpg", 95),
-            ("/b.jpg", "/c.jpg", 80),
+        # Compared through Path rather than against literal "/a.jpg": Windows renders the same
+        # path with a backslash, so hardcoded separators fail there and nowhere else.
+        assert [(m.first.path, m.second.path, m.percentage) for m in restored] == [
+            (Path("/a.jpg"), Path("/b.jpg"), 95),
+            (Path("/b.jpg"), Path("/c.jpg"), 80),
         ]
 
     def test_restored_matches_reference_the_current_objects(self, cache):
