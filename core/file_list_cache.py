@@ -44,6 +44,7 @@ behaviour change, which is why this is opt-in rather than the default.
 
 import logging
 import os
+import os.path as op
 import sqlite3
 from typing import Union
 
@@ -161,3 +162,18 @@ def directory_mtime_ns(path: Union[str, os.PathLike]) -> Union[int, None]:
         return os.stat(os.fspath(path)).st_mtime_ns
     except OSError:
         return None
+
+
+CACHE_FILENAME = "file_list_cache.db"
+
+
+def default_cache_path(appdata):
+    """Where the listing cache lives when the caller does not choose.
+
+    Beside the hash and picture caches, so all of a user's cached scan state is in one place
+    and `clear cache` style operations can find it. Only became a sane default once every
+    front end resolved the same appdata directory -- before that the CLI wrote to the root of
+    the user's application data folder (#94), and defaulting here would have put a fourth
+    stray file there.
+    """
+    return op.join(appdata, CACHE_FILENAME)

@@ -862,13 +862,16 @@ def _build_parser() -> argparse.ArgumentParser:
     knobs.add_argument(
         "--file-list-cache",
         metavar="DB",
+        nargs="?",
+        const=True,
         default=None,
         help=(
-            "Cache directory listings in DB so a rescan does not re-stat every file. Off by "
-            "default. Validated per directory: a directory whose mtime is unchanged is not "
-            "read again. Adding, removing or renaming a file is detected; editing one in "
-            "place is NOT, so a rescan can miss a duplicate whose size changed. Never causes "
-            "a wrong deletion -- files are re-checked immediately before removal."
+            "Cache directory listings so a rescan does not re-stat every file. Off unless "
+            "given. Pass a path to choose the database, or the flag alone to use the default "
+            "location alongside the other caches. Validated per directory: one whose mtime is "
+            "unchanged is not read again. Adding, removing or renaming a file is detected; "
+            "editing one in place is NOT, so a rescan can miss a duplicate whose size changed. "
+            "Never causes a wrong deletion -- files are re-checked immediately before removal."
         ),
     )
     knobs.add_argument(
@@ -1256,8 +1259,14 @@ def main(argv=None) -> int:
 
     # Scanner knobs -------------------------------------------------------
     if args.file_list_cache:
+        # `--file-list-cache` alone yields True; a path yields the path. The default lives
+        # beside the other caches, which only became a sane place to put it once every front
+        # end started resolving the same appdata directory (#94).
+        cache_path = (
+            file_list_cache.default_cache_path(app.appdata) if args.file_list_cache is True else args.file_list_cache
+        )
         flcache = file_list_cache.FileListCache()
-        flcache.connect(args.file_list_cache)
+        flcache.connect(cache_path)
         app.directories.file_list_cache = flcache
     app.options["min_match_percentage"] = args.min_match
     app.options["match_scaled"] = args.match_scaled

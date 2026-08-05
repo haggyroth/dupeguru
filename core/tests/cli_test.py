@@ -1470,6 +1470,39 @@ class TestFileListCache:
         args = cli._build_parser().parse_args(["/tmp"])
         assert args.file_list_cache is None
 
+    def test_flag_without_a_value_selects_the_default_location(self, tmp_path):
+        """`--file-list-cache` alone should not require the user to invent a path."""
+        args = cli._build_parser().parse_args(["/tmp", "--file-list-cache"])
+        assert args.file_list_cache is True
+
+    def test_flag_with_a_value_still_wins(self, tmp_path):
+        args = cli._build_parser().parse_args(["/tmp", "--file-list-cache", "/x/y.db"])
+        assert args.file_list_cache == "/x/y.db"
+
+    def test_default_path_sits_beside_the_other_caches(self, tmp_path):
+        from core.file_list_cache import default_cache_path
+
+        path = default_cache_path(str(tmp_path))
+        assert path.startswith(str(tmp_path))
+        assert path.endswith("file_list_cache.db")
+
+    def test_default_location_is_actually_created_and_used(self, tmp_path):
+        """End to end: the flag with no value must produce a working cache in appdata.
+
+        Asserting the parser value alone would pass against a version that never resolved
+        True into a path -- the flag would be accepted and silently do nothing.
+        """
+        scan = tmp_path / "scan"
+        scan.mkdir()
+        _write_files(scan, {"a.txt": b"same", "b.txt": b"same"})
+        assert main([str(scan), "--file-list-cache", "--dry-run"]) == EXIT_DUPES_FOUND
+
+        from hscommon import desktop
+        from core.file_list_cache import default_cache_path
+
+        created = Path(default_cache_path(desktop.special_folder_path(desktop.SpecialFolder.APPDATA)))
+        assert created.exists(), f"{created} was not created; the default path was never used"
+
     def test_missing_cache_file_is_created_rather_than_failing(self, tmp_path):
         db = tmp_path / "sub" / "fl.db"
         db.parent.mkdir()

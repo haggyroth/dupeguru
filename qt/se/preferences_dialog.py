@@ -111,6 +111,21 @@ class PreferencesDialog(PreferencesDialogBase):
         )
         self.verticalLayout_4.addWidget(self.fullVerifyBox)
         self._setupAddCheckbox(
+            "cacheFileListBox",
+            tr("Remember folder listings between scans"),
+            self.widget,
+        )
+        self.cacheFileListBox.setToolTip(
+            tr(
+                "Skips re-reading folders whose contents have not changed, which is the slow "
+                "part of scanning an external or network drive. Files added, removed or "
+                "renamed are still noticed. A file edited in place without its folder changing "
+                "may be missed until the next full scan; nothing is ever deleted on the basis "
+                "of stale information."
+            )
+        )
+        self.verticalLayout_4.addWidget(self.cacheFileListBox)
+        self._setupAddCheckbox(
             "ignoreHardlinkMatches",
             tr("Ignore duplicates hardlinking to the same file"),
             self.widget,
@@ -129,6 +144,7 @@ class PreferencesDialog(PreferencesDialogBase):
         setchecked(self.bigFilePartialHashesBox, prefs.big_file_partial_hashes)
         self.bigSizeThresholdSpinBox.setValue(prefs.big_file_size_threshold)
         setchecked(self.fullVerifyBox, prefs.full_verify)
+        setchecked(self.cacheFileListBox, prefs.cache_file_list)
 
         # Update UI state based on selected scan type
         scan_type = prefs.get_scan_type(AppMode.STANDARD)
@@ -147,3 +163,4 @@ class PreferencesDialog(PreferencesDialogBase):
         prefs.big_file_partial_hashes = ischecked(self.bigFilePartialHashesBox)
         prefs.big_file_size_threshold = self.bigSizeThresholdSpinBox.value()
         prefs.full_verify = ischecked(self.fullVerifyBox)
+        prefs.cache_file_list = ischecked(self.cacheFileListBox)
