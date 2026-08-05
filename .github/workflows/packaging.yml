@@ -17,6 +17,12 @@ name: Packaging
 on:
   workflow_dispatch:
 
+# Least privilege: these jobs only check out code and upload artifacts. Without this they
+# inherit the repository default, which is `write` -- a token that can push to master and
+# edit releases, handed to jobs that pip install a large third-party dependency tree.
+permissions:
+  contents: read
+
 jobs:
   freeze:
     runs-on: ${{ matrix.os }}
