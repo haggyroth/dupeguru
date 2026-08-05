@@ -52,6 +52,24 @@ from typing import Union
 # cheaper and safer than a migration path nobody exercises.
 SCHEMA_VERSION = 1
 
+# A directory whose mtime is younger than this is not cached at all.
+#
+# Invalidation compares the directory's stored mtime against its current one, which assumes
+# the filesystem updates that mtime promptly and with fine resolution. Neither holds
+# everywhere: FAT and exFAT store 2-second mtimes, and NTFS updates directory timestamps
+# lazily. So a file added and the directory rescanned inside the same tick leaves the mtime
+# unchanged, the cache looks valid, and the new file is invisible -- add and remove are
+# exactly what this cache promises to detect.
+#
+# CI caught this on Windows after the first version shipped: two invalidation tests failed
+# there and passed on macOS and Linux, because the whole test ran inside one timestamp tick.
+#
+# Refusing to cache a recently-touched directory closes it. A directory being actively
+# written to is served live until it settles, which costs a rescan of the directories most
+# likely to have changed and is the safe direction. 2 seconds matches FAT's resolution and
+# the tolerance core.app.check_deletable already uses for the same reason.
+MTIME_SETTLE_NS = 2_000_000_000
+
 
 class FileListCache:
     """Directory listings keyed by path, validated by the directory's own mtime."""
