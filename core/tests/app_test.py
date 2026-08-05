@@ -1426,3 +1426,139 @@ class TestJobCompleted:
         dgapp.results.groups = groups
         dgapp._job_completed(app.JobType.SCAN)
         assert dgapp.view.messages == []
+
+
+class TestStartScanning:
+    """Guards and wiring around starting a scan (issue #82).
+
+    Two of these matter more than coverage. The multi-device warning is a data-loss guard --
+    scanning a drive holding backups alongside originals risks marking the originals for
+    deletion if reference folders are wrong -- and it is the second such prompt in this file
+    with nothing testing it. The other is that the options actually reach the scanner: an
+    option that stops being copied across looks identical from the UI and silently changes
+    every scan.
+    """
+
+    @staticmethod
+    def _app(monkeypatch, has_files=True, spans_devices=False):
+        from core.hash_cache import hashcachedb
+
+        dgapp = TestApp().app
+        started = []
+        dgapp._start_job = lambda *a, **k: started.append(a)
+        dgapp.directories.has_any_file = lambda: has_files
+        monkeypatch.setattr(app.DupeGuru, "_dirs_span_multiple_devices", staticmethod(lambda d: spans_devices))
+        # Module-level singletons: stub through monkeypatch so nothing leaks into later tests.
+        monkeypatch.setattr(fs.filesdb, "purge_if_stale", lambda: None)
+        monkeypatch.setattr(hashcachedb, "purge_if_stale", lambda: None)
+        return dgapp, started
+
+    def test_no_scannable_files_says_so_and_starts_no_job(self, monkeypatch):
+        dgapp, started = self._app(monkeypatch, has_files=False)
+        dgapp.start_scanning()
+        assert not started
+        assert any("no scannable file" in m for m in dgapp.view.messages)
+
+    def test_scan_starts_when_there_are_files(self, monkeypatch):
+        dgapp, started = self._app(monkeypatch)
+        dgapp.start_scanning()
+        assert [a[0] for a in started] == [app.JobType.SCAN]
+
+    # --- the multi-device warning ---
+
+    def _two_directories(self, dgapp, tmpdir):
+        tmppath = Path(str(tmpdir))
+        for name in ("one", "two"):
+            (tmppath / name).mkdir()
+            dgapp.directories.add_path(tmppath / name)
+
+    def test_multiple_devices_warns_before_scanning(self, monkeypatch, tmpdir):
+        dgapp, started = self._app(monkeypatch, spans_devices=True)
+        self._two_directories(dgapp, tmpdir)
+        asked = []
+        dgapp.view.ask_yes_no = lambda prompt: asked.append(prompt) or True
+
+        dgapp.start_scanning()
+
+        assert len(asked) == 1, "the multi-device warning was not shown"
+        assert "different drives" in asked[0]
+        assert started, "the scan should proceed once the user accepts"
+
+    def test_declining_the_multi_device_warning_aborts(self, monkeypatch, tmpdir):
+        """The data-loss guard: answering no must stop the scan."""
+        dgapp, started = self._app(monkeypatch, spans_devices=True)
+        self._two_directories(dgapp, tmpdir)
+        dgapp.view.ask_yes_no = lambda prompt: False
+
+        dgapp.start_scanning()
+
+        assert not started, "the scan started despite the user declining the warning"
+
+    def test_one_directory_never_warns(self, monkeypatch, tmpdir):
+        """A single folder cannot span devices, so asking would just be noise."""
+        dgapp, started = self._app(monkeypatch, spans_devices=True)
+        tmppath = Path(str(tmpdir))
+        (tmppath / "only").mkdir()
+        dgapp.directories.add_path(tmppath / "only")
+        asked = []
+        dgapp.view.ask_yes_no = lambda prompt: asked.append(prompt) or True
+
+        dgapp.start_scanning()
+
+        assert asked == []
+        assert started
+
+    def test_same_device_does_not_warn(self, monkeypatch, tmpdir):
+        dgapp, started = self._app(monkeypatch, spans_devices=False)
+        self._two_directories(dgapp, tmpdir)
+        asked = []
+        dgapp.view.ask_yes_no = lambda prompt: asked.append(prompt) or True
+
+        dgapp.start_scanning()
+
+        assert asked == []
+        assert started
+
+    # --- wiring ---
+
+    def test_options_are_copied_onto_the_scanner(self, monkeypatch):
+        """An option that stops reaching the scanner silently changes every scan."""
+        dgapp, started = self._app(monkeypatch)
+        built = []
+        real_class = dgapp.SCANNER_CLASS
+
+        class Recording(real_class):
+            def __init__(self):
+                super().__init__()
+                built.append(self)
+
+        monkeypatch.setattr(type(dgapp), "SCANNER_CLASS", property(lambda self: Recording))
+        dgapp.options["min_match_percentage"] = 42
+        dgapp.options["mix_file_kind"] = False
+
+        dgapp.start_scanning()
+
+        assert built, "no scanner was constructed"
+        assert built[0].min_match_percentage == 42
+        assert built[0].mix_file_kind is False
+
+    def test_rehash_ignore_mtime_reaches_the_hash_cache(self, monkeypatch):
+        dgapp, started = self._app(monkeypatch)
+        dgapp.options["rehash_ignore_mtime"] = True
+        dgapp.start_scanning()
+        assert fs.filesdb.ignore_mtime is True
+
+        dgapp.options["rehash_ignore_mtime"] = False
+        dgapp.start_scanning()
+        assert fs.filesdb.ignore_mtime is False
+
+    def test_previous_results_are_cleared_before_scanning(self, monkeypatch):
+        """Leaving the old groups in place would show stale results during the new scan."""
+        dgapp, started = self._app(monkeypatch)
+        objects, matches, groups = GetTestGroups()
+        dgapp.results.groups = groups
+        assert dgapp.results.groups
+
+        dgapp.start_scanning()
+
+        assert dgapp.results.groups == []
