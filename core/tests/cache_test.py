@@ -266,3 +266,54 @@ class TestCaseCacheSQLEscape:
             del c["foo'bar"]
         except KeyError:
             assert False
+
+
+class TestGetBlocksRaw:
+    """Raw access to stored block signatures, without inflating them.
+
+    __getitem__ expands each signature into a list of 3-tuples, roughly 52 times larger
+    than the stored bytes. getmatches holds one signature per picture for the whole corpus
+    at once, so on a large scan that inflation is what exhausts memory rather than the
+    comparisons. avgdiff takes bytes directly, so that path reads raw.
+    """
+
+    def test_returns_bytes(self, tmpdir):
+        c = SqliteCache(str(tmpdir.join("hello.db")))
+        c["foo"] = [[(1, 2, 3)], [], [], [], [], [], [], []]
+        raw = c.get_blocks_raw("foo")
+        assert all(isinstance(block, bytes) for block in raw), raw
+        eq_(8, len(raw))
+        c.close()
+
+    def test_round_trips_the_same_data_as_getitem(self, tmpdir):
+        """Raw and inflated must describe the same signature, or matching silently changes."""
+        c = SqliteCache(str(tmpdir.join("hello.db")))
+        blocks = [[(1, 2, 3), (4, 5, 6)]] + [[] for _ in range(7)]
+        c["foo"] = blocks
+        inflated = c["foo"]
+        raw = c.get_blocks_raw("foo")
+        eq_(colors_to_bytes(inflated[0]), raw[0])
+        eq_(bytes_to_colors(raw[0]), inflated[0])
+        c.close()
+
+    def test_empty_signatures_come_back_as_empty_bytes(self, tmpdir):
+        """matchblock tests these with `not block`, which must work for b"" as for []."""
+        c = SqliteCache(str(tmpdir.join("hello.db")))
+        c["foo"] = [[(1, 2, 3)]] + [[] for _ in range(7)]
+        raw = c.get_blocks_raw("foo")
+        assert not raw[1]
+        eq_(b"", raw[1])
+        c.close()
+
+    def test_missing_key_raises(self, tmpdir):
+        c = SqliteCache(str(tmpdir.join("hello.db")))
+        with raises(KeyError):
+            c.get_blocks_raw("nonexistent")
+        c.close()
+
+    def test_lookup_by_rowid(self, tmpdir):
+        """getmatches looks signatures up by cache_id, not by path."""
+        c = SqliteCache(str(tmpdir.join("hello.db")))
+        c["foo"] = [[(1, 2, 3)]] + [[] for _ in range(7)]
+        eq_(c.get_blocks_raw(c.get_id("foo")), c.get_blocks_raw("foo"))
+        c.close()

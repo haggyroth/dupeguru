@@ -47,7 +47,10 @@ def prepare_pictures(pictures, cache_path, with_dimensions, match_rotated, j=job
                 picture.dimensions  # pre-read dimensions
             try:
                 if picture.unicode_path not in cache or (
-                    match_rotated and any(block == [] for block in cache[picture.unicode_path])
+                    # Raw, so this emptiness check does not inflate eight signatures per
+                    # picture just to look at their length.
+                    match_rotated
+                    and any(not block for block in cache.get_blocks_raw(picture.unicode_path))
                 ):
                     if match_rotated:
                         blocks = [picture.get_blocks(BLOCK_COUNT_PER_SIDE, orientation) for orientation in range(1, 9)]
@@ -102,7 +105,10 @@ def getmatches(pictures, cache_path, threshold, match_scaled=False, match_rotate
     for picture in pictures:
         try:
             picture.cache_id = cache.get_id(picture.unicode_path)
-            pic_to_blocks[picture] = cache[picture.cache_id]
+            # Raw bytes rather than inflated tuples: this dict holds one entry per
+            # picture for the whole corpus, so the representation decides whether a
+            # large scan fits in memory. avgdiff compares bytes directly.
+            pic_to_blocks[picture] = cache.get_blocks_raw(picture.cache_id)
         except (ValueError, KeyError):
             pass
     cache.close()
