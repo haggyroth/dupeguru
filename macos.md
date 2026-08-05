@@ -7,20 +7,20 @@ These instructions are for the Qt version of the UI on macOS.
 - [Python 3.10+][python]
 - [Xcode 12.3][xcode] or just Xcode command line tools (older versions can be used if not interested in arm macs)
 - [Homebrew][homebrew]
-- [qt5](https://www.qt.io/)
 
 #### Prerequisite setup
 1. Install Xcode if desired
 2. Install [Homebrew][homebrew], if not on the path after install (arm based Macs) create `~/.zshrc`
 with `export PATH="/opt/homebrew/bin:$PATH"`. Will need to reload terminal or source the file to take
 effect.
-3. Install qt5 with `brew`. If you are using a version of macos without system python 3.10+ then you will
-also need to install that via brew or with pyenv.
+3. If you are using a version of macos without system python 3.10+ you will need to install
+one via `brew` or with `pyenv`.
 
-        $ brew install qt5
-
-    NOTE: Using `brew` to install qt5 is to allow pyqt5 to build without a native wheel
-    available.  If you are using an intel based mac you can probably skip this step.
+    NOTE: Qt itself does **not** need to be installed. PyQt6 is the default binding and ships
+    manylinux/macOS wheels for both arm64 and x86_64, so `pip install -r requirements.txt` is
+    enough. A `brew install qt5` step used to be required here because PyQt5 had no arm64 wheel
+    and had to be built from source; that is only relevant if you deliberately switch to the
+    PyQt5 fallback.
 
 4. May need to launch a new terminal to have everything working.
 
@@ -28,8 +28,10 @@ also need to install that via brew or with pyenv.
 macOS ships a python3, but it is usually too old: **3.10 or newer is required**, because
 `core/hash_cache.py` uses PEP 604 unions in signatures evaluated at import time, so 3.8 and 3.9
 cannot import the package at all. Install a newer python via `brew` or `pyenv` if the system one
-is older. If needing to build pyqt5 from source then the first line below is needed, else it may
-be omitted. (Path shown is for an arm mac.)
+is older.
+
+The first line below is only needed if you are building the PyQt5 fallback from source; with the
+default PyQt6 it can be omitted. (Path shown is for an arm mac.)
 
     $ export PATH="/opt/homebrew/opt/qt/bin:$PATH"
     $ cd <dupeGuru directory>
@@ -52,16 +54,19 @@ Run the following in the respective virtual environment.
 
 This will produce a dupeGuru.app in the dist folder.
 
-NOTE: `requirements-extra.txt` pins `pyinstaller>=5.6,<6.0`, which has no build for python 3.14.
-On 3.14 that install fails outright, so packaging currently needs an older interpreter. See
-`HANDOFF.md` for why the pin has not simply been widened.
+This produces `dist/dupeguru.app`, with `CFBundleShortVersionString` and `CFBundleVersion`
+stamped from `core.__version__`. To wrap it in a disk image:
+
+    $ python -c "from hscommon.build import build_dmg; build_dmg('dist/dupeguru.app', 'dist-dmg')"
+
+CI does both automatically -- see the `applications` job in `.github/workflows/packaging.yml`.
 
 ### Running tests
 The complete test suite can be run with tox just like on linux. The test tooling lives in
-`requirements-extra.txt`, but on python 3.14 that file cannot be installed (see the note above);
-install just the test dependencies instead:
+`requirements-extra.txt`:
 
-    $ pip install pytest'>=7,<8' pytest-cov flake8 black
+    $ pip install -r requirements-extra.txt
+    $ pytest core hscommon qt tests
 
 [python]: http://www.python.org/
 [homebrew]: https://brew.sh/

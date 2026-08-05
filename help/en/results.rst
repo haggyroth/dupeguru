@@ -24,6 +24,8 @@ Although you can just click on **Edit-->Mark All** and then **Actions-->Send Mar
 
 To help you reviewing the results, you can bring up the **Details panel**. This panel shows all the details of the currently selected file as well as its reference's details. This is very handy to quickly determine if a duplicate really is a duplicate. You can also double-click on a file to open it with its associated application.
 
+In Standard mode the Details panel also shows a **preview** of the selected file beside its reference, so you can compare the two without opening either. Images are shown side by side; anything else shows its icon with the file's details. Use the **Show preview** toggle in the panel to hide it if you would rather have the space for the details table -- the setting is remembered between runs.
+
 If you have more false duplicates than true duplicates (If your filter hardness is very low), the best way to proceed would be to review duplicates, mark true duplicates and then click on **Actions-->Send Marked to Recycle bin**. If you have more true duplicates than false duplicates, you can instead mark all files that are false duplicates, and use **Actions-->Remove Marked from Results**.
 
 Marking and Selecting

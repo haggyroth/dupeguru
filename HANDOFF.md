@@ -20,10 +20,10 @@ it renders links for *historical* upstream ticket numbers in `help/changelog`. D
 | | |
 |---|---|
 | Branch | `master` (not `main`) |
-| Version | 4.9.0, released |
-| Releases | v4.4.0, v4.4.1, v4.5.0, v4.6.0, v4.7.0, v4.7.1, v4.8.0, v4.9.0 |
-| Issues | 26 closed, 1 open |
-| Tests | **919 passing, 6 skipped** on macOS. Windows/Linux counts differ (see below) |
+| Version | 4.10.0, released, with Windows and macOS binaries attached |
+| Releases | v4.4.0 through v4.10.0. From 4.9.0 they carry binaries |
+| Issues | 29 closed, 1 open (#83, left with an outside contributor) |
+| Tests | **1090 passing, 6 skipped** on macOS. Windows/Linux counts differ (see below) |
 | Qt bindings | PyQt6 by default, PyQt5 as a fallback with its own CI leg |
 | CI | Linux on 3.10 / 3.12 / 3.14, plus Windows, macOS and a PyQt5 leg; `master` is protected |
 
@@ -75,11 +75,12 @@ move and a green run looks different.
 | 3 Windows junction tests | run | **skip** | **skip** |
 | 1 case-sensitivity test | skip | skip (APFS is case-insensitive) | run |
 | 2 exclude union-mode tests | skip | skip | skip |
-| **Totals** | 922 / 3 skipped | **919 / 6 skipped** | 920 / 5 skipped |
+| **Totals** | measured on CI | **1090 / 6 skipped** | measured on CI |
 
-925 tests collected in total. The macOS column is measured; the other two are that total
-less the tests their platform skips, and were last measured on CI at #56. If a count is
-off by a little, check which group changed rather than assuming the suite broke.
+Only the macOS column is measured here; the Windows and Linux totals move with the suite and
+are best read off a CI run rather than copied into this file, since they went stale within a
+week last time. What stays true is *which* groups skip where -- that is the useful part. If a
+count is off, check which group changed rather than assuming the suite broke.
 
 Note the Windows column is CI, not the old Windows laptop: CI runners *do* have symlink
 privilege, so they run both the symlink and the junction tests and skip the least. And since
@@ -240,13 +241,22 @@ nobody is running 4.4.0.
 
 ## Open issues
 
-- **[#28](https://github.com/haggyroth/dupeguru/issues/28)** — resumable scans. The only one
-  left, and the largest item; the hash cache already delivers most of the practical benefit.
+- **[#83](https://github.com/haggyroth/dupeguru/issues/83)** — a CLI `--version` flag. Small,
+  and deliberately left alone: an outside contributor opened a PR for it and was given review
+  feedback. Taking it over would be faster and would also be the last time they contributed.
+  Nothing depends on it.
 
-Closed, but the reasoning is worth keeping: **#10** (`freeze_support()`) and **#27** (PyQt6
-alongside PyQt5) both needed a real frozen build to settle, which is why they sat open so
-long. #27 was phased across #52–#56; PyQt6 is now the default binding with PyQt5 a supported
-fallback on its own CI leg, and nothing in the tree imports a binding directly.
+Closed, but the reasoning is worth keeping:
+
+- **#28** (resumable scans) was closed on measurement rather than completion. Checkpoints 1
+  and 3 shipped as the listing cache and the picture match cache; checkpoint 2 was **declined**
+  because the hash cache already delivered it and a warm content rescan measured 0.25s. The
+  issue's own proposal -- revalidating every persisted path on resume -- would have cost one
+  stat per file, which is precisely what the feature exists to avoid.
+- **#82** (coverage) was closed on substance. The four methods that could destroy or misreport
+  user data went from 12/18/3/66% to 100/100/100/86%. What remained was plumbing.
+- **#10** (`freeze_support()`) and **#27** (PyQt6 alongside PyQt5) both needed a real frozen
+  build to settle, which is why they sat open so long. #27 was phased across #52–#56.
 
 **Read the code before the issue text.** #25 and #26 were both written against a state of the
 world that had already moved by the time they were picked up — #25 still asserted `--dry-run`
