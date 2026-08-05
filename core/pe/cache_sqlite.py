@@ -65,6 +65,35 @@ class SqliteCache:
         else:
             raise KeyError(key)
 
+    def set_blocks_raw(self, path_str, blocks):
+        """Store already-encoded block signatures (a list of 8 bytes objects).
+
+        The counterpart to get_blocks_raw. Preparation workers return encoded bytes, so
+        routing them through __setitem__ would mean decoding to tuples only to re-encode.
+        """
+        if len(blocks) != 8:
+            raise ValueError(f"expected 8 block signatures, got {len(blocks)}")
+        if op.exists(path_str):
+            mtime = int(os.stat(path_str).st_mtime)
+        else:
+            mtime = 0
+        if path_str in self:
+            sql = (
+                "update pictures set blocks = ?, blocks2 = ?, blocks3 = ?, blocks4 = ?, blocks5 = ?, "
+                "blocks6 = ?, blocks7 = ?, blocks8 = ?, mtime_ns = ? where path = ?"
+            )
+        else:
+            sql = (
+                "insert into pictures(blocks,blocks2,blocks3,blocks4,blocks5,blocks6,blocks7,blocks8,"
+                "mtime_ns,path) values(?,?,?,?,?,?,?,?,?,?)"
+            )
+        try:
+            self.con.execute(sql, list(blocks) + [mtime * 1000000000, path_str])
+        except sqlite.OperationalError:
+            logging.warning("Picture cache could not set blocks for %s", path_str)
+        except sqlite.DatabaseError as e:
+            logging.warning("DatabaseError while setting blocks for %r: %s", path_str, str(e))
+
     def get_blocks_raw(self, key):
         """Block signatures exactly as stored: a list of 8 bytes objects.
 
