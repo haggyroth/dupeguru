@@ -50,29 +50,38 @@ def set_tr(
         _trget = new_trget
 
 
+# Language code -> locale name passed to setlocale. Module level so the invariant that
+# every entry carries a territory can be asserted in a test; it was also being rebuilt on
+# every call.
+LANG2LOCALENAME = {
+    "cs": "cs_CZ",
+    "de": "de_DE",
+    "el": "el_GR",
+    # Every entry needs a territory. macOS rejects a bare language code outright --
+    # setlocale(LC_ALL, "en") raises -- and on Linux the ".UTF-8" that get_locale_name appends would
+    # make it "en.UTF-8", which is equally invalid. glibc's alias table is what made this
+    # look like it worked. "en" was the only entry missing one (issue #87).
+    "en": "en_US",
+    "es": "es_ES",
+    "fr": "fr_FR",
+    "hy": "hy_AM",
+    "it": "it_IT",
+    "ja": "ja_JP",
+    "ko": "ko_KR",
+    "ms": "ms_MY",
+    "nl": "nl_NL",
+    "pl_PL": "pl_PL",
+    "pt_BR": "pt_BR",
+    "ru": "ru_RU",
+    "tr": "tr_TR",
+    "uk": "uk_UA",
+    "vi": "vi_VN",
+    "zh_CN": "zh_CN",
+}
+
+
 def get_locale_name(lang: str) -> Union[str, None]:
     # Removed old conversion code as windows seems to support these
-    LANG2LOCALENAME = {
-        "cs": "cs_CZ",
-        "de": "de_DE",
-        "el": "el_GR",
-        "en": "en",
-        "es": "es_ES",
-        "fr": "fr_FR",
-        "hy": "hy_AM",
-        "it": "it_IT",
-        "ja": "ja_JP",
-        "ko": "ko_KR",
-        "ms": "ms_MY",
-        "nl": "nl_NL",
-        "pl_PL": "pl_PL",
-        "pt_BR": "pt_BR",
-        "ru": "ru_RU",
-        "tr": "tr_TR",
-        "uk": "uk_UA",
-        "vi": "vi_VN",
-        "zh_CN": "zh_CN",
-    }
     if lang not in LANG2LOCALENAME:
         return None
     result = LANG2LOCALENAME[lang]
