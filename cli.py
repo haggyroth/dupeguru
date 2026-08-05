@@ -144,6 +144,31 @@ class _HeadlessView:
 # --- Synchronous scan ------------------------------------------------------
 
 
+def _wire_photo_class():
+    """Point core.pe.photo at a concrete photo class.
+
+    core/pe/photo.py leaves PLAT_SPECIFIC_PHOTO_CLASS as None for the UI layer to fill in,
+    and qt/app.py does it when the GUI starts. The CLI never constructs the Qt application,
+    so without this every picture-mode scan died on the first file with
+    "AttributeError: 'NoneType' object has no attribute 'can_handle'".
+
+    The Qt photo class decodes headlessly -- QImage needs no QApplication to read a file --
+    so the CLI can use it directly rather than needing a second decoder.
+    """
+    import core.pe.photo
+
+    if core.pe.photo.PLAT_SPECIFIC_PHOTO_CLASS is not None:
+        return
+    try:
+        from qt.pe.photo import File as PlatSpecificPhoto
+    except ImportError as e:
+        raise SystemExit(
+            "Picture mode needs a Qt binding for image decoding, and none could be "
+            f"imported ({e}). Install one with: pip install -r requirements.txt"
+        )
+    core.pe.photo.PLAT_SPECIFIC_PHOTO_CLASS = PlatSpecificPhoto
+
+
 def _run_scan(app: DupeGuru, verbose: bool, progress_json: bool = False) -> None:
     """Run the scan synchronously on the calling thread (no Qt event loop needed)."""
     scanner = app.SCANNER_CLASS()
@@ -159,6 +184,7 @@ def _run_scan(app: DupeGuru, verbose: bool, progress_json: bool = False) -> None
 
     if app.app_mode == AppMode.PICTURE:
         scanner.cache_path = app._get_picture_cache_path()
+        _wire_photo_class()
 
     def _progress(progress: int, desc: str = "") -> bool:
         if progress_json and desc:
