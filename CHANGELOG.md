@@ -11,6 +11,20 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Picture cache reads and writes are batched** (`core/pe/cache_sqlite.py`,
+  `core/pe/matchblock.py`): loading block signatures ran a `get_id` and a `get_blocks_raw`
+  per picture — two round trips each, so a million queries for a 500,000-picture scan — and
+  is now one pass over the table. Writes were worse: the connection runs with
+  `isolation_level=None`, so every stored signature was its own transaction and its own
+  commit, which became the limiting factor once preparation itself was parallelised. They
+  now go out in batches of 500 inside one explicit transaction.
+  Measured over 50,000 signatures: writes **28.5x faster** (10.52s to 0.37s) and reads
+  **5.4x faster** (0.42s to 0.08s). Both are invisible at a thousand pictures — an A/B there
+  showed no difference at all — and worth roughly a hundred seconds of writes alone at
+  500,000.
+
+### Changed
+
 - **Picture preparation runs on a process pool** (`core/pe/matchblock.py`): decoding images
   and computing their block signatures is the dominant cost of a first picture scan and was
   entirely serial, while content-scan hashing has used a worker per core for some time.

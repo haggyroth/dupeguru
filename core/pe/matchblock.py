@@ -35,6 +35,9 @@ def get_cache(cache_path, readonly=False):
 # than the serial path.
 PARALLEL_THRESHOLD = 250
 
+# Rows per cache transaction while preparing.
+_CACHE_WRITE_BATCH = 500
+
 
 def _parallel_enabled(count):
     """Whether a process pool is worth it for *count* pictures."""
@@ -55,6 +58,7 @@ def _prepare_parallel(pictures, cache, with_dimensions, match_rotated, prepared,
     by_path = {p.unicode_path: p for p in pictures}
     workers = max(1, (os.cpu_count() or 1) - 1)
     done_paths = set()
+    pending = []
 
     j.start_job(len(pictures), tr("Analyzed %d/%d pictures") % (0, len(pictures)))
     completed = 0
@@ -71,12 +75,21 @@ def _prepare_parallel(pictures, cache, with_dimensions, match_rotated, prepared,
                 if error is not None:
                     logging.warning("Could not prepare %s: %s", path_str, error)
                     continue
-                cache.set_blocks_raw(path_str, blocks)
+                pending.append((path_str, blocks))
                 if dimensions is not None:
                     picture.dimensions = dimensions
                 prepared.append(picture)
+                # Written in batches: the connection autocommits, so one write per picture
+                # is one transaction per picture, which is what limited this once the
+                # decoding itself was parallel.
+                if len(pending) >= _CACHE_WRITE_BATCH:
+                    cache.set_blocks_raw_many(pending)
+                    pending.clear()
                 if completed % 100 == 0:
                     j.set_progress(completed, tr("Analyzed %d/%d pictures") % (completed, len(pictures)))
+            if pending:
+                cache.set_blocks_raw_many(pending)
+                pending.clear()
     except Exception as exc:
         logging.warning("Parallel picture preparation failed (%s), falling back to sequential", exc)
 
@@ -227,16 +240,18 @@ def getmatches(pictures, cache_path, threshold, match_scaled=False, match_rotate
 
     # --- Load all block signatures from the SQLite cache ---
     cache = get_cache(cache_path)
+    # One pass over the table rather than a get_id and a get_blocks_raw per picture, which
+    # is two round trips each -- a million of them for a 500,000-picture scan.
+    # Raw bytes rather than inflated tuples: this dict holds one entry per picture for the
+    # whole corpus, so the representation decides whether a large scan fits in memory.
+    # avgdiff compares bytes directly.
     pic_to_blocks = {}  # picture -> [blocks_0, ..., blocks_7]
+    cached = cache.get_blocks_raw_for_paths(p.unicode_path for p in pictures)
     for picture in pictures:
-        try:
-            picture.cache_id = cache.get_id(picture.unicode_path)
-            # Raw bytes rather than inflated tuples: this dict holds one entry per
-            # picture for the whole corpus, so the representation decides whether a
-            # large scan fits in memory. avgdiff compares bytes directly.
-            pic_to_blocks[picture] = cache.get_blocks_raw(picture.cache_id)
-        except (ValueError, KeyError):
-            pass
+        entry = cached.get(picture.unicode_path)
+        if entry is None:
+            continue
+        picture.cache_id, pic_to_blocks[picture] = entry
     cache.close()
 
     pictures = [p for p in pictures if p in pic_to_blocks]
