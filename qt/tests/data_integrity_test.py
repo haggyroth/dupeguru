@@ -137,9 +137,10 @@ class TestResultsModelMarking:
 
         model = results_model
         row = self._row(marked=False)
-        # int(), not .value: PyQt5 exposes these as plain ints and has no .value attribute,
-        # so .value passes on PyQt6 and raises on the fallback leg.
-        checked = int(Qt.CheckState.Checked)
+        # Neither spelling works on both bindings: PyQt5 exposes these as plain ints with no
+        # .value, and PyQt6 exposes an enum that int() refuses. getattr covers both, and the
+        # PyQt5 leg exists precisely to catch the half that passes locally.
+        checked = getattr(Qt.CheckState.Checked, "value", Qt.CheckState.Checked)
         assert model._setData(row, self._column("marked"), checked, Qt.ItemDataRole.CheckStateRole)
         assert row.marked is True
         model._setData(row, self._column("marked"), 0, Qt.ItemDataRole.CheckStateRole)
