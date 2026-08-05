@@ -96,3 +96,78 @@ jobs:
         with:
           name: frozen-cli-${{ matrix.os }}
           path: dist-freeze/**
+
+  applications:
+    # The real deliverables: an NSIS installer on Windows, a disk image on macOS. Separate
+    # from the freeze job above, which only smoke-tests the CLI and is about issue #10.
+    #
+    # Still manual, and still not attached to releases. Publishing a binary changes what the
+    # packaging bugs mean -- they stop being latent the moment somebody downloads one -- so
+    # that is a deliberate step, not a side effect of tagging.
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+      - name: Set up Python 3.12
+        uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 # v6.1.0
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install setuptools
+          pip install -r requirements.txt -r requirements-extra.txt
+      - name: Install NSIS (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          choco install nsis --no-progress -y
+          echo "C:\Program Files (x86)\NSIS" >> $env:GITHUB_PATH
+        shell: pwsh
+      - name: Build modules, localisations and help
+        # package.py refuses to run without build/locale and build/help, and would otherwise
+        # ship an application with no translations and no help.
+        run: |
+          python build.py --modules
+          python build.py --loc
+          python build.py --doc
+      - name: Package
+        run: python package.py
+      - name: Build disk image (macOS)
+        # package.py leaves a .app. Uploading that directly loses the executable bit, because
+        # GitHub artifacts are zipped and zip does not carry it -- the download would not run.
+        # A .dmg preserves permissions and is what a macOS user expects anyway.
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p dist-dmg
+          python -c "from hscommon.build import build_dmg; build_dmg('dist/dupeguru.app', 'dist-dmg')"
+      - name: Verify an artifact was produced
+        # package.py returns non-zero on failure now, but a tool can exit 0 and write nothing,
+        # which is how a missing pyrcc5 once produced a successful build with no icons.
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            artifact=$(ls dist/dupeGuru_win*_*.exe 2>/dev/null | head -1)
+          else
+            artifact=$(ls dist-dmg/*.dmg 2>/dev/null | head -1)
+          fi
+          if [ -z "${artifact:-}" ]; then echo "::error::no installer or disk image was produced"; exit 1; fi
+          size=$(wc -c < "$artifact")
+          echo "built $artifact ($size bytes)"
+          # A few hundred bytes would mean a stub, not an application.
+          if [ "$size" -lt 5000000 ]; then echo "::error::$artifact is implausibly small"; exit 1; fi
+      - name: Upload installer (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: dupeguru-windows-installer
+          path: dist/dupeGuru_win*_*.exe
+      - name: Upload disk image (macOS)
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: dupeguru-macos-dmg
+          path: dist-dmg/*.dmg

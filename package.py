@@ -12,6 +12,7 @@ import shutil
 import json
 from argparse import ArgumentParser
 import platform
+import plistlib
 import distro
 import re
 
@@ -262,6 +263,27 @@ def package_windows():
     return 0
 
 
+APP_BUNDLE = op.join("dist", "dupeguru.app")
+
+
+def stamp_macos_bundle_version(app_path, version):
+    """Write the application version into the bundle's Info.plist.
+
+    PyInstaller has no command-line option for this, so without it the bundle ships
+    CFBundleShortVersionString "0.0.0" and no CFBundleVersion at all: Finder and the About
+    box report 0.0.0, and anything reading CFBundleVersion -- build_dmg names the disk image
+    from it -- fails outright.
+    """
+    plist_path = op.join(app_path, "Contents", "Info.plist")
+    with open(plist_path, "rb") as fp:
+        plist = plistlib.load(fp)
+    plist["CFBundleShortVersionString"] = version
+    plist["CFBundleVersion"] = version
+    with open(plist_path, "wb") as fp:
+        plistlib.dump(plist, fp)
+    print(f"Stamped {plist_path} with version {version}")
+
+
 def package_macos():
     # include locale files if they are built otherwise exit as it will break
     # the localization
@@ -285,6 +307,12 @@ def package_macos():
             "{0}".format(ENTRY_SCRIPT),
         ]
     )
+    if not op.exists(APP_BUNDLE):
+        print(f"PyInstaller reported success but {APP_BUNDLE} does not exist.")
+        return 1
+    stamp_macos_bundle_version(APP_BUNDLE, get_module_version("core"))
+    print(f"Built {APP_BUNDLE}")
+    return 0
 
 
 def main():

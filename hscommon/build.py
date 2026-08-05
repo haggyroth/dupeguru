@@ -189,9 +189,12 @@ def build_dmg(app_path: os.PathLike, destfolder: os.PathLike) -> None:
     os.mkdir(dmgpath)
     run_checked('cp -R "{}" "{}"'.format(app_path, dmgpath))
     run_checked('ln -s /Applications "%s"' % op.join(dmgpath, "Applications"))
+    # CFBundleVersion is not always present -- PyInstaller does not write one unless asked --
+    # so fall back rather than raising KeyError after the app has already been built.
+    version = plist.get("CFBundleVersion") or plist.get("CFBundleShortVersionString") or "unknown"
     dmgname = "{}_osx_{}.dmg".format(
         plist["CFBundleName"].lower().replace(" ", "_"),
-        plist["CFBundleVersion"].replace(".", "_"),
+        version.replace(".", "_"),
     )
     dmgpath_out = op.join(destfolder, dmgname)
     print("Building %s" % dmgname)
