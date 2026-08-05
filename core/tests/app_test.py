@@ -16,7 +16,7 @@ from pathlib import Path
 import hscommon.conflict
 import hscommon.util
 from hscommon.testutil import eq_, log_calls
-from hscommon.jobprogress.job import Job
+from hscommon.jobprogress.job import Job, nulljob
 
 from core.tests.base import TestApp
 from core.tests.results_test import GetTestGroups
@@ -1192,3 +1192,112 @@ class TestDeleteMarkedGuards:
         assert started, "no job was started"
         _, kwargs = started[0]
         assert kwargs["args"] == [True, True, True]
+
+
+class TestCopyOrMoveMarkedGuards:
+    """The guards around copy/move, and the copy-vs-move difference (issue #82).
+
+    Same shape as TestDeleteMarkedGuards: copy_or_move itself is well covered, so a
+    regression in the orchestration would go unnoticed. The difference that matters here is
+    the last argument to perform_on_marked -- a move removes dupes from the results because
+    they are no longer where the table says, a copy must not because they still are.
+    """
+
+    @staticmethod
+    def _app_with_marked_dupes(destination="/dest"):
+        dgapp = TestApp().app
+        objects, matches, groups = GetTestGroups()
+        dgapp.results.groups = groups
+        dgapp.results.mark(objects[1])
+        started = []
+        dgapp._start_job = lambda *a, **k: started.append(a)
+        prompts = []
+        dgapp.view.select_dest_folder = lambda prompt: prompts.append(prompt) or destination
+        return dgapp, started, prompts
+
+    def test_nothing_marked_shows_a_message_and_starts_no_job(self):
+        dgapp = TestApp().app
+        objects, matches, groups = GetTestGroups()
+        dgapp.results.groups = groups
+        dgapp.results.mark_none()
+        started = []
+        dgapp._start_job = lambda *a, **k: started.append(a)
+        dgapp.view.select_dest_folder = lambda prompt: "/dest"
+
+        dgapp.copy_or_move_marked(True)
+
+        assert not started
+        assert app.MSG_NO_MARKED_DUPES in dgapp.view.messages
+
+    def test_nothing_marked_does_not_even_ask_for_a_destination(self):
+        """Prompting for a folder and then doing nothing would be a confusing dead end."""
+        dgapp, started, prompts = self._app_with_marked_dupes()
+        dgapp.results.mark_none()
+
+        dgapp.copy_or_move_marked(True)
+
+        assert prompts == []
+        assert not started
+
+    def test_cancelling_the_folder_picker_starts_no_job(self):
+        dgapp, started, prompts = self._app_with_marked_dupes(destination="")
+
+        dgapp.copy_or_move_marked(True)
+
+        assert prompts, "the user should have been asked"
+        assert not started, "a job was started despite no destination being chosen"
+
+    def test_copy_and_move_use_distinct_job_types(self):
+        """The job id drives the progress window's title; swapping them mislabels the work."""
+        dgapp, started, _ = self._app_with_marked_dupes()
+        dgapp.copy_or_move_marked(True)
+        dgapp.copy_or_move_marked(False)
+
+        assert [a[0] for a in started] == [app.JobType.COPY, app.JobType.MOVE]
+
+    def test_the_prompt_says_which_operation_it_is(self):
+        """Same dialog for both, so the wording is the only thing telling them apart."""
+        dgapp, started, prompts = self._app_with_marked_dupes()
+        dgapp.copy_or_move_marked(True)
+        dgapp.copy_or_move_marked(False)
+
+        assert "copy" in prompts[0].lower()
+        assert "move" in prompts[1].lower()
+        assert prompts[0] != prompts[1]
+
+    def _run_job(self, dgapp, started):
+        """Invoke the closure handed to _start_job, spying on perform_on_marked."""
+        seen = {}
+
+        def spy(op, remove_from_results):
+            seen["remove_from_results"] = remove_from_results
+
+        dgapp.results.perform_on_marked = spy
+        _, func = started[0]
+        func(nulljob)
+        return seen
+
+    def test_move_removes_dupes_from_the_results(self):
+        dgapp, started, _ = self._app_with_marked_dupes()
+        dgapp.copy_or_move_marked(False)
+        assert self._run_job(dgapp, started)["remove_from_results"] is True
+
+    def test_copy_leaves_dupes_in_the_results(self):
+        """Inverting this would drop files from the table that are still on disk."""
+        dgapp, started, _ = self._app_with_marked_dupes()
+        dgapp.copy_or_move_marked(True)
+        assert self._run_job(dgapp, started)["remove_from_results"] is False
+
+    def test_the_chosen_destination_reaches_copy_or_move(self):
+        """destination and desttype are closure variables assigned after `do` is defined."""
+        dgapp, started, _ = self._app_with_marked_dupes(destination="/chosen")
+        dgapp.options["copymove_dest_type"] = app.DestType.ABSOLUTE
+        dgapp.copy_or_move_marked(True)
+
+        calls = []
+        dgapp.copy_or_move = lambda dupe, copy, destination, dest_type: calls.append((copy, destination, dest_type))
+        dgapp.results.perform_on_marked = lambda op, remove: op(dgapp.results.dupes[0])
+        _, func = started[0]
+        func(nulljob)
+
+        assert calls == [(True, "/chosen", app.DestType.ABSOLUTE)]
