@@ -54,7 +54,7 @@ import sys
 from pathlib import Path
 from typing import NamedTuple
 
-from core import fs, se
+from core import fs, se, file_list_cache
 from core.app import AppMode, DeleteStatus, DupeGuru, check_deletable
 from core.directories import AlreadyThereError, DirectoryState, InvalidPathError
 from core.scanner import ScanType
@@ -860,6 +860,18 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Minimum match percentage to consider two files duplicates (default: 80).",
     )
     knobs.add_argument(
+        "--file-list-cache",
+        metavar="DB",
+        default=None,
+        help=(
+            "Cache directory listings in DB so a rescan does not re-stat every file. Off by "
+            "default. Validated per directory: a directory whose mtime is unchanged is not "
+            "read again. Adding, removing or renaming a file is detected; editing one in "
+            "place is NOT, so a rescan can miss a duplicate whose size changed. Never causes "
+            "a wrong deletion -- files are re-checked immediately before removal."
+        ),
+    )
+    knobs.add_argument(
         "--match-scaled",
         action="store_true",
         default=False,
@@ -1243,6 +1255,10 @@ def main(argv=None) -> int:
     app.options["ignore_hardlink_matches"] = args.filter_hardlinks
 
     # Scanner knobs -------------------------------------------------------
+    if args.file_list_cache:
+        flcache = file_list_cache.FileListCache()
+        flcache.connect(args.file_list_cache)
+        app.directories.file_list_cache = flcache
     app.options["min_match_percentage"] = args.min_match
     app.options["match_scaled"] = args.match_scaled
     app.options["word_weighting"] = args.word_weighting
