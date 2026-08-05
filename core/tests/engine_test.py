@@ -299,23 +299,81 @@ class TestCaseMergeSimilarWords:
         assert "foobar2" not in d
         assert d["foobar"] == {1, 2, 3}
 
-    def test_large_corpus_no_quadratic_blowup(self):
-        # With the O(n²) bug (keys.remove inside the loop), n=2000 unique words would
-        # take several seconds. With the fixed set-based approach it should be fast.
-        import time
-        import string
-        import random
+    @staticmethod
+    def _clustered_corpus(n, seed=42):
+        """Words in near-identical clusters, so merges actually happen.
 
-        rng = random.Random(42)
+        A corpus of random words is almost never similar at difflib's 0.8 cutoff, so the
+        merge path -- the code any regression here would live in -- barely executes. The
+        previous version of this test used one, which is why it could not distinguish a
+        correct implementation from a broken one.
+        """
+        import random
+        import string
+
+        rng = random.Random(seed)
         words = set()
-        while len(words) < 2000:
-            length = rng.randint(6, 12)
-            words.add("".join(rng.choices(string.ascii_lowercase, k=length)))
-        d = {w: {i} for i, w in enumerate(words)}
-        start = time.monotonic()
+        while len(words) < n:
+            stem = "".join(rng.choices(string.ascii_lowercase, k=10))
+            for i in range(10):
+                words.add(f"{stem}{i}")
+                if len(words) >= n:
+                    break
+        return {w: {i} for i, w in enumerate(words)}
+
+    @staticmethod
+    def _median_time(fn, make_arg, runs=3):
+        import time
+
+        samples = []
+        for _ in range(runs):
+            arg = make_arg()
+            start = time.monotonic()
+            fn(arg)
+            samples.append(time.monotonic() - start)
+        return sorted(samples)[len(samples) // 2]
+
+    def test_merging_actually_happens_in_the_benchmark_corpus(self):
+        """Guards the test below rather than the code.
+
+        If the corpus stops producing merges, the scaling test still passes while measuring
+        nothing. This asserts the path under test is genuinely exercised.
+        """
+        d = self._clustered_corpus(500)
+        before = len(d)
         merge_similar_words(d)
-        elapsed = time.monotonic() - start
-        assert elapsed < 30, f"merge_similar_words took {elapsed:.1f}s — possible O(n²) regression"
+        assert len(d) < before * 0.9, (
+            f"only {before - len(d)} of {before} words merged; the corpus no longer exercises "
+            "the merge path, so test_merge_similar_words_scaling measures nothing"
+        )
+
+    def test_merge_similar_words_does_not_scale_worse_than_quadratically(self):
+        """Catch a return to cubic behaviour, without depending on how fast the machine is.
+
+        merge_similar_words is inherently quadratic: it runs difflib.get_close_matches over
+        the surviving keys once per key. That is the intended cost, so this deliberately does
+        not assert sub-quadratic -- a test that fails on correct behaviour is worse than none.
+
+        What it catches is an extra factor of n, which is what O(n) membership tests inside
+        the loop produce (`removed` as a list rather than a set). Measured:
+
+            correct              3.7x - 3.9x per doubling
+            `removed` as a list  6.3x - 7.0x per doubling
+
+        so 5.5 separates them with room either side. The ratio is used rather than a wall
+        clock because both measurements run on the same machine moments apart, so runner load
+        cancels out; the previous absolute-time assertion failed on loaded CI runners at 34s
+        while taking 5s locally, and passed on re-run with no code change.
+        """
+        small = self._median_time(merge_similar_words, lambda: self._clustered_corpus(1000))
+        large = self._median_time(merge_similar_words, lambda: self._clustered_corpus(2000))
+
+        ratio = large / max(small, 1e-6)
+        assert ratio < 5.5, (
+            f"doubling the corpus multiplied the time by {ratio:.1f}x; correct behaviour is "
+            f"~3.9x and an extra factor of n gives ~7x, so this suggests a linear scan crept "
+            f"back into the loop (n=1000: {small:.3f}s, n=2000: {large:.3f}s)"
+        )
 
 
 class TestCaseReduceCommonWords:
