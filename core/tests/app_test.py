@@ -303,6 +303,40 @@ class TestCaseDupeGuru:
         dgapp._do_delete_dupe(folder, False, False, True)
         assert not sub.exists()
 
+    def test_check_deletable_at_exactly_the_tolerance(self, tmpdir):
+        """The boundary the tolerance exists for, which the surrounding tests step over.
+
+        Found by mutation testing: changing `>` to `>=` survived, because the existing tests
+        use 1 second (accepted) and 3 seconds (refused) and never touch 2. FAT32 stores mtimes
+        to a 2-second resolution, so a file that has not changed can legitimately report
+        exactly that difference -- refusing it would make deletion impossible on FAT volumes,
+        which is the case the constant was added for.
+        """
+        f = Path(str(tmpdir)) / "file.txt"
+        f.write_text("hello")
+        st = f.stat()
+        eq_(app.check_deletable(f, st.st_size, st.st_mtime - app._MTIME_TOLERANCE)[0], app.DeleteStatus.OK)
+        eq_(
+            app.check_deletable(f, st.st_size, st.st_mtime - app._MTIME_TOLERANCE - 0.5)[0],
+            app.DeleteStatus.CHANGED,
+        )
+
+    def test_unused_link_path_increments_past_several_collisions(self, tmpdir):
+        """`counter += 1`, not `counter = 1`.
+
+        Found by mutation testing: replacing the increment with an assignment survived,
+        because no test created two collisions. With `= 1` the loop would retry the same
+        candidate forever -- a hang during deletion, not an error.
+        """
+        tmppath = Path(str(tmpdir))
+        base = tmppath / "f.txt"
+        base.write_text("x")
+        (tmppath / "f.txt.dupeguru-link").write_text("x")
+        (tmppath / "f.txt.dupeguru-link1").write_text("x")
+        result = app.DupeGuru._unused_link_path(str(base))
+        assert not result.exists()
+        assert str(result).endswith("dupeguru-link2")
+
     def test_check_deletable_refuses_a_symlink(self, tmpdir):
         tmppath = Path(str(tmpdir))
         target = tmppath / "target.txt"
@@ -1004,8 +1038,13 @@ class TestCopyMoveWhenDupeIsAScanDirectory:
         # folder lands under its full source path rather than directly in dest.
         assert any(dest.rglob("B")), "the folder was not copied anywhere under dest"
 
-    def test_absolute_destination_still_uses_the_full_layout(self, tmpdir):
-        """The fallback must not quietly change ABSOLUTE behaviour."""
+    def test_direct_destination_does_not_recreate_the_source_tree(self, tmpdir):
+        """`dest_type == DestType.RELATIVE` -- flipping it to `!=` survived mutation testing.
+
+        DIRECT means "put the file straight in the chosen folder". If the comparison inverts,
+        DIRECT starts rebuilding the source directory tree under the destination and RELATIVE
+        stops, which silently scatters files somewhere the user did not choose.
+        """
         tmp_path = Path(str(tmpdir))
         src = tmp_path / "src"
         src.mkdir()
@@ -1014,8 +1053,46 @@ class TestCopyMoveWhenDupeIsAScanDirectory:
         dest.mkdir()
 
         dgapp = self._app([tmp_path])
-        dgapp.copy_or_move(fs.File(src / "f.txt"), copy=True, destination=str(dest), dest_type=app.DestType.ABSOLUTE)
-        assert any(dest.rglob("f.txt"))
+        dgapp.copy_or_move(fs.File(src / "f.txt"), copy=True, destination=str(dest), dest_type=app.DestType.DIRECT)
+
+        assert (dest / "f.txt").exists(), "DIRECT did not put the file straight into dest"
+        assert not any(p.is_dir() for p in dest.iterdir()), "DIRECT recreated a directory tree"
+
+    def test_absolute_and_relative_place_the_file_differently(self, tmpdir):
+        """ABSOLUTE keeps the whole source path; RELATIVE strips the scanned folder from it.
+
+        The previous version only asserted the file landed *somewhere* under dest, which is
+        true either way -- so inverting `dest_type == DestType.RELATIVE` survived mutation
+        testing. DIRECT never reaches that branch (the enclosing `if dest_type in {RELATIVE,
+        ABSOLUTE}` excludes it), so ABSOLUTE against RELATIVE is the only comparison that can
+        catch the inversion.
+        """
+        tmp_path = Path(str(tmpdir))
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "f.txt").write_text("data")
+        dgapp = self._app([tmp_path])
+
+        abs_dest = tmp_path / "abs"
+        abs_dest.mkdir()
+        dgapp.copy_or_move(
+            fs.File(src / "f.txt"), copy=True, destination=str(abs_dest), dest_type=app.DestType.ABSOLUTE
+        )
+        rel_dest = tmp_path / "rel"
+        rel_dest.mkdir()
+        dgapp.copy_or_move(
+            fs.File(src / "f.txt"), copy=True, destination=str(rel_dest), dest_type=app.DestType.RELATIVE
+        )
+
+        [absolute] = list(abs_dest.rglob("f.txt"))
+        [relative] = list(rel_dest.rglob("f.txt"))
+        abs_depth = len(absolute.relative_to(abs_dest).parts)
+        rel_depth = len(relative.relative_to(rel_dest).parts)
+        assert abs_depth > rel_depth, (
+            f"ABSOLUTE nested {abs_depth} deep and RELATIVE {rel_depth}; RELATIVE strips the "
+            "scanned folder from the path, so it must be shallower"
+        )
+        assert relative.parent.name == "src"
 
 
 class TestPerformOnMarkedKeepsResultsConsistent:
@@ -1418,6 +1495,28 @@ class TestJobCompleted:
         dgapp.deletion_options.direct = False
         dgapp._job_completed(app.JobType.DELETE)
         assert dgapp.view.messages == ["All marked files were successfully sent to Trash."]
+
+    def test_move_and_delete_refresh_the_results(self):
+        """`if jobid in {MOVE, DELETE}` -- inverting it survived mutation testing.
+
+        Files have left their old locations by this point, so the results have to be told.
+        Without it the table keeps listing what was moved or deleted, which is the same
+        disagreement between table and disk that #78 was about.
+        """
+        for jobid in (app.JobType.MOVE, app.JobType.DELETE):
+            dgapp, _ = self._app()
+            refreshed = []
+            dgapp._results_changed = lambda: refreshed.append(jobid)
+            dgapp._job_completed(jobid)
+            assert refreshed, f"{jobid} did not refresh the results"
+
+    def test_copy_does_not_refresh_the_results(self):
+        """The other half: a copy leaves everything where it was, so nothing needs refreshing."""
+        dgapp, _ = self._app()
+        refreshed = []
+        dgapp._results_changed = lambda: refreshed.append("copy")
+        dgapp._job_completed(app.JobType.COPY)
+        assert refreshed == []
 
     def test_scan_reports_no_success_message(self):
         """Only copy, move and delete report success; a scan opening a window is enough."""

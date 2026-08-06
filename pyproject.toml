@@ -34,10 +34,11 @@ filterwarnings = [
 #
 # Run it with `make mutants`. It is not part of CI: it is a periodic audit of test quality, not
 # a gate, and making it a required check would put an hour-long job in front of every merge.
-source_paths = ["core/file_list_cache.py", "core/pe/match_cache.py"]
+source_paths = ["core/app.py", "core/file_list_cache.py", "core/pe/match_cache.py"]
 # Only the tests that could plausibly kill these mutants. Running everything per mutant
 # multiplies an already long job by tests that cannot be affected.
 pytest_add_cli_args_test_selection = [
+    "core/tests/app_test.py",
     "core/tests/file_list_cache_test.py",
     "core/tests/match_cache_test.py",
 ]
