@@ -27,6 +27,8 @@ class ThreadedJobPerformer:
 
     _job_running = False
     last_error = None
+    #: Timing for the running job, set by create_job(). None before the first job.
+    progress_tracker = None
 
     # --- Protected
     def create_job(self) -> Job:
@@ -35,7 +37,11 @@ class ThreadedJobPerformer:
         self.last_progress: Union[int, None] = -1
         self.last_desc = ""
         self.job_cancelled = False
-        return Job(1, self._update_progress)
+        job = Job(1, self._update_progress)
+        # Kept so the UI can read timing while the job runs. The job itself is handed to the
+        # worker thread; only plain attribute reads happen from the main thread.
+        self.progress_tracker = job.tracker
+        return job
 
     def _async_run(self, *args) -> None:
         target = args[0]

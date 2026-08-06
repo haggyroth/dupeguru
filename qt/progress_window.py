@@ -20,12 +20,14 @@ class ProgressWindow:
         # to self and we'll refresh them together.
         self.model.jobdesc_textfield.view = self
         self.model.progressdesc_textfield.view = self
+        self.model.timedesc_textfield.view = self
 
     # --- Callbacks
     def refresh(self):  # Labels
         if self._window is not None:
             self._window.setWindowTitle(self.model.jobdesc_textfield.text)
             self._label.setText(self.model.progressdesc_textfield.text)
+            self._time_label.setText(self.model.timedesc_textfield.text)
 
     def set_progress(self, last_progress):
         if self._window is not None:
@@ -50,6 +52,15 @@ class ProgressWindow:
         vertical_layout = QVBoxLayout(self._window)
         self._label = QLabel("", self._window)
         vertical_layout.addWidget(self._label)
+        # Elapsed time and rate, on their own line and visibly secondary to the job's message.
+        # A scan that is merely slow looks exactly like one that has hung when the only thing
+        # on screen is a rising count.
+        self._time_label = QLabel("", self._window)
+        font = self._time_label.font()
+        font.setPointSize(max(1, font.pointSize() - 1))
+        self._time_label.setFont(font)
+        self._time_label.setEnabled(False)
+        vertical_layout.addWidget(self._time_label)
         self._progress_bar = QProgressBar(self._window)
         self._progress_bar.setRange(0, 100)
         vertical_layout.addWidget(self._progress_bar)

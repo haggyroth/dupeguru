@@ -76,6 +76,11 @@ class ProgressWindow(GUIObject, ThreadedJobPerformer):
         #: :class:`.TextField`. It contains the job textual update that the function might yield
         #: during its course.
         self.progressdesc_textfield = TextField()
+        #: :class:`.TextField`. Elapsed time, throughput, and a remaining estimate once one can
+        #: be trusted. Kept separate from :attr:`progressdesc_textfield` so that timing can
+        #: refresh on every pulse while the job's own message changes at its own pace, and so
+        #: that a view is free to present or ignore it.
+        self.timedesc_textfield = TextField()
         self.jobid: Union[str, None] = None
 
     def cancel(self) -> None:
@@ -114,7 +119,17 @@ class ProgressWindow(GUIObject, ThreadedJobPerformer):
             return
         if last_desc:
             self.progressdesc_textfield.text = last_desc
+        self.timedesc_textfield.text = self._time_summary()
         self.view.set_progress(last_progress)
+
+    def _time_summary(self) -> str:
+        """Elapsed time and rate for the running job, or "" before there is anything to say.
+
+        A scan that is merely slow and a scan that has hung look identical when the only thing
+        moving is a counter. This is the difference.
+        """
+        tracker = self.progress_tracker
+        return tracker.summary() if tracker is not None else ""
 
     def run(self, jobid: str, title: str, target: Callable, args: Tuple = ()):
         """Starts a threaded job.
@@ -131,6 +146,7 @@ class ProgressWindow(GUIObject, ThreadedJobPerformer):
         # arguments which are passed as `args`.
         self.jobid = jobid
         self.progressdesc_textfield.text = ""
+        self.timedesc_textfield.text = ""
         j = self.create_job()
         args = tuple([j] + list(args))
         self.run_threaded(target, args)
