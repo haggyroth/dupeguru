@@ -6,3 +6,5 @@ pyinstaller>=6.15,<7.0; sys_platform != 'linux'
 # Used by tests/ci_workflow_test.py to parse the CI workflow. Declared rather than
 # relied on transitively, so the test cannot start skipping when a dependency drops it.
 PyYAML>=6.0,<7.0
+# Mutation testing (`make mutants`). Not used by CI; an occasional audit of test quality.
+mutmut>=3.0,<4.0

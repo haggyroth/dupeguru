@@ -109,3 +109,7 @@ cocoa/autogen
 *.waf*
 .lock-waf*
 /tags
+
+# mutmut's isolated copy of the tree, rebuilt on every run
+mutants/
+.mutmut-cache

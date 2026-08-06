@@ -65,6 +65,19 @@ check:
 	$(VENV_PYTHON) -m pre_commit run --all-files
 	$(VENV_PYTHON) -m pytest core hscommon qt tests -q
 
+# Mutation testing: an audit of whether the tests would notice if the code were wrong.
+#
+# Not part of CI and not a gate. It is scoped in pyproject.toml to the modules where a
+# surviving mutant means a user loses files, because it runs the suite once per mutant.
+# Expect noise -- `mutants-report` separates the survivors worth reading from the equivalent
+# ones. See the handoff for what the numbers mean.
+mutants:
+	$(VENV_PYTHON) -m mutmut run --max-children 8
+	@$(MAKE) mutants-report
+
+mutants-report:
+	@PATH="$(CURDIR)/env/bin:$$PATH" $(VENV_PYTHON) scripts/mutants_report.py
+
 pyc: | env
 	${VENV_PYTHON} -m compileall ${packages}
 
@@ -136,4 +149,4 @@ clean:
 	-rm locale/*/LC_MESSAGES/*.mo
 	-rm core/pe/*.$(SO) qt/pe/*.$(SO)
 
-.PHONY: check clean normpo mergepot modules i18n reqs run pyc install uninstall all
+.PHONY: check mutants mutants-report clean normpo mergepot modules i18n reqs run pyc install uninstall all
