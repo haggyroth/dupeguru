@@ -9,6 +9,8 @@
 
 from typing import Any, Callable, Generator, List, Union
 
+from hscommon.jobprogress.tracker import ProgressTracker
+
 
 class JobCancelled(Exception):
     "The user has cancelled the job"
@@ -39,11 +41,16 @@ class Job:
     """
 
     # ---Magic functions
-    def __init__(self, job_proportions: Union[List[int], int], callback: Callable) -> None:
+    def __init__(
+        self, job_proportions: Union[List[int], int], callback: Callable, tracker: "ProgressTracker" = None
+    ) -> None:
         """Initialize the Job with 'jobcount' jobs. Start every job with
         start_job(). Every time the job progress is updated, 'callback' is called
         'callback' takes a 'progress' int param, and a optional 'desc'
         parameter. Callback must return false if the job must be cancelled.
+
+        'tracker' accumulates elapsed time and throughput. Subjobs are given their parent's,
+        so that timing spans the whole job rather than restarting at each nesting level.
         """
         if not hasattr(callback, "__call__"):
             raise TypeError("'callback' MUST be set when creating a Job")
@@ -56,6 +63,7 @@ class Job:
         self._passed_jobs = 0
         self._progress = 0
         self._currmax = 1
+        self.tracker = tracker if tracker is not None else ProgressTracker()
 
     # ---Private
     def _subjob_callback(self, progress: int, desc: str = "") -> bool:
@@ -108,10 +116,24 @@ class Job:
             if i % every == 0:
                 if desc_format:
                     desc = desc_format % (i, count)
+                self.report_units(i, count)
                 self.add_progress(progress=every, desc=desc)
         if desc_format:
             desc = desc_format % (count, count)
         self.set_progress(100, desc)
+
+    def report_units(self, done: int, total: Union[int, None] = None) -> None:
+        """Tell the tracker how much real work is finished, for timing purposes.
+
+        Deliberately separate from :meth:`set_progress`, which carries a percentage blended
+        across phases of wildly different cost -- reading metadata and comparing hashes are
+        not the same units. Only callers that know their own units call this, so timing is
+        never inferred from a number that does not mean what it would need to mean.
+
+        *total* is ``None`` for open-ended work such as collection, which does not know how
+        many files it will find until it has found them. That yields a rate but no estimate.
+        """
+        self.tracker.report(done, total)
 
     def start_job(self, max_progress: int = 100, desc: str = "") -> None:
         """Begin work on the next job. You must not call start_job more than
@@ -136,7 +158,7 @@ class Job:
         returns the Job object
         """
         self.start_job(100, desc)
-        return Job(job_proportions, self._subjob_callback)
+        return Job(job_proportions, self._subjob_callback, tracker=self.tracker)
 
     def set_progress(self, progress: int, desc: str = "") -> None:
         """Sets the progress of the current job to 'progress', and call the
@@ -159,6 +181,11 @@ class NullJob(Job):
 
     def check_if_cancelled(self) -> None:
         # Null job does nothing
+        pass
+
+    def report_units(self, *args, **kwargs) -> None:
+        # Null job does nothing. Needed because iter_with_progress is inherited rather than
+        # overridden, so it calls this even on a job that tracks nothing.
         pass
 
     def start_job(self, *args, **kwargs) -> None:

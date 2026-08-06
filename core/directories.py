@@ -301,6 +301,10 @@ class Directories:
             for file in self._get_files(path, fileclasses=fileclasses, j=j):
                 file_count += 1
                 if not isinstance(j, job.NullJob):
+                    # Total is unknown until the walk finishes, so this yields elapsed time
+                    # and a rate but never a remaining estimate -- which is the honest answer
+                    # for a phase that cannot know how much is left.
+                    j.report_units(file_count)
                     j.set_progress(-1, self._collection_progress(file_count))
                 yield file
 
@@ -333,6 +337,7 @@ class Directories:
             for folder in self._get_folders(from_folder, j):
                 folder_count += 1
                 if not isinstance(j, job.NullJob):
+                    j.report_units(folder_count)
                     j.set_progress(-1, tr("Collected {} folders to scan").format(folder_count))
                 yield folder
 

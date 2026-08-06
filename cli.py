@@ -23,7 +23,10 @@ Output formats:
 Progress (stderr):
     --verbose        Human-readable progress messages.
     --progress-json  Machine-readable {"type":"progress","percent":N,"description":"..."} lines.
-                     Combine with --ndjson for fully structured pipelines.
+                     Also carries "elapsed_seconds", plus "files_per_second" once a rate can
+                     be measured and "remaining_seconds" once one can be trusted. The latter
+                     two are absent rather than guessed, so consumers must treat them as
+                     optional. Combine with --ndjson for fully structured pipelines.
 
 Deletion:
     --delete         Send all duplicate files (non-reference) to the system trash after scanning.
@@ -188,16 +191,27 @@ def _run_scan(app: DupeGuru, verbose: bool, progress_json: bool = False) -> None
         _wire_photo_class()
 
     def _progress(progress: int, desc: str = "") -> bool:
+        # Elapsed time and rate, for the same reason the GUI shows them: a scan that is merely
+        # slow reads as a hung one, and cold external metadata is slow enough to be mistaken
+        # for wedged. Machine consumers get the numbers as fields rather than in the prose.
+        timing = j.tracker.summary()
         if progress_json and desc:
-            print(
-                json.dumps({"type": "progress", "percent": progress, "description": desc}),
-                file=sys.stderr,
-                flush=True,
-            )
+            record = {"type": "progress", "percent": progress, "description": desc}
+            record["elapsed_seconds"] = round(j.tracker.elapsed, 3)
+            rate = j.tracker.rate
+            if rate is not None:
+                record["files_per_second"] = round(rate, 3)
+            remaining = j.tracker.remaining_seconds
+            if remaining is not None:
+                record["remaining_seconds"] = round(remaining, 1)
+            print(json.dumps(record), file=sys.stderr, flush=True)
         elif verbose and desc:
-            print(f"\r  {desc}...{' ' * 10}", end="", file=sys.stderr, flush=True)
+            line = f"{desc} ({timing})" if timing else desc
+            print(f"\r  {line}...{' ' * 10}", end="", file=sys.stderr, flush=True)
         return True  # returning False would cancel the job
 
+    # _progress closes over j, which is assigned below; the name resolves when the callback
+    # first fires, which cannot happen until the job exists.
     j = Job(1, _progress)
 
     if scanner.scan_type == ScanType.FOLDERS:
@@ -884,8 +898,9 @@ def _build_parser() -> argparse.ArgumentParser:
         "--progress-json",
         action="store_true",
         help=(
-            'Emit {"type":"progress","percent":N,"description":"..."} lines to stderr. '
-            "Mutually exclusive with --verbose."
+            'Emit {"type":"progress","percent":N,"description":"..."} lines to stderr, with '
+            "elapsed_seconds always and files_per_second/remaining_seconds when they can be "
+            "measured. Mutually exclusive with --verbose."
         ),
     )
     return parser
