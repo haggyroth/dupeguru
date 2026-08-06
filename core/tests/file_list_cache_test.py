@@ -214,6 +214,18 @@ class TestSchemaAndRobustness:
         finally:
             file_list_cache.SCHEMA_VERSION = original
 
+    def test_close_actually_closes(self, tmp_path):
+        """Found by mutation testing: inverting `if self.con is not None` survived.
+
+        FileListCache holds a SQLite connection; a close() that quietly does nothing leaks it
+        and, in the test suite, leaks it into every later test.
+        """
+        c = FileListCache()
+        c.connect(tmp_path / "c.db")
+        assert c.con is not None
+        c.close()
+        assert c.con is None, "close() left the connection open"
+
     def test_unreadable_directory_does_not_raise(self, tmp_path, cache):
         d = Directories()
         d.file_list_cache = cache

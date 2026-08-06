@@ -165,6 +165,32 @@ binding. Three of those now have mechanical guards — branch protection,
 pass whether or not the code under test ran, has no cheap mechanical answer short of mutation
 testing; the habit below is the mitigation. Ask what actually ran, not whether it was green.
 
+**Mutation testing is available, and is an audit rather than a gate.** `make mutants` runs
+mutmut over the modules scoped in `pyproject.toml`, then summarises. It is not in CI: it is a
+periodic check on whether the tests would notice if the code were wrong, not something to put
+in front of a merge.
+
+Expect noise, and know its shape before reading the output. On the cache modules it generates
+319 mutants; 124 survive, but **83 of those only change the case of a SQL keyword**
+(`PRAGMA` → `pragma`), which SQLite treats identically, and another 25 alter an argument to
+`logging.debug`. `make mutants-report` splits survivors into `equivalent`, `diagnostic` and
+`behaviour`, which turns a 124-line wall into a 16-line shortlist. That shortlist is a
+shortlist, not a verdict — some of those are equivalent too, and deciding takes a person.
+
+It earned its keep the first time it ran, finding three real gaps in tests that had themselves
+been mutation-verified by hand:
+
+- `if first is None or second is None` in the match cache — changing `or` to `and` survived,
+  because the test dropped *both* files. A match naming one missing file would have been
+  rebuilt with a `None` side.
+- the `partial` flag on restored matches was never asserted, so flipping it survived. That flag
+  decides whether deletion warns about sampled hashes.
+- `close()` on both caches — inverting `if self.con is not None` survived, because nothing
+  checked that closing closed anything.
+
+The lesson worth carrying: verifying a fix by reverting it proves the test catches *that*
+mistake. It says nothing about the neighbouring mistakes nobody thought to make.
+
 **Verify a fix by reverting it.** `git stash push <file>`, run the new test, confirm it
 *fails*, then `git stash pop`. This caught several tests that would otherwise have passed
 whether or not the bug was present. Every fix in the last stretch of work was verified this

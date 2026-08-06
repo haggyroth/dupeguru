@@ -133,6 +133,40 @@ class TestSafety:
         cache.put(key, _matches(pics))
         assert cache.get(key, pics[:1]) is None
 
+    def test_a_match_with_only_one_side_missing_is_also_refused(self, cache):
+        """`first is None or second is None` -- both halves of that `or` matter.
+
+        Found by mutation testing: changing the `or` to `and` survived the suite, because the
+        existing test drops *both* files. With `and`, a match naming one file that is no longer
+        in the scan would be rebuilt with a None side and handed to the grouping code.
+        """
+        pics = _pics()
+        key = compute_key(pics, 75, False, False)
+        cache.put(key, [Match(pics[0], pics[1], 95, False)])
+        assert cache.get(key, [pics[0]]) is None, "a match with a missing second file was accepted"
+        assert cache.get(key, [pics[1]]) is None, "a match with a missing first file was accepted"
+
+    def test_restored_matches_are_not_flagged_partial(self, cache):
+        """The `partial` flag decides whether deletion warns about sampled hashes.
+
+        Also found by mutation testing: flipping the stored False to True survived. A restored
+        match wrongly marked partial would make dupeGuru warn about every cached result; marked
+        the other way it would suppress a warning that matters. Block matching is never
+        partial, so False is the correct value and worth pinning.
+        """
+        pics = _pics()
+        key = compute_key(pics, 75, False, False)
+        cache.put(key, _matches(pics))
+        assert all(m.partial is False for m in cache.get(key, pics))
+
+    def test_close_actually_closes(self, tmp_path):
+        """`if self.con is not None` -- inverting it survived, because nothing checked."""
+        c = MatchCache()
+        c.connect(tmp_path / "c.db")
+        assert c.con is not None
+        c.close()
+        assert c.con is None, "close() left the connection open"
+
     def test_put_replaces_rather_than_accumulates(self, cache):
         """Only the newest key is worth keeping; older ones can never be hit again."""
         pics = _pics()

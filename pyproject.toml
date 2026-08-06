@@ -25,3 +25,33 @@ skip_gitignore = true
 filterwarnings = [
     "error::ResourceWarning",
 ]
+
+[tool.mutmut]
+# Mutation testing runs the test suite once per mutant, so scope is everything: mutating the
+# whole tree would run for hours and spend most of it on plumbing. These are the modules where
+# a surviving mutant means a user loses files or is shown something untrue -- the two caches
+# whose invalidation decides whether stale data reaches the results.
+#
+# Run it with `make mutants`. It is not part of CI: it is a periodic audit of test quality, not
+# a gate, and making it a required check would put an hour-long job in front of every merge.
+source_paths = ["core/file_list_cache.py", "core/pe/match_cache.py"]
+# Only the tests that could plausibly kill these mutants. Running everything per mutant
+# multiplies an already long job by tests that cannot be affected.
+pytest_add_cli_args_test_selection = [
+    "core/tests/file_list_cache_test.py",
+    "core/tests/match_cache_test.py",
+]
+# mutmut runs against an isolated copy in mutants/, and copies only the files it mutates. The
+# packages those import -- including the built C extensions in core/pe -- have to come along or
+# nothing imports. Listing whole packages rather than individual modules because the import
+# graph here is wide and a missing one fails as a bare ImportError inside a mutant run, which
+# reads as a killed mutant rather than as broken configuration.
+also_copy = [
+    "core/",
+    "hscommon/",
+    "qt/",
+    "tests/",
+    "cli.py",
+    "run.py",
+    "conftest.py",
+]
