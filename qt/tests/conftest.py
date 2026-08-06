@@ -97,3 +97,22 @@ def restore_prefs(dgapp):
     yield prefs
     for k, v in saved.items():
         setattr(prefs, k, v)
+
+
+def pytest_report_header(config):
+    """Name the Qt binding in the pytest header.
+
+    qtpy prefers PyQt5 when several bindings are installed -- its order is
+    ['pyqt5', 'pyside2', 'pyqt6', 'pyside6'] -- regardless of PyQt6 being this project's
+    default. An environment that has both, which any checkout used to exercise the fallback
+    will, therefore runs the whole Qt suite against the *fallback* while looking green.
+
+    Printing it costs nothing and removes the guessing. Reading the QT_API environment
+    variable does not work for this: qtpy sets it during import to whatever it resolved, so
+    after `import qtpy` it always looks as if someone configured it deliberately.
+    """
+    try:
+        import qtpy
+    except ImportError:
+        return "Qt binding: none installed (Qt tests will skip)"
+    return f"Qt binding: {qtpy.API_NAME} (override with QT_API=pyqt6)"

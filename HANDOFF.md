@@ -148,7 +148,12 @@ unless you `pre-commit install`.
 
 **`pre-commit run --all-files` silently skips untracked files.** It reads `git ls-files`, so a
 newly created file is invisible until `git add`. This produced a false "all six hooks passed"
-locally and a red CI run. **Always `git add` before running it.**
+locally and a red CI run.
+
+**Use `make check` instead of running the hooks by hand.** It stages first, runs the hooks
+twice (the first pass legitimately fails while black and end-of-file-fixer *modify* files, so
+only the second result means anything), then runs the suite. That is the whole trap
+mechanised; the habit is no longer needed.
 
 **Green does not mean checked.** Four times in one session a green signal meant less than it
 looked: a duplicate workflow run showed a passing entry for a check still pending in another
@@ -173,7 +178,13 @@ alone installs only PyQt6, so a clean environment picks PyQt6 correctly; but thi
 exercise the fallback. Nothing warns you.
 
 That means a green local suite here is testing the *fallback* binding, and the default is
-covered only by CI. It bit immediately: `Qt.CheckState.Checked.value` works on PyQt6 and
+covered only by CI. **The pytest header now names the binding on every Qt run**, so this is
+visible rather than something to remember:
+
+```
+Qt binding: PyQt5 (override with QT_API=pyqt6)
+```
+ It bit immediately: `Qt.CheckState.Checked.value` works on PyQt6 and
 raises on PyQt5, `int(Qt.CheckState.Checked)` does the reverse, and writing a Qt test locally
 gets you the half that passes on whichever binding happens to be resolved. Use
 `getattr(x, "value", x)` for enum values, and check which binding you are on before trusting a
@@ -191,8 +202,18 @@ someone configured it deliberately. Read `qtpy.API_NAME` instead.
 **Check that a mutation actually applied.** Reverting a fix to confirm the test fails is only
 meaningful if the revert landed. A `str.replace` with the wrong indentation silently does
 nothing, and the result — tests still passing — is indistinguishable from a surviving mutation.
-That happened in #109 and made three sound tests look weak; the fix is to `assert old in s`
-before replacing. The tool that checks your tests needs checking too.
+That happened in #109 and made three sound tests look weak.
+
+**Use `scripts/mutate.py`**, which refuses to do nothing: a target that is missing, or that
+matches more times than expected, is an error rather than a silent no-op. It backs the file up
+so `restore` cannot put back the wrong thing, and it has its own tests in
+`tests/tooling_test.py` — a tool that checks your tests can itself quietly succeed at nothing.
+
+```bash
+python scripts/mutate.py apply core/app.py --old "_MTIME_TOLERANCE = 2" --new "_MTIME_TOLERANCE = 999"
+pytest core/tests/app_test.py -q          # expect a failure
+python scripts/mutate.py restore core/app.py
+```
 
 **Measure before optimising, and be willing to throw the plan away.** Three obvious fixes for
 the collection bottleneck were measured and rejected: threading gave **1.0x** (16, 64 and 128
