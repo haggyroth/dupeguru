@@ -7,20 +7,25 @@
 # http://www.gnu.org/licenses/gpl-3.0.html
 
 from qtpy.QtCore import Qt
-from qtpy.QtWidgets import QDialog, QVBoxLayout, QLabel, QCheckBox, QDialogButtonBox
+from qtpy.QtGui import QCursor
+from qtpy.QtWidgets import QApplication, QDialog, QVBoxLayout, QLabel, QCheckBox, QDialogButtonBox
 
 from core import clone
 from hscommon.trans import trget
+from qt.deletion_preview import DeletionPreview
 from qt.radio_box import RadioBox
 
 tr = trget("ui")
 
 
 class DeletionOptions(QDialog):
-    def __init__(self, parent, model, **kwargs):
+    def __init__(self, parent, model, app=None, **kwargs):
         flags = Qt.WindowType.CustomizeWindowHint | Qt.WindowType.WindowTitleHint | Qt.WindowType.WindowSystemMenuHint
         super().__init__(parent, flags, **kwargs)
         self.model = model
+        # Only needed to compute the preview. Optional so the dialog stays constructible
+        # without a running application, as the tests do.
+        self.app = app
         self._setupUi()
         self.model.view = self
 
@@ -73,6 +78,10 @@ class DeletionOptions(QDialog):
         self.directMessageLabel.setWordWrap(True)
         self.verticalLayout.addWidget(self.directMessageLabel)
         self.buttonBox = QDialogButtonBox()
+        self.previewButton = self.buttonBox.addButton(tr("Preview..."), QDialogButtonBox.ButtonRole.ActionRole)
+        self.previewButton.setToolTip(tr("Show what this deletion would do, without doing it."))
+        self.previewButton.clicked.connect(self.previewClicked)
+        self.previewButton.setEnabled(self.app is not None)
         self.buttonBox.addButton(tr("Proceed"), QDialogButtonBox.ButtonRole.AcceptRole)
         self.buttonBox.addButton(tr("Cancel"), QDialogButtonBox.ButtonRole.RejectRole)
         self.verticalLayout.addWidget(self.buttonBox)
@@ -88,6 +97,23 @@ class DeletionOptions(QDialog):
         # contradictory settings both looking active.
         self.linkCheckbox.setEnabled(not changed and self.model.supports_links())
         self.linkTypeRadio.setEnabled(not changed)
+
+    def previewClicked(self):
+        """Plan the marked files with the options as they currently stand, and show it.
+
+        Planning stats every marked file, so a large selection is not instant -- hence the
+        wait cursor. Nothing is modified either way.
+        """
+        # Read the checkboxes into the model first: the preview must describe the options the
+        # user is looking at, not the ones they had when the dialog opened.
+        self.model.direct = self.directCheckbox.isChecked()
+        self.model.use_clones = self.cloneCheckbox.isChecked()
+        QApplication.setOverrideCursor(QCursor(Qt.CursorShape.WaitCursor))
+        try:
+            plan = self.app.model.deletion_preview()
+        finally:
+            QApplication.restoreOverrideCursor()
+        DeletionPreview(self, plan, direct_delete=self.model.direct).exec()
 
     # --- model --> view
     def update_msg(self, msg: str):

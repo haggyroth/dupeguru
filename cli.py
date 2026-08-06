@@ -52,14 +52,15 @@ import json
 import logging
 import sys
 from pathlib import Path
-from typing import NamedTuple
 
 from core import fs, se, file_list_cache
 from core.app import AppMode, DeleteStatus, DupeGuru, check_deletable
+from core.deletion_plan import DELETE_STATUS_REASON as _DELETE_STATUS_REASON
+from core.deletion_plan import DeletionPlan, build_plan, device_of as _device_of, plan_entry as _plan_entry
+from core.deletion_plan import summarize_plan
 from core.directories import AlreadyThereError, DirectoryState, InvalidPathError
 from core.scanner import ScanType
 from hscommon.jobprogress.job import Job
-from hscommon.util import format_size
 
 EXIT_OK = 0
 EXIT_DUPES_FOUND = 1
@@ -311,122 +312,18 @@ def _emit_ndjson(app: DupeGuru, out) -> tuple[int, int, int]:
 # --- Deletion helpers -------------------------------------------------------
 
 
-class DeletionPlan(NamedTuple):
-    """What --delete would actually do, computed without deleting anything."""
-
-    groups: int  # groups containing at least one file that would be deleted
-    files: int  # files that would actually be deleted
-    total_bytes: int  # bytes reclaimed by those files
-    partial: int  # of those, confirmed only by a sampled hash
-    full_content: int  # of those, confirmed by a full content comparison
-    blocked: dict  # DeleteStatus -> count, for candidates that would be refused
-    blocked_bytes: int  # bytes those refused files would have freed
-    cross_volume: int  # would-delete files on a different volume from their group's ref
-    entries: list  # per-group plan, for machine-readable output
-
-
-def _device_of(path) -> int | None:
-    """st_dev for *path*, or None if it cannot be read."""
-    try:
-        return path.stat().st_dev
-    except OSError:
-        return None
-
-
-def _plan_entry(path, size, mtime, is_partial: bool) -> tuple:
-    """Verdict for one candidate file: (status, would_delete, entry dict).
-
-    Shared by the live and saved-results planners so the two cannot drift apart.
-    """
-    status, _ = check_deletable(path, size, mtime)
-    would_delete = status == DeleteStatus.OK
-    entry = {
-        "path": str(path),
-        "size": size,
-        "mtime": mtime,
-        "would_delete": would_delete,
-        "match_confidence": "partial" if is_partial else "full",
-    }
-    if not would_delete:
-        entry["blocked_reason"] = _DELETE_STATUS_REASON[status]
-    return status, would_delete, entry
-
-
 def _deletion_plan(app: DupeGuru) -> DeletionPlan:
-    """Compute what --delete would do, touching nothing.
+    """Plan every duplicate, leaving the results marked as they were.
 
-    Marks and then unmarks, leaving the results in their original state, so this is safe
-    to call before either a dry run or a real deletion.
-
-    Every candidate is re-validated with check_deletable -- the same predicate the deletion
-    itself uses -- so the plan reports the files that would be refused instead of assuming
-    every marked file is removable. That costs a stat() per marked file, which is nothing
-    beside the scan that produced the results.
+    The CLI has no user selection -- it acts on all non-reference dupes -- so it marks
+    everything, plans, and puts the marks back. The GUI plans whatever the user chose, which
+    is why the marking is here rather than inside build_plan.
     """
     app.results.mark_all()
-    files = total_bytes = partial = full_content = blocked_bytes = cross_volume = 0
-    blocked: dict = {}
-    entries = []
-    group_count = 0
-
-    for group in app.results.groups:
-        ref_device = None
-        ref_device_read = False
-        group_entries = []
-        group_has_deletion = False
-
-        for dupe in group.dupes:
-            if not app.results.is_marked(dupe):
-                continue
-            match = group.get_match_of(dupe)
-            is_partial = bool(getattr(match, "partial", False)) if match else False
-            status, would_delete, entry = _plan_entry(dupe.path, dupe.size, dupe.mtime, is_partial)
-
-            if would_delete:
-                files += 1
-                total_bytes += dupe.size
-                group_has_deletion = True
-                if is_partial:
-                    partial += 1
-                else:
-                    full_content += 1
-                # Only meaningful for files that would actually go: a cross-volume dupe
-                # cannot be replaced by a hardlink to its reference.
-                if not ref_device_read:
-                    ref_device = _device_of(group.ref.path)
-                    ref_device_read = True
-                device = _device_of(dupe.path)
-                if ref_device is not None and device is not None and device != ref_device:
-                    cross_volume += 1
-                    entry["cross_volume"] = True
-            else:
-                blocked[status] = blocked.get(status, 0) + 1
-                blocked_bytes += dupe.size
-
-            group_entries.append(entry)
-
-        if group_entries:
-            if group_has_deletion:
-                group_count += 1
-            entries.append(
-                {
-                    "reference": {"path": str(group.ref.path), "size": group.ref.size},
-                    "duplicates": group_entries,
-                }
-            )
-
-    app.results.mark_none()
-    return DeletionPlan(
-        groups=group_count,
-        files=files,
-        total_bytes=total_bytes,
-        partial=partial,
-        full_content=full_content,
-        blocked=blocked,
-        blocked_bytes=blocked_bytes,
-        cross_volume=cross_volume,
-        entries=entries,
-    )
+    try:
+        return build_plan(app)
+    finally:
+        app.results.mark_none()
 
 
 def _plan_from_saved_results(groups: list[dict]) -> DeletionPlan:
@@ -489,6 +386,10 @@ def _plan_from_saved_results(groups: list[dict]) -> DeletionPlan:
         blocked=blocked,
         blocked_bytes=blocked_bytes,
         cross_volume=cross_volume,
+        # Saved results carry no digests, so cloning cannot be assessed from them. Zero here
+        # means "unknown", not "none possible" -- reporting it as a count would overstate what
+        # a saved-results plan can tell you.
+        cloneable=0,
         entries=entries,
     )
 
@@ -533,34 +434,12 @@ def _report_deletion_plan(
     footer: str = "  re-run without --dry-run to execute.",
 ) -> None:
     """Print what a deletion would do. Writes to stderr only."""
-    verb = "permanently delete" if direct_delete else "send to trash"
+    # Wording lives in core so the GUI preview says exactly what --plan says (issue #131).
     print(f"{label}: no files have been deleted.", file=sys.stderr)
-    print(
-        f"  would {verb} {plan.files} file(s) in {plan.groups} group(s), "
-        f"reclaiming {format_size(plan.total_bytes, 2)}",
-        file=sys.stderr,
-    )
-    if plan.partial or plan.full_content:
-        print(f"  {plan.full_content} matched on full content", file=sys.stderr)
-    if plan.partial:
-        print(
-            f"  {plan.partial} matched on a partial (sampled) hash only and would be "
-            "refused without --allow-partial-matches",
-            file=sys.stderr,
-        )
-    for status, count in sorted(plan.blocked.items()):
-        print(f"  {count} would be skipped: {_DELETE_STATUS_REASON[status]}", file=sys.stderr)
-    if plan.blocked_bytes:
-        print(
-            f"  {format_size(plan.blocked_bytes, 2)} would not be reclaimed because of those skips",
-            file=sys.stderr,
-        )
-    if plan.cross_volume:
-        print(
-            f"  {plan.cross_volume} are on a different volume from their reference "
-            "(hardlink replacement would fail)",
-            file=sys.stderr,
-        )
+    for line in summarize_plan(
+        plan, direct_delete, partial_hint=" and would be refused without --allow-partial-matches"
+    ):
+        print(f"  {line}", file=sys.stderr)
     print(footer, file=sys.stderr)
 
 
@@ -645,12 +524,6 @@ def _load_results_json(path: str) -> list[dict]:
 # as "skipped <path>: <reason>".
 # No "skipped:" prefix here: both consumers supply their own framing ("skipped <path>: ..."
 # and "N would be skipped: ..."), and baking it in doubled the word in both.
-_DELETE_STATUS_REASON = {
-    DeleteStatus.GONE: "file no longer exists",
-    DeleteStatus.SYMLINK: "path is a symlink",
-    DeleteStatus.UNREADABLE: "could not read file metadata",
-    DeleteStatus.CHANGED: "file changed since last scan",
-}
 
 
 def _saved_partial_counts(groups: list[dict]) -> tuple[int, bool]:
