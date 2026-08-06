@@ -187,6 +187,26 @@ any of them.
     Windows XP doesn't support it, but Vista and up support it. However, for the feature to work,
     dupeGuru has to run with administrative privileges.
 
+**Replace duplicates with copy-on-write clones:**
+    Instead of removing a duplicate, replace it with a *clone* of the reference. Both files
+    remain, both keep their own name and permissions, and both stay independently editable --
+    changing one does not change the other, and deleting one leaves the other whole. The disk
+    space is still reclaimed, because the two files share it until one of them is written to.
+
+    This is the only deletion option where nothing is lost, which makes it a good default on
+    filesystems that support it: APFS on macOS, and Btrfs or XFS on Linux. It is unavailable
+    elsewhere, and the option is disabled rather than falling back to something destructive.
+
+    Two limits are worth knowing. Cloning cannot cross filesystems, so a duplicate on another
+    drive is skipped. And it is only offered for files that are *byte-for-byte identical* --
+    a picture-mode match that merely looks the same is not identical, and replacing it would
+    substitute a different image. Anything that cannot be cloned safely is skipped and listed
+    afterwards rather than deleted.
+
+    One oddity: after cloning, ``du`` and Finder still report the full size for both files,
+    because each one genuinely references those blocks. The free space on the volume is what
+    actually changes.
+
 **Directly delete files:**
     Instead of sending files to trash, directly delete them. This is used
     for troubleshooting and you normally don't need to enable this unless dupeGuru has problems

@@ -26,7 +26,7 @@ from hscommon.util import delete_if_empty, first, escape, nonone, allsame
 from hscommon.trans import tr
 from hscommon import desktop
 
-from core import se, me, pe
+from core import se, me, pe, clone
 from core.pe.photo import get_delta_dimensions
 from core.util import cmp_value, fix_surrogate_encoding
 from core import directories, results, export, fs, prioritize
@@ -126,6 +126,27 @@ def _aggregate_size(path):
             except OSError:
                 pass
     return total
+
+
+def _is_byte_identical(dupe, ref):
+    """Whether *dupe* and *ref* are provably the same bytes.
+
+    Cloning replaces a duplicate with a clone of its reference, which is only harmless when
+    the two are already identical. That holds for a contents scan, where a match *means*
+    equal digests. It does not hold for picture matching, where two files can score 100%
+    because their block signatures agree while the files differ -- a resized copy, a
+    re-encode, a different crop. Replacing one of those would substitute a different image
+    and call it deduplication.
+
+    So this compares full digests rather than trusting the match. A digest that is missing or
+    only partial is not proof, and is treated as a refusal: sampled hashing compares three
+    chunks, and three matching chunks are not a guarantee of the rest.
+    """
+    dupe_digest = getattr(dupe, "digest", b"")
+    ref_digest = getattr(ref, "digest", b"")
+    if not dupe_digest or not ref_digest:
+        return False
+    return dupe_digest == ref_digest
 
 
 def check_deletable(path, expected_size, expected_mtime):
@@ -329,10 +350,10 @@ class DupeGuru(Broadcaster):
             return len([dupe for dupe in group.dupes if self.results.is_marked(dupe)])
         return cmp_value(group.ref, key)
 
-    def _do_delete(self, j, link_deleted, use_hardlinks, direct_deletion):
+    def _do_delete(self, j, link_deleted, use_hardlinks, direct_deletion, use_clones=False):
         def op(dupe):
             j.add_progress()
-            return self._do_delete_dupe(dupe, link_deleted, use_hardlinks, direct_deletion)
+            return self._do_delete_dupe(dupe, link_deleted, use_hardlinks, direct_deletion, use_clones)
 
         j.start_job(self.results.mark_count)
         self.results.perform_on_marked(op, True)
@@ -350,7 +371,7 @@ class DupeGuru(Broadcaster):
                 return True
         return False
 
-    def _do_delete_dupe(self, dupe, link_deleted, use_hardlinks, direct_deletion):
+    def _do_delete_dupe(self, dupe, link_deleted, use_hardlinks, direct_deletion, use_clones=False):
         # Shared with the planner: see check_deletable. Keep the decision there, not here.
         status, message = check_deletable(dupe.path, dupe.size, dupe.mtime)
         if status == DeleteStatus.GONE:
@@ -371,7 +392,10 @@ class DupeGuru(Broadcaster):
             # swallowed the exception, so the file was gone, no link replaced it, and
             # the operation was reported as a success.
             link_tmp = self._unused_link_path(str_path)
-            self._make_replacement_link(ref.path, link_tmp, use_hardlinks)
+            if use_clones:
+                self._make_replacement_clone(dupe, ref, link_tmp)
+            else:
+                self._make_replacement_link(ref.path, link_tmp, use_hardlinks)
 
         logging.debug("Sending '%s' to trash", dupe.path)
         try:
@@ -405,6 +429,33 @@ class DupeGuru(Broadcaster):
             counter += 1
             candidate = Path(f"{str_path}.dupeguru-link{counter}")
         return candidate
+
+    @staticmethod
+    def _make_replacement_clone(dupe, ref, clone_path):
+        """Create a copy-on-write clone of *ref* at *clone_path*.
+
+        Refuses unless the two files are provably identical, and refuses when the filesystem
+        cannot clone rather than falling back. Both fallbacks available here are wrong: a copy
+        would double the space this exists to reclaim, and a delete would destroy the file the
+        user was told would survive.
+        """
+        if not _is_byte_identical(dupe, ref):
+            raise OSError(
+                tr(
+                    "'{}' was skipped: it is not byte-for-byte identical to its reference, so "
+                    "replacing it with a clone would change its contents. Cloning is only "
+                    "possible for exact duplicates."
+                ).format(str(dupe.path))
+            )
+        try:
+            clone.clone_file(ref.path, clone_path)
+        except clone.CloneNotSupportedError as e:
+            raise OSError(
+                tr(
+                    "'{}' was skipped: this filesystem cannot make copy-on-write clones, or "
+                    "the two files are on different volumes. Nothing was deleted."
+                ).format(str(dupe.path))
+            ) from e
 
     @staticmethod
     def _make_replacement_link(source, link_path, use_hardlinks):
@@ -686,6 +737,7 @@ class DupeGuru(Broadcaster):
             self.deletion_options.link_deleted,
             self.deletion_options.use_hardlinks,
             self.deletion_options.direct,
+            self.deletion_options.use_clones,
         ]
         logging.debug("Starting deletion job with args %r", args)
         self._start_job(JobType.DELETE, self._do_delete, args=args)

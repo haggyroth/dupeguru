@@ -9,6 +9,7 @@
 from qtpy.QtCore import Qt
 from qtpy.QtWidgets import QDialog, QVBoxLayout, QLabel, QCheckBox, QDialogButtonBox
 
+from core import clone
 from hscommon.trans import trget
 from qt.radio_box import RadioBox
 
@@ -24,6 +25,7 @@ class DeletionOptions(QDialog):
         self.model.view = self
 
         self.linkCheckbox.stateChanged.connect(self.linkCheckboxChanged)
+        self.cloneCheckbox.stateChanged.connect(self.cloneCheckboxChanged)
         self.buttonBox.accepted.connect(self.accept)
         self.buttonBox.rejected.connect(self.reject)
 
@@ -47,6 +49,20 @@ class DeletionOptions(QDialog):
         if not self.model.supports_links():
             self.linkCheckbox.setEnabled(False)
             self.linkCheckbox.setText(self.linkCheckbox.text() + tr(" (unsupported)"))
+        self.cloneCheckbox = QCheckBox(tr("Replace duplicates with copy-on-write clones"))
+        self.verticalLayout.addWidget(self.cloneCheckbox)
+        text = tr(
+            "Instead of removing a duplicate, replace it with a clone of the reference. Both "
+            "files remain, both stay editable, and the disk space is reclaimed because they "
+            "share it until one of them changes. Only possible for byte-for-byte identical "
+            "files on a filesystem that supports it; anything else is skipped and reported."
+        )
+        self.cloneMessageLabel = QLabel(text)
+        self.cloneMessageLabel.setWordWrap(True)
+        self.verticalLayout.addWidget(self.cloneMessageLabel)
+        if not clone.cloning_is_possible():
+            self.cloneCheckbox.setEnabled(False)
+            self.cloneCheckbox.setText(self.cloneCheckbox.text() + tr(" (unsupported)"))
         self.directCheckbox = QCheckBox(tr("Directly delete files"))
         self.verticalLayout.addWidget(self.directCheckbox)
         text = tr(
@@ -64,6 +80,14 @@ class DeletionOptions(QDialog):
     # --- Signals
     def linkCheckboxChanged(self, changed: int):
         self.model.link_deleted = bool(changed)
+
+    def cloneCheckboxChanged(self, changed: int):
+        self.model.use_clones = bool(changed)
+        # Cloning replaces the duplicate rather than removing it, so the link options describe
+        # something that will not happen. Disabling them says so instead of leaving two
+        # contradictory settings both looking active.
+        self.linkCheckbox.setEnabled(not changed and self.model.supports_links())
+        self.linkTypeRadio.setEnabled(not changed)
 
     # --- model --> view
     def update_msg(self, msg: str):
