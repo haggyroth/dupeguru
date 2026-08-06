@@ -13,6 +13,10 @@ from hscommon.trans import tr
 class ProgressWindow:
     def __init__(self, parent, model):
         self._window = None
+        self._label = None
+        self._time_label = None
+        self._progress_bar = None
+        self._cancel_button = None
         self.parent = parent
         self.model = model
         model.view = self
@@ -57,8 +61,12 @@ class ProgressWindow:
         # on screen is a rising count.
         self._time_label = QLabel("", self._window)
         font = self._time_label.font()
-        font.setPointSize(max(1, font.pointSize() - 1))
-        self._time_label.setFont(font)
+        point_size = font.pointSize()
+        if point_size > 0:
+            # -1 means the font was defined in pixels, where this figure is meaningless and
+            # acting on it would set a 1pt label.
+            font.setPointSize(point_size - 1)
+            self._time_label.setFont(font)
         self._time_label.setEnabled(False)
         vertical_layout.addWidget(self._time_label)
         self._progress_bar = QProgressBar(self._window)
@@ -92,4 +100,13 @@ class ProgressWindow:
             self._window.close()
             self._window.setParent(None)
             self._window = None
+            # Drop the children too. Qt destroys them with the dialog, but these attributes
+            # would go on referencing freed widgets, and anything that later walks every
+            # widget in the application -- QApplication.setPalette() and setStyle() both do --
+            # can follow one into memory that is no longer ours. That is an access violation
+            # on Windows, in code with no visible connection to this window.
+            self._label = None
+            self._time_label = None
+            self._progress_bar = None
+            self._cancel_button = None
             self.model.cancel()
