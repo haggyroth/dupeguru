@@ -1676,11 +1676,20 @@ class TestCloneInsteadOfDelete:
 
     @staticmethod
     def _pair(tmp_path, same=True):
-        """A dupe and a ref, with digests set the way a scan would leave them."""
+        """A dupe and a ref, with digests set the way a scan would leave them.
+
+        Skips where the filesystem cannot clone. Platform support is not filesystem support:
+        the Linux CI runners are ext4, which has no FICLONE, so a test that assumed cloning
+        works failed there while passing on APFS.
+        """
+        from core import clone as clone_module
+
         ref_path = tmp_path / "ref.bin"
         dupe_path = tmp_path / "dupe.bin"
         ref_path.write_bytes(b"A" * 4096)
         dupe_path.write_bytes(b"A" * 4096 if same else b"B" * 4096)
+        if not clone_module.can_clone(ref_path, tmp_path):
+            pytest.skip("this filesystem cannot clone")
         ref, dupe = fs.File(ref_path), fs.File(dupe_path)
         for f in (ref, dupe):
             f._read_info("size")

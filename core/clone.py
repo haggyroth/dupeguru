@@ -31,10 +31,16 @@ and deleting would destroy the file the user was promised would survive.
 import ctypes
 import ctypes.util
 import errno
-import fcntl
 import logging
 import os
 import sys
+
+# fcntl is Unix-only, and this module is imported by core.app -- so importing it
+# unconditionally made dupeGuru fail to start on Windows entirely. Only Linux uses it.
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows
+    fcntl = None
 
 # linux/fs.h: #define FICLONE _IOW(0x94, 9, int)
 _FICLONE = 0x40049409
@@ -75,7 +81,7 @@ def cloning_is_possible() -> bool:
     Says nothing about the filesystem in front of you -- APFS and HFS+ both answer True here,
     and only one of them can actually clone. Use :func:`can_clone` for a real answer.
     """
-    return bool(_clonefile) or _ISLINUX
+    return bool(_clonefile) or (_ISLINUX and fcntl is not None)
 
 
 def clone_file(source: os.PathLike, dest: os.PathLike) -> None:
@@ -98,7 +104,7 @@ def clone_file(source: os.PathLike, dest: os.PathLike) -> None:
             raise CloneNotSupportedError(err, os.strerror(err), src)
         raise OSError(err, os.strerror(err), src)
 
-    if _ISLINUX:
+    if _ISLINUX and fcntl is not None:
         src_fd = os.open(src, os.O_RDONLY)
         try:
             dst_fd = os.open(dst, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)

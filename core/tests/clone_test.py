@@ -85,6 +85,32 @@ class TestCloneSemantics:
         assert dest.read_bytes() == b"important"
 
 
+class TestPlatformsWithoutCloning:
+    """The module is imported by core.app, so it must import everywhere.
+
+    fcntl is Unix-only. Importing it unconditionally made dupeGuru fail to start on Windows
+    altogether -- CI caught it as ten collection errors, not as a clone test failing, because
+    nothing that imports core.app could load. A feature nobody on that platform can use took
+    the whole application down with it.
+    """
+
+    def test_reports_unsupported_rather_than_raising_when_fcntl_is_absent(self, monkeypatch):
+        monkeypatch.setattr(clone, "fcntl", None)
+        monkeypatch.setattr(clone, "_clonefile", None)
+        monkeypatch.setattr(clone, "_ISLINUX", True)
+        assert clone.cloning_is_possible() is False
+
+    def test_clone_file_refuses_cleanly_with_no_mechanism(self, tmp_path, monkeypatch):
+        """Not AttributeError or NameError -- the caller has to be able to catch this."""
+        monkeypatch.setattr(clone, "fcntl", None)
+        monkeypatch.setattr(clone, "_clonefile", None)
+        monkeypatch.setattr(clone, "_ISLINUX", False)
+        source = tmp_path / "s.bin"
+        source.write_bytes(b"x")
+        with pytest.raises(clone.CloneNotSupportedError):
+            clone.clone_file(source, tmp_path / "d.bin")
+
+
 class TestSupportDetection:
     def test_can_clone_leaves_no_probe_behind(self, cloneable):
         """It works by actually cloning, so it must clean up after itself."""
