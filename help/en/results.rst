@@ -207,6 +207,21 @@ any of them.
     because each one genuinely references those blocks. The free space on the volume is what
     actually changes.
 
+**Preview...:**
+    Shows exactly what the deletion would do, without doing any of it. Every marked file is
+    re-checked against the same conditions the deletion itself applies, so the preview cannot
+    promise something that is then refused.
+
+    You get the totals -- how many files, how much space -- and a per-file breakdown saying
+    what would happen to each one: sent to trash, deleted permanently, replaced by a clone, or
+    skipped and why. Files are skipped when they have changed, moved, or been deleted since the
+    scan, which is easy to happen if results have been on screen for a while. Matches confirmed
+    only by a sampled hash rather than a full comparison are called out too.
+
+    The preview reflects the options as they are currently set, so changing an option and
+    previewing again shows the effect of that change. Nothing is modified either way, so it is
+    always safe to look first.
+
 **Directly delete files:**
     Instead of sending files to trash, directly delete them. This is used
     for troubleshooting and you normally don't need to enable this unless dupeGuru has problems

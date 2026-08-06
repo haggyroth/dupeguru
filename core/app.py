@@ -742,6 +742,22 @@ class DupeGuru(Broadcaster):
         logging.debug("Starting deletion job with args %r", args)
         self._start_job(JobType.DELETE, self._do_delete, args=args)
 
+    def deletion_preview(self):
+        """What :meth:`delete_marked` would actually do, without touching anything.
+
+        Plans the files the user has marked, using the same predicate the deletion itself uses,
+        so the preview cannot promise something the deletion then refuses. Cloning is assessed
+        only when the user has asked for it, because the probe costs a filesystem test per
+        candidate and answers a question nobody asked otherwise.
+
+        :rtype: core.deletion_plan.DeletionPlan
+        """
+        # Imported here: core.deletion_plan imports check_deletable from this module.
+        from core.deletion_plan import build_plan, default_clone_probe
+
+        probe = default_clone_probe if self.deletion_options.use_clones else None
+        return build_plan(self, clone_probe=probe)
+
     def export_to_xhtml(self):
         """Export current results to XHTML.
 
