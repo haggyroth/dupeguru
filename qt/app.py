@@ -30,6 +30,7 @@ from qt.problem_dialog import ProblemDialog
 from qt.ignore_list_dialog import IgnoreListDialog
 from qt.exclude_list_dialog import ExcludeListDialog
 from qt.deletion_options import DeletionOptions
+from qt.scan_profile import apply_settings, capture_settings
 from qt.se.details_dialog import DetailsDialog as DetailsDialogStandard
 from qt.me.details_dialog import DetailsDialog as DetailsDialogMusic
 from qt.pe.details_dialog import DetailsDialog as DetailsDialogPicture
@@ -321,6 +322,37 @@ class DupeGuru(QObject):
                 self.details_dialog.show()
             else:
                 self.details_dialog.hide()
+
+    def saveScanProfile(self, name):
+        """Remember the current folders, mode and scan settings under *name*."""
+        self.model.save_scan_profile(name, capture_settings(self.prefs, self.model.app_mode))
+        # Written out now rather than at quit. A profile the user just named and then lost to a
+        # crash is worse than no profile feature, and there is nothing else in flight to batch
+        # the write with.
+        self.model.save()
+
+    def loadScanProfile(self, name):
+        """Restore a saved profile, and say so if any of its folders have gone.
+
+        Restoring the folders alone would give a scan with the right folders and whatever
+        settings happened to be set, so the preferences travel with them.
+        """
+        profile = self.model.scan_profiles.get(name)
+        if profile is None:
+            return
+        # Order matters. apply_scan_profile sets app_mode, and _update_options reads app_mode
+        # to pick which of the three saved scan types applies -- so the mode has to change
+        # before the options are rebuilt, or a picture profile would scan with the standard
+        # mode's scan type.
+        missing = self.model.apply_scan_profile(name)
+        apply_settings(self.prefs, profile.settings, profile.app_mode)
+        self.directories_dialog.refreshAppMode()
+        if missing:
+            self.show_message(
+                tr("Loaded scan profile '{}', but {} of its folders no longer exist and were " "skipped:\n\n{}").format(
+                    name, len(missing), "\n".join(missing)
+                )
+            )
 
     def showResultsWindow(self):
         if self.resultWindow is not None:

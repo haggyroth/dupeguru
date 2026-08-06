@@ -69,6 +69,30 @@ folder if you want to be sure that you won't delete any file from it.
 When you set the state of a directory, all subfolders of this folder automatically inherit this
 state unless you explicitly set a subfolder's state.
 
+Scan Profiles
+-------------
+
+If you scan the same folders repeatedly, **File --> Save Scan Profile...** remembers the whole
+setup under a name you choose: the folders, their **Normal**/**Reference**/**Excluded** states,
+the application mode, the scan type, and the scanning options from your preferences. **File -->
+Scan Profiles...** lists what you have saved and loads one back.
+
+Loading a profile replaces the current folder selection rather than adding to it, so what you
+see afterwards is exactly what the profile describes and nothing else.
+
+Saving under a name you have already used replaces that profile, so refining a setup and saving
+it again does not leave you with several near-identical entries.
+
+Only settings that affect what a scan *finds* are stored. Appearance, language and window layout
+are not, so loading a profile will not restyle the application. Neither is the copy/move
+destination setting, which applies to what you do with results rather than to finding them.
+
+If a profile refers to folders that no longer exist -- an external drive that is not plugged in,
+say -- the list marks it as having missing folders before you load it, and hovering the entry
+shows which ones. Loading it anyway scans the folders that are present and tells you which were
+skipped. It matters that you are told: a scan covering four folders instead of five simply finds
+fewer duplicates, and a short list of duplicates looks the same as a clean one.
+
 Scan
 ----
 

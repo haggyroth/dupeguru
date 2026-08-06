@@ -34,6 +34,7 @@ from core.ignore import IgnoreList
 from core.exclude import ExcludeDict as ExcludeList
 from core.scanner import ScanType
 from core.gui.deletion_options import DeletionOptions
+from core.scan_profile import ProfileStore, ScanProfile, ScanProfileError
 from core.gui.details_panel import DetailsPanel
 from core.gui.directory_tree import DirectoryTree
 from core.gui.ignore_list_dialog import IgnoreListDialog
@@ -268,6 +269,7 @@ class DupeGuru(Broadcaster):
 
         hashcachedb.connect(op.join(self.appdata, "hash_cache2.db"))
         self.directories = directories.Directories(self.exclude_list)
+        self.scan_profiles = ProfileStore()
         self.results = results.Results(self)
         self.ignore_list = IgnoreList()
         # In addition to "app-level" options, this dictionary also holds options that will be
@@ -742,6 +744,48 @@ class DupeGuru(Broadcaster):
         logging.debug("Starting deletion job with args %r", args)
         self._start_job(JobType.DELETE, self._do_delete, args=args)
 
+    def save_scan_profile(self, name, settings=None):
+        """Save the current folders, states and mode under *name*, replacing any profile of
+        that name.
+
+        *settings* is whatever the front end wants remembered alongside them, as a flat dict of
+        scalars. Core stores it and hands it back unchanged; see :mod:`core.scan_profile` for
+        why it does not try to interpret it.
+
+        :rtype: core.scan_profile.ScanProfile
+        """
+        profile = ScanProfile.capture(name, self.directories, self.app_mode, settings)
+        self.scan_profiles.set(profile)
+        self.notify("scan_profiles_changed")
+        return profile
+
+    def apply_scan_profile(self, name):
+        """Restore the folders, states and mode saved under *name*.
+
+        Returns the profile's folders that no longer exist. They are skipped rather than
+        refused -- with a drive unplugged, scanning what is present and being told what is not
+        beats refusing outright -- but the caller must surface them. A scan that quietly covers
+        four folders instead of five reports fewer duplicates, and that reads exactly like a
+        clean result.
+
+        Applying the profile's *settings* is the front end's job, since it is the front end
+        that knows what they mean.
+
+        :rtype: list of str
+        """
+        profile = self.scan_profiles.get(name)
+        if profile is None:
+            raise ScanProfileError(f"no scan profile named {name!r}")
+        missing = profile.apply_folders(self.directories)
+        self.app_mode = profile.app_mode
+        self.notify("directories_changed")
+        return missing
+
+    def delete_scan_profile(self, name):
+        """Forget the profile saved under *name*. Unknown names are ignored."""
+        self.scan_profiles.remove(name)
+        self.notify("scan_profiles_changed")
+
     def deletion_preview(self):
         """What :meth:`delete_marked` would actually do, without touching anything.
 
@@ -838,6 +882,7 @@ class DupeGuru(Broadcaster):
         called).
         """
         self.directories.load_from_file(op.join(self.appdata, "last_directories.xml"))
+        self.scan_profiles.load_from_file(op.join(self.appdata, "scan_profiles.xml"))
         self.notify("directories_changed")
         p = op.join(self.appdata, "ignore_list.xml")
         self.ignore_list.load_from_xml(p)
@@ -1043,6 +1088,7 @@ class DupeGuru(Broadcaster):
         if not op.exists(self.appdata):
             os.makedirs(self.appdata)
         self.directories.save_to_file(op.join(self.appdata, "last_directories.xml"))
+        self.scan_profiles.save_to_file(op.join(self.appdata, "scan_profiles.xml"))
         p = op.join(self.appdata, "ignore_list.xml")
         self.ignore_list.save_to_xml(p)
         p = op.join(self.appdata, "exclude_list.xml")
