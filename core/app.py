@@ -34,6 +34,7 @@ from core.exclude import ExcludeDict as ExcludeList
 from core.scanner import ScanType
 from core.gui.deletion_options import DeletionOptions
 from core.deletion_log import DeletionLog, DeletionRecord, default_log_path
+from core.folder_overlap import count_files_per_folder
 from core.scan_profile import ProfileStore, ScanProfile, ScanProfileError
 from core.trash import trash_file
 from core.gui.details_panel import DetailsPanel
@@ -272,6 +273,8 @@ class DupeGuru(Broadcaster):
         self.directories = directories.Directories(self.exclude_list)
         self.scan_profiles = ProfileStore()
         self.deletion_log = DeletionLog(default_log_path(self.appdata))
+        #: Files scanned under each folder, at every depth. Empty until a scan runs.
+        self.folder_file_counts = {}
         self.results = results.Results(self)
         self.ignore_list = IgnoreList()
         # In addition to "app-level" options, this dictionary also holds options that will be
@@ -1209,6 +1212,10 @@ class DupeGuru(Broadcaster):
             if self.options["ignore_hardlink_matches"]:
                 files = self._remove_hardlink_dupes(files)
             logging.info("Scanning %d files" % len(files))
+            # Counted here because this list is discarded once the scan finishes, and results
+            # hold only duplicates -- a folder's *total* size cannot be recovered from them
+            # afterwards without walking the tree again. See core/folder_overlap.py.
+            self.folder_file_counts = count_files_per_folder(files, [str(path) for path in self.directories])
             self.results.groups = scanner.get_dupe_groups(files, self.ignore_list, j)
             self.discarded_file_count = scanner.discarded_file_count
             self.discarded_partial_count = getattr(scanner, "discarded_partial_count", 0)
