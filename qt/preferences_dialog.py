@@ -202,7 +202,12 @@ use the modifier key to drag the floating window around"
         )
         self.details_groupbox_layout.addWidget(self.details_dialog_vertical_titlebar)
         self.details_dialog_vertical_titlebar.setEnabled(self.details_dialog_titlebar_enabled.isChecked())
-        self.details_dialog_titlebar_enabled.stateChanged.connect(self.details_dialog_vertical_titlebar.setEnabled)
+        # Routed through the dialog rather than connected straight to the other checkbox's
+        # setEnabled. A signal connected to another *widget's* bound method keeps that widget's
+        # Python wrapper alive past the destruction of the dialog that owns it, and a wrapper
+        # whose C++ object is gone is what QApplication.setStyle walks into when it re-polishes
+        # every widget -- an access violation on Windows, silent luck elsewhere.
+        self.details_dialog_titlebar_enabled.stateChanged.connect(self._titlebarEnabledChanged)
         gridlayout = QGridLayout()
         formlayout = QFormLayout()
         self.details_table_delta_foreground_color = ColorPickerButton(self)
@@ -240,6 +245,10 @@ most users should not have to modify these."
             wordWrap=True,
         )
         self.debugVLayout.addWidget(self.debug_location_label)
+
+    def _titlebarEnabledChanged(self, state):
+        """The vertical-titlebar option only means anything while the title bar is on."""
+        self.details_dialog_vertical_titlebar.setEnabled(bool(state))
 
     def _setupAddCheckbox(self, name, label, parent=None):
         if parent is None:

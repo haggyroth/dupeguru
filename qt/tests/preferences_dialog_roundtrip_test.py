@@ -206,3 +206,40 @@ class TestPictureSpecifics:
         restore_prefs.set_scan_type(AppMode.PICTURE, ScanType.EXIFTIMESTAMP)
         dialog.load()
         assert not dialog.filterHardnessSlider.isEnabled()
+
+
+class TestNoWidgetOutlivesItsDialog:
+    """A widget wrapper surviving its dialog is a process abort waiting to happen.
+
+    QApplication.setStyle and setPalette re-polish *every* widget, and dupeGuru calls both
+    whenever preferences are applied. A wrapper whose C++ object has been destroyed takes the
+    process down during that walk -- an access violation on Windows, silent luck elsewhere.
+
+    The cause was a signal connected straight to another widget's bound method, which holds
+    that widget's wrapper across the ownership boundary and past the dialog's own lifetime.
+
+    Asked of sip rather than of a weak reference. A weakref dies when the *wrapper* is
+    collected, which happens either way; the fault is a live wrapper around a dead C++ object,
+    and only sip.isdeleted can see that.
+    """
+
+    def test_no_widget_outlives_the_dialog_that_owns_it(self, dgapp):
+        import gc
+
+        from qtpy.QtWidgets import QWidget
+
+        sip = pytest.importorskip("qtpy.sip", reason="needs sip to inspect wrapper lifetimes")
+
+        dialog = StandardPreferences(None, dgapp)
+        dialog.load()
+        del dialog
+        gc.collect()
+
+        orphaned = []
+        for obj in gc.get_objects():
+            try:
+                if isinstance(obj, QWidget) and sip.isdeleted(obj):
+                    orphaned.append(type(obj).__name__)
+            except Exception:
+                continue
+        assert orphaned == [], f"widget wrappers outlived their dialog: {orphaned}"
