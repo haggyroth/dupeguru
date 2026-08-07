@@ -9,6 +9,42 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [4.13.0] - 2026-08-07
+
+### Added
+
+- **Folder Overlap** (Actions → Folder Overlap...). A large scan can produce thousands of
+  duplicate groups, and most of them usually have one explanation: a backup folder shadowing an
+  original. This groups the groups by the folder pair that accounts for them, so 437 separate
+  decisions become one. Marking a row marks exactly the files it counted, and duplicates no pair
+  accounts for are listed rather than hidden.
+
+  A pair is only shown when it explains most of what its folder contributes and covers more than
+  a handful of files, because presenting a coincidental overlap as a single decision invites
+  acting on a pattern that is not there. Where you have marked a reference folder, the direction
+  is shown as an arrow; where you have not, the two folders are shown as equals, because
+  dupeGuru chose which file to keep by size and neither side is known to be the original.
+
+- **Folder Overlap Report** (Actions → Folder Overlap Report...). A different question: not what
+  to act on, but what shape the archive is in. For each scanned folder it reports how much of its
+  *whole* content also exists somewhere else, and where. Folders duplicated in full are called
+  out, since those could in principle be removed entirely.
+
+  Only folders dupeGuru actually scanned appear. A percentage computed against just the part
+  that was looked at would be misleading rather than approximate.
+
+### Fixed
+
+- **A crash on Windows when applying preferences.** A checkbox in the preferences dialog
+  outlived the dialog that owned it, because a signal was connected straight to another widget's
+  method. Applying preferences re-examines every widget in the application, and reaching that
+  one ended the process.
+- **The interface style was rebuilt on every preferences change**, even when it had not changed.
+  That discarded and recreated the style for every widget each time, which was both wasted work
+  and how the crash above was reached.
+- **An interface style that does not exist on the installed Qt** was passed on without being
+  checked, leaving the application with no style rather than reporting anything.
+
 ## [4.12.0] - 2026-08-07
 
 ### Added
@@ -820,7 +856,8 @@ fork no longer routes anyone or anything upstream, and CI runs for the first tim
 
 See `git log` for changes prior to this changelog.
 
-[Unreleased]: https://github.com/haggyroth/dupeguru/compare/v4.12.0...HEAD
+[Unreleased]: https://github.com/haggyroth/dupeguru/compare/v4.13.0...HEAD
+[4.13.0]: https://github.com/haggyroth/dupeguru/compare/v4.12.0...v4.13.0
 [4.12.0]: https://github.com/haggyroth/dupeguru/compare/v4.11.0...v4.12.0
 [4.11.0]: https://github.com/haggyroth/dupeguru/compare/v4.10.0...v4.11.0
 [4.10.0]: https://github.com/haggyroth/dupeguru/compare/v4.9.0...v4.10.0

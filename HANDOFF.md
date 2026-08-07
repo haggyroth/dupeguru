@@ -1,6 +1,6 @@
 # Handoff
 
-Written 2026-08-03 moving development from Windows 11 to a MacBook Air; refreshed 2026-08-07 after 4.12.0.
+Written 2026-08-03 moving development from Windows 11 to a MacBook Air; refreshed 2026-08-07 after 4.13.0.
 
 ## The one rule
 
@@ -20,10 +20,10 @@ it renders links for *historical* upstream ticket numbers in `help/changelog`. D
 | | |
 |---|---|
 | Branch | `master` (not `main`) |
-| Version | 4.12.0, released, with Windows and macOS binaries attached |
-| Releases | v4.4.0 through v4.12.0. From 4.9.0 they carry binaries |
-| Issues | 35 closed, 9 open. Two are claimed by open contributor PRs |
-| Tests | **1385 passing, 6 skipped** on macOS. Windows/Linux counts differ (see below) |
+| Version | 4.13.0, released, with Windows and macOS binaries attached |
+| Releases | v4.4.0 through v4.13.0. From 4.9.0 they carry binaries |
+| Issues | 37 closed, 7 open. Two are claimed by open contributor PRs |
+| Tests | **1477 passing, 6 skipped** on macOS. Windows/Linux counts differ (see below) |
 | Qt bindings | PyQt6 by default, PyQt5 as a fallback with its own CI leg |
 | CI | Linux on 3.10 / 3.12 / 3.14, plus Windows, macOS and a PyQt5 leg; `master` is protected |
 
@@ -79,7 +79,7 @@ move and a green run looks different.
 | 3 Windows junction tests | run | **skip** | **skip** |
 | 1 case-sensitivity test | skip | skip (APFS is case-insensitive) | run |
 | 2 exclude union-mode tests | skip | skip | skip |
-| **Totals** | measured on CI | **1385 / 6 skipped** | measured on CI |
+| **Totals** | measured on CI | **1477 / 6 skipped** | measured on CI |
 
 Only the macOS column is measured here; the Windows and Linux totals move with the suite and
 are best read off a CI run rather than copied into this file, since they went stale within a
@@ -145,6 +145,22 @@ Commits follow Conventional Commits. `commitlint` is configured but not enforced
 unless you `pre-commit install`.
 
 ## Traps that cost time here
+
+**Qt global state and widget lifetimes cause crashes far from their cause, three times over.**
+All three surfaced in a test that had nothing to do with them, and none is visible in review:
+
+* a signal connected straight to *another widget's* bound method keeps that widget's Python
+  wrapper alive past the dialog that owns it. Applying preferences re-polishes every widget and
+  walks into the corpse. Route such connections through a method on the owner.
+* `QApplication.setStyle` is process-wide. A test that switches it and does not put it back
+  changes the ground under every later test; one of them segfaulted showing a dialog.
+* a `QPixmap` constructed before a `QGuiApplication` exists segfaults. Qt says so plainly, but
+  only if you are looking. Any test touching `qt.resources` needs the `qapp` fixture.
+
+`sip.isdeleted()` over `gc.get_objects()` finds the first class directly, and costs 13 ms --
+`qt/tests/preferences_dialog_roundtrip_test.py` has a worked example. A weak reference does
+*not* work: it dies when the wrapper is collected, which happens either way, while the fault is
+a live wrapper around a dead C++ object.
 
 **A Qt widget reference outliving its parent is a Windows-only crash, far from its cause.**
 Closing a dialog destroys its children on the C++ side while any Python attributes go on
@@ -288,7 +304,7 @@ downloads the installer.
 
 The binaries are still built and attached **deliberately**, not as a side effect of tagging —
 `.github/workflows/packaging.yml` is `workflow_dispatch` only. The flow used for 4.10.0 through
-4.12.0 was:
+4.13.0 was:
 merge the release PR, tag, dispatch packaging **on the tag**, download the artifacts, verify
 them, then upload to the release. Building from the tag matters: for 4.9.0 the first artifacts
 were built from a branch three commits ahead and had to be rebuilt, because a binary stamped
@@ -467,7 +483,7 @@ Closed, but the reasoning is worth keeping:
 
 No issue is open for any of these; they are judgement calls rather than tracked work.
 
-**1. Run the installer and uninstaller on Windows.** The largest gap. Four releases now carry
+**1. Run the installer and uninstaller on Windows.** The largest gap. Five releases now carry
 binaries and nobody has run the NSIS installer end to end, or its uninstaller — whose
 `RMDir /r "$INSTDIR\_internal"` has never been executed. If it is wrong it either strands files
 or removes too much. This needs the Windows machine; CI cannot do it.
