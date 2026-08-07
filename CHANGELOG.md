@@ -9,6 +9,43 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [4.12.0] - 2026-08-07
+
+### Added
+
+- **A record of every deletion, with the option to put the files back** (File → Deletion
+  History). Each run lists what it removed, how big it was, what the file duplicated, and --
+  for files sent to the trash -- where in the trash they went. Restoring a run moves them back.
+
+  Everything else in dupeGuru prevents a *wrong* deletion; nothing helped with one that was
+  correct at the time and regretted afterwards. This is that.
+
+  Restoring verifies before it acts and refuses rather than guessing. If a different file now
+  occupies the original path it is left alone and you are told, because putting the old copy
+  back would destroy the newer one. If the trash has been emptied there is nothing to restore
+  and it says so. If the file is already back -- restored by hand, or by an earlier restore --
+  it is reported as already there rather than as missing. Files deleted permanently were never
+  in the trash and those runs say so instead of offering a button that would fail. Whatever
+  could not be restored is listed with its reason, so a partial restore is never reported as a
+  complete one.
+
+  The record is written *before* each file is removed, so a crash cannot leave a deleted file
+  with no record of it.
+
+  Working on all three platforms took capturing where the trash actually put the file, which is
+  not something that can be worked out afterwards: trashing a second file of the same name
+  produces a name with a millisecond timestamp in it. Each platform reports it and each was
+  discarding the answer -- macOS in an out-parameter, Linux in the freedesktop record, Windows
+  in the shell's own progress callback.
+
+### Changed
+
+- The parts of the interface that decide which files are kept and which are deleted now have
+  test coverage: the re-prioritize dialog, the mark-by-rule dialog, the folder state list, and
+  all three preferences dialogs. Several carried couplings that were invisible in the code and
+  silent when broken -- a folder state stored by position, a rule chosen by row number, a
+  preference listed in one place and not the other.
+
 ## [4.11.0] - 2026-08-07
 
 ### Added
@@ -783,7 +820,8 @@ fork no longer routes anyone or anything upstream, and CI runs for the first tim
 
 See `git log` for changes prior to this changelog.
 
-[Unreleased]: https://github.com/haggyroth/dupeguru/compare/v4.11.0...HEAD
+[Unreleased]: https://github.com/haggyroth/dupeguru/compare/v4.12.0...HEAD
+[4.12.0]: https://github.com/haggyroth/dupeguru/compare/v4.11.0...v4.12.0
 [4.11.0]: https://github.com/haggyroth/dupeguru/compare/v4.10.0...v4.11.0
 [4.10.0]: https://github.com/haggyroth/dupeguru/compare/v4.9.0...v4.10.0
 [4.9.0]: https://github.com/haggyroth/dupeguru/compare/v4.8.0...v4.9.0

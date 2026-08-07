@@ -1,6 +1,6 @@
 # Handoff
 
-Written 2026-08-03 moving development from Windows 11 to a MacBook Air; refreshed 2026-08-07 after 4.11.0.
+Written 2026-08-03 moving development from Windows 11 to a MacBook Air; refreshed 2026-08-07 after 4.12.0.
 
 ## The one rule
 
@@ -20,10 +20,10 @@ it renders links for *historical* upstream ticket numbers in `help/changelog`. D
 | | |
 |---|---|
 | Branch | `master` (not `main`) |
-| Version | 4.11.0, released, with Windows and macOS binaries attached |
-| Releases | v4.4.0 through v4.11.0. From 4.9.0 they carry binaries |
-| Issues | 34 closed, 10 open. All but #83 are unstarted feature proposals |
-| Tests | **1264 passing, 6 skipped** on macOS. Windows/Linux counts differ (see below) |
+| Version | 4.12.0, released, with Windows and macOS binaries attached |
+| Releases | v4.4.0 through v4.12.0. From 4.9.0 they carry binaries |
+| Issues | 35 closed, 9 open. Two are claimed by open contributor PRs |
+| Tests | **1385 passing, 6 skipped** on macOS. Windows/Linux counts differ (see below) |
 | Qt bindings | PyQt6 by default, PyQt5 as a fallback with its own CI leg |
 | CI | Linux on 3.10 / 3.12 / 3.14, plus Windows, macOS and a PyQt5 leg; `master` is protected |
 
@@ -79,7 +79,7 @@ move and a green run looks different.
 | 3 Windows junction tests | run | **skip** | **skip** |
 | 1 case-sensitivity test | skip | skip (APFS is case-insensitive) | run |
 | 2 exclude union-mode tests | skip | skip | skip |
-| **Totals** | measured on CI | **1264 / 6 skipped** | measured on CI |
+| **Totals** | measured on CI | **1385 / 6 skipped** | measured on CI |
 
 Only the macOS column is measured here; the Windows and Linux totals move with the suite and
 are best read off a CI run rather than copied into this file, since they went stale within a
@@ -287,8 +287,8 @@ That changes the stakes of everything in this section: a packaging bug now reach
 downloads the installer.
 
 The binaries are still built and attached **deliberately**, not as a side effect of tagging —
-`.github/workflows/packaging.yml` is `workflow_dispatch` only. The flow used for 4.10.0 and
-4.11.0 was:
+`.github/workflows/packaging.yml` is `workflow_dispatch` only. The flow used for 4.10.0 through
+4.12.0 was:
 merge the release PR, tag, dispatch packaging **on the tag**, download the artifacts, verify
 them, then upload to the release. Building from the tag matters: for 4.9.0 the first artifacts
 were built from a branch three commits ahead and had to be rebuilt, because a binary stamped
@@ -467,7 +467,7 @@ Closed, but the reasoning is worth keeping:
 
 No issue is open for any of these; they are judgement calls rather than tracked work.
 
-**1. Run the installer and uninstaller on Windows.** The largest gap. Three releases now carry
+**1. Run the installer and uninstaller on Windows.** The largest gap. Four releases now carry
 binaries and nobody has run the NSIS installer end to end, or its uninstaller — whose
 `RMDir /r "$INSTDIR\_internal"` has never been executed. If it is wrong it either strands files
 or removes too much. This needs the Windows machine; CI cannot do it.
@@ -482,9 +482,18 @@ this file was measured on macOS against one exFAT volume, mostly with warm metad
 cold-path numbers are extrapolations from per-file costs, not observations of a full run. An
 unmount/remount between passes gives the real figure.
 
-**4. The Qt layer is still smoke-only at ~60%.** The preview pane, results table and preferences
-dialogs construct and are barely exercised. This is the largest untested surface left now that
-`core/app.py` is at 77%, and it is where a change renders wrongly without failing anything.
+**4. The Qt layer is at 69%, and the risky parts are now covered.** Everything that decides
+which files are kept or deleted has tests: the re-prioritize and mark-by-rule dialogs, the
+folder state list, and all three preferences dialogs. What is left is lower stakes --
+`error_report_dialog.py` at 0% is the one worth doing, because it is what appears when
+something breaks, so a fault in it hides real errors. The image viewer is large and mostly
+uncovered but a wrong render there costs a look, not a file.
+
+**Testing preferences needs two directions, not one.** A round trip -- load the dialog, save it
+back untouched, expect no change -- catches a preference missing from `_load`. It *cannot*
+catch one missing from `_save`: a value that is never written keeps whatever was there, so the
+cycle looks clean. That version missed three of five seeded faults. The save direction has to
+be driven by moving the widgets and checking the values follow.
 
 **5. Watch `merge_similar_words`.** It is genuinely quadratic — 4.0x per doubling, measured. The
 test now guards against a return to *cubic*, which is what an O(n) membership check in the loop
