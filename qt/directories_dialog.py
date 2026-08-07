@@ -30,6 +30,7 @@ from core.app import AppMode
 from qt import resources
 from qt.radio_box import RadioBox
 from qt.recent import Recent
+from qt.deletion_log_dialog import DeletionLogDialog
 from qt.scan_profile_dialog import ScanProfileDialog
 from qt.util import move_to_screen_center, create_actions
 
@@ -97,6 +98,7 @@ class DirectoriesDialog(QMainWindow):
             ("actionSaveDirectories", "", "", tr("Save Directories..."), self.saveDirectoriesTriggered),
             ("actionSaveScanProfile", "", "", tr("Save Scan Profile..."), self.saveScanProfileTriggered),
             ("actionScanProfiles", "", "", tr("Scan Profiles..."), self.scanProfilesTriggered),
+            ("actionDeletionHistory", "", "", tr("Deletion History..."), self.deletionHistoryTriggered),
         ]
         create_actions(ACTIONS, self)
         if self.app.use_tabs:
@@ -137,6 +139,8 @@ class DirectoriesDialog(QMainWindow):
         self.menuFile.addSeparator()
         self.menuFile.addAction(self.actionSaveScanProfile)
         self.menuFile.addAction(self.actionScanProfiles)
+        self.menuFile.addSeparator()
+        self.menuFile.addAction(self.actionDeletionHistory)
         self.menuFile.addSeparator()
         self.menuFile.addAction(self.app.actionQuit)
 
@@ -408,6 +412,9 @@ class DirectoriesDialog(QMainWindow):
 
     def scanProfilesTriggered(self):
         ScanProfileDialog(self, self.app).exec()
+
+    def deletionHistoryTriggered(self):
+        DeletionLogDialog(self, self.app).exec()
 
     def scanButtonClicked(self):
         if self.app.model.results.is_modified:

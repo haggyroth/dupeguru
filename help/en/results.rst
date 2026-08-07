@@ -169,6 +169,37 @@ Action Menu
 **Rename Selected:**
     Prompts you for a new name, and then rename the selected file.
 
+Deletion History
+----------------
+
+**File --> Deletion History...** lists what dupeGuru has deleted, grouped by operation, and can
+put a run back.
+
+For each file it records where it was, how big it was, what it duplicated, and — for files sent
+to the trash — where in the trash it went. That last part is what makes restoring possible: the
+trash renames files that collide, so the new name cannot be worked out afterwards and has to be
+noted at the time.
+
+The record is written *before* each file is removed, so a crash or a power cut cannot leave you
+with a deleted file and no record of it.
+
+Restoring checks before it acts, and refuses rather than guessing:
+
+* If a **different file now occupies the original path**, the file is not restored and you are
+  told. Putting the old copy back would destroy the newer one, which is the sort of loss this
+  feature exists to prevent.
+* If the **trash has been emptied**, there is nothing to put back, and it says so.
+* If the file is **already back** — restored by you in the meantime, or by an earlier restore —
+  it is left alone and reported as already there.
+* Files that were **deleted permanently** were never in the trash and cannot be restored. Those
+  runs say so rather than offering a button that would fail.
+
+Whatever could not be restored is listed with the reason, so a partial restore is never reported
+as a complete one.
+
+On Windows the deletion is still recorded, but where the file went in the Recycle Bin is not
+captured, so those files show as unrestorable. Use the Recycle Bin's own Restore for them.
+
 Deletion Options
 ----------------
 
