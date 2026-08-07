@@ -51,6 +51,8 @@ def trash_file(path) -> str:
     if sys.platform.startswith("linux"):
         send2trash(str_path)
         return _find_xdg_destination(str_path)
+    if sys.platform == "win32":
+        return _trash_windows(str_path)
     send2trash(str_path)
     return ""
 
@@ -58,12 +60,12 @@ def trash_file(path) -> str:
 def can_report_destination() -> bool:
     """Whether this platform can say where a trashed file went.
 
-    Front ends use this to avoid promising a restore they cannot perform. Windows is
-    deliberately excluded: capturing the destination there means driving IFileOperation with a
-    progress sink, and untested COM code in the deletion path risks breaking deletion itself,
-    which is far worse than lacking an undo.
+    Front ends use this to avoid promising a restore they cannot perform. This is a statement
+    about the platform, not a guarantee for any one file: a particular deletion can still come
+    back with no destination, and callers must treat an empty result as "no restore for this
+    file" regardless of what this returns.
     """
-    return sys.platform == "darwin" or sys.platform.startswith("linux")
+    return sys.platform in ("darwin", "win32") or sys.platform.startswith("linux")
 
 
 # --- macOS
@@ -111,6 +113,64 @@ def _trash_macos(str_path: str) -> str:
         # and lose only the destination.
         logging.warning("Could not trash via CoreServices; falling back to send2trash", exc_info=True)
         return ""
+
+
+# --- Windows
+
+
+def _trash_windows(str_path: str) -> str:
+    """Recycle via send2trash, capturing the destination from its own progress sink.
+
+    ``IFileOperationProgressSink.PostDeleteItem`` receives ``psiNewlyCreated`` -- the item as
+    it now exists in the Recycle Bin -- and send2trash's sink already stores it as ``newItem``.
+    Nothing reads it, because ``create_sink()`` returns the *wrapped* COM object and the Python
+    instance holding the attribute is discarded.
+
+    So this swaps the factory rather than reimplementing the deletion. send2trash's
+    ``PerformOperations`` call, its flags and its error handling are untouched, which matters:
+    a mistake in a hand-rolled IFileOperation would break deleting on Windows, and a broken
+    delete is far worse than a missing undo. The only new code runs before the deletion starts
+    and after it finishes.
+    """
+    try:
+        import pythoncom
+        from win32com.shell import shell
+
+        from send2trash.win import modern
+        from send2trash.win.IFileOperationProgressSink import FileOperationProgressSink
+    except Exception:
+        # No pywin32, or a send2trash whose internals have moved. Recycle the normal way and
+        # simply do not offer a restore for this file.
+        logging.debug("Cannot capture the Recycle Bin location; recycling without it", exc_info=True)
+        send2trash(str_path)
+        return ""
+
+    captured = {}
+    original_create_sink = modern.create_sink
+
+    def create_capturing_sink():
+        # Keep the Python instance as well as the wrapper. Method calls dispatch through the
+        # wrapper to this object, so PostDeleteItem sets newItem here.
+        sink = FileOperationProgressSink()
+        captured["sink"] = sink
+        return pythoncom.WrapObject(sink, shell.IID_IFileOperationProgressSink)
+
+    modern.create_sink = create_capturing_sink
+    try:
+        # Anything raised here is a genuine failure to recycle and belongs to the caller, which
+        # treats it as the file not having been deleted. Deliberately not caught: swallowing it
+        # and retrying would risk deleting twice.
+        send2trash(str_path)
+    finally:
+        modern.create_sink = original_create_sink
+
+    sink = captured.get("sink")
+    destination = getattr(sink, "newItem", None) if sink is not None else None
+    if not destination:
+        # The file is recycled either way; only the undo is unavailable.
+        logging.debug("The Recycle Bin location for %s was not reported", str_path)
+        return ""
+    return str(destination)
 
 
 # --- Linux (XDG)

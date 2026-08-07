@@ -197,8 +197,13 @@ Restoring checks before it acts, and refuses rather than guessing:
 Whatever could not be restored is listed with the reason, so a partial restore is never reported
 as a complete one.
 
-On Windows the deletion is still recorded, but where the file went in the Recycle Bin is not
-captured, so those files show as unrestorable. Use the Recycle Bin's own Restore for them.
+Restoring a file on Windows moves it out of the Recycle Bin directly. The Recycle Bin may go on
+listing the entry until it is next emptied, even though the file is back where it belongs --
+your file is not affected either way.
+
+If a file's location could not be recorded at the time it was deleted, it is listed as
+unrestorable rather than offered and then refused. Use the trash's or Recycle Bin's own restore
+for those.
 
 Deletion Options
 ----------------
