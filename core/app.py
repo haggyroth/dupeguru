@@ -1196,6 +1196,10 @@ class DupeGuru(Broadcaster):
         if self.app_mode == AppMode.PICTURE:
             scanner.cache_path = self._get_picture_cache_path()
             scanner.match_cache = self.picture_match_cache
+        elif scanner.combine_picture_matching:
+            # A standard scan that also matches pictures needs the block cache too. Same file
+            # as picture mode uses, so the two share the work rather than each recomputing it.
+            scanner.cache_path = self._get_picture_cache_path()
         self.results.groups = []
         self._recreate_result_table()
         self._results_changed()

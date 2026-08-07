@@ -189,6 +189,18 @@ def _run_scan(app: DupeGuru, verbose: bool, progress_json: bool = False) -> None
     if app.app_mode == AppMode.PICTURE:
         scanner.cache_path = app._get_picture_cache_path()
         _wire_photo_class()
+    elif scanner.combine_picture_matching:
+        # A contents scan that also matches pictures needs the block cache and a decoder, the
+        # same as picture mode does -- but unlike --mode picture, a missing decoder is not fatal
+        # here. The content matches are the greater part of what was asked for, so say what will
+        # be missing and carry on rather than refusing the whole scan.
+        scanner.cache_path = app._get_picture_cache_path()
+        try:
+            _wire_photo_class()
+        except SystemExit as e:
+            print(f"warning: {e}", file=sys.stderr)
+            print("warning: continuing without picture matching", file=sys.stderr)
+            scanner.combine_picture_matching = False
 
     def _progress(progress: int, desc: str = "") -> bool:
         # Elapsed time and rate, for the same reason the GUI shows them: a scan that is merely

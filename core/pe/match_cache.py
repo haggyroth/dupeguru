@@ -36,7 +36,7 @@ import os
 import sqlite3
 from typing import Union
 
-from core.engine import Match
+from core.engine import Match, MatchKind
 
 # Bumped when the stored shape changes. On mismatch the cache is dropped rather than
 # migrated: everything here is recomputable, so a rebuild is always cheaper and safer than a
@@ -122,7 +122,7 @@ class MatchCache:
             if first is None or second is None:
                 logging.warning("Match cache references a file not in this scan; recomputing")
                 return None
-            matches.append(Match(first, second, percentage, False))
+            matches.append(Match(first, second, percentage, False, kind=MatchKind.RESEMBLANCE))
         return matches
 
     def put(self, scan_key: str, matches) -> None:
