@@ -55,6 +55,14 @@ def _apply_style(name):
     This is applied on every preferences change, so getting it wrong is not a one-off. Falling
     back to Fusion, which every Qt build has, keeps a real style installed instead.
     """
+    current = QApplication.style()
+    if current is not None and current.objectName().lower() == name.lower():
+        # Already this style. Setting it again is not a no-op inside Qt: it destroys the live
+        # QStyle and re-polishes every widget in the application. That is wasted work on every
+        # preferences change, and it is the operation that was aborting the Windows CI run
+        # with an access violation -- a re-polish walks widgets, and any one of them whose C++
+        # object has outlived its wrapper takes the process with it.
+        return
     style = QStyleFactory.create(name)
     if style is None:
         logging.debug("Qt style %r is not available on this build; using Fusion", name)

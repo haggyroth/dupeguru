@@ -285,13 +285,27 @@ class TestStyleSwitching:
         _apply_style("Fusion")
         assert QApplication.style() is not None
 
-    def test_switching_twice_leaves_a_live_style(self, qapp):
-        # The crash signature was the *second* call: replacing a style destroys the first while
-        # widgets still reference it.
+    def test_reapplying_the_same_style_is_a_no_op(self, qapp):
+        # Not cosmetic. QApplication.setStyle destroys the live QStyle and re-polishes every
+        # widget; doing that on every preferences change is wasted work, and it is the walk
+        # that was aborting the Windows CI run.
         from qtpy.QtWidgets import QApplication
 
         from qt.app import _apply_style
 
         _apply_style("Fusion")
+        first = QApplication.style()
         _apply_style("Fusion")
-        assert QApplication.style() is not None
+        assert QApplication.style() is first, "the style object should not have been replaced"
+
+    def test_a_different_style_is_still_applied(self, qapp):
+        from qtpy.QtWidgets import QApplication, QStyleFactory
+
+        from qt.app import _apply_style
+
+        others = [key for key in QStyleFactory.keys() if key.lower() != "fusion"]
+        if not others:
+            pytest.skip("this build offers only one style")
+        _apply_style("Fusion")
+        _apply_style(others[0])
+        assert QApplication.style().objectName().lower() == others[0].lower()
