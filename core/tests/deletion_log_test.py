@@ -28,6 +28,7 @@ from core.deletion_log import (
     restore_record,
 )
 from core.scanner import ScanType
+from core.trash import can_report_destination
 
 
 @pytest.fixture
@@ -269,6 +270,7 @@ class TestDeletionRecordsTheRealThing:
         assert record.reference_path, "what the file duplicated is the context that makes this readable later"
         assert not Path(record.original_path).exists()
 
+    @pytest.mark.skipif(not can_report_destination(), reason="this platform cannot report where a trashed file went")
     def test_a_real_deletion_can_be_undone(self, app):
         run = self._delete_marked(app)
         record = run.records[0]
@@ -276,6 +278,20 @@ class TestDeletionRecordsTheRealThing:
         status, _ = restore_record(record)
         assert status == RestoreStatus.RESTORED
         assert Path(record.original_path).read_bytes() == b"shared contents"
+
+    @pytest.mark.skipif(can_report_destination(), reason="this platform does report where a trashed file went")
+    def test_where_the_destination_cannot_be_captured_the_file_is_still_recorded(self, app):
+        # Windows. Capturing the Recycle Bin location means driving IFileOperation with a
+        # progress sink, and untested COM in the deletion path risks breaking deletion itself.
+        # The deletion is still logged; only the offer to undo it is withheld, which is what
+        # the front end reads restorable for.
+        run = self._delete_marked(app)
+        record = run.records[0]
+        assert record.size and record.digest, "the deletion is recorded either way"
+        assert not record.restorable
+        status, message = restore_record(record)
+        assert status == RestoreStatus.NO_BACKUP
+        assert "not recorded" in message
 
     def test_a_permanent_deletion_is_recorded_but_not_restorable(self, app):
         run = self._delete_marked(app, direct=True)
