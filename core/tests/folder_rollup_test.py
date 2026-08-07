@@ -232,6 +232,14 @@ class TestTheCountIsThePromise:
 
 
 class TestDirection:
+    def test_a_pair_is_not_generalised_past_what_it_gains(self):
+        # /Users/k/Downloads duplicating /Volumes/Photos/misc is equally "explained" by
+        # /Users -> /Volumes, which covers the same files and says nothing anyone can act on.
+        # Rolling up is only worth it where it merges genuinely different subsets.
+        pairs = [(f"/Volumes/Photos/misc/p{i}.jpg", f"/Users/k/Downloads/p{i}.jpg") for i in range(20)]
+        rollup = build_rollup(results_with(pairs))
+        assert [(p.dupe_folder, p.ref_folder) for p in rollup.pairs] == [("/Users/k/Downloads", "/Volumes/Photos/misc")]
+
     def test_a_pair_claims_no_direction_by_default(self):
         # dupeGuru picks the reference by size unless told otherwise, so which side is the
         # "original" is usually incidental. Drawing an arrow would invent an answer.
@@ -239,11 +247,12 @@ class TestDirection:
         assert build_rollup(results).pairs[0].direction_is_explicit is False
 
     def test_a_reference_folder_makes_the_direction_explicit(self):
-        # The predicate is asked about the folder actually reported, which is the outermost
-        # pair -- /photos here, not /photos/2023.
+        # The predicate is asked about the folder actually reported. With every file under
+        # /photos/2023 there is nothing to gain by generalising to /photos, so the specific
+        # pair is the one shown.
         results = results_with(shadowed(10))
-        rollup = build_rollup(results, is_reference_folder=lambda path: path == "/photos")
-        assert rollup.pairs[0].ref_folder == "/photos", "the most general pair is the one reported"
+        rollup = build_rollup(results, is_reference_folder=lambda path: path == "/photos/2023")
+        assert rollup.pairs[0].ref_folder == "/photos/2023"
         assert rollup.pairs[0].direction_is_explicit is True
 
     def test_only_the_folder_the_user_marked_counts(self):

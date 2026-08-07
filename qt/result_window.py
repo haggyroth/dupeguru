@@ -32,6 +32,7 @@ from qt.results_model import ResultsView
 from qt.stats_label import StatsLabel
 from qt.prioritize_dialog import PrioritizeDialog
 from qt.mark_dialog import MarkDialog
+from qt.folder_rollup_dialog import FolderRollupDialog
 from qt.se.results_model import ResultsModel as ResultsModelStandard
 from qt.me.results_model import ResultsModel as ResultsModelMusic
 from qt.pe.results_model import ResultsModel as ResultsModelPicture
@@ -77,6 +78,13 @@ class ResultWindow(QMainWindow):
                 self.powerMarkerTriggered,
             ),
             ("actionDelta", "Ctrl+2", "", tr("Show Delta Values"), self.deltaTriggered),
+            (
+                "actionFolderRollup",
+                "",
+                "",
+                tr("Folder Overlap..."),
+                self.folderRollupTriggered,
+            ),
             (
                 "actionDeleteMarked",
                 "Ctrl+D",
@@ -256,6 +264,8 @@ class ResultWindow(QMainWindow):
         self.menuActions.addAction(self.actionRemoveMarked)
         self.menuActions.addAction(self.actionReprioritize)
         self.menuActions.addSeparator()
+        self.menuActions.addAction(self.actionFolderRollup)
+        self.menuActions.addSeparator()
         self.menuActions.addAction(self.actionRemoveSelected)
         self.menuActions.addAction(self.actionIgnoreSelected)
         self.menuActions.addAction(self.actionMakeSelectedReference)
@@ -419,6 +429,9 @@ class ResultWindow(QMainWindow):
 
     def copyTriggered(self):
         self.app.model.copy_or_move_marked(True)
+
+    def folderRollupTriggered(self):
+        FolderRollupDialog(self, self.app).exec()
 
     def deleteTriggered(self):
         self.app.model.delete_marked()

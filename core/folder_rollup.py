@@ -140,15 +140,18 @@ def build_rollup(results, is_reference_folder=None) -> Rollup:
         if len(dupes) >= MIN_FILES and share >= MIN_SHARE:
             qualifying.append((dupe_folder, ref_folder, dupes, share))
 
-    # Outermost first. /backup duplicating /photos implies /backup/2023 duplicating
-    # /photos/2023, and reporting both tells the user the same thing at several depths.
+    # Most files first, then the *most specific* pair among those covering the same files.
     #
-    # Shallowest duplicate folder wins, then the pair explaining the most files, then the
-    # shallowest reference folder. That last term is not cosmetic: /backup -> /photos and
-    # /backup -> /photos/2023 can cover exactly the same files, and without it which one gets
-    # reported depends on dictionary order. The more general statement is both the more useful
-    # one and the deterministic one.
-    qualifying.sort(key=lambda item: (len(Path(item[0]).parts), -len(item[2]), len(Path(item[1]).parts)))
+    # Rolling up is only worth it when it merges genuinely different subsets: /backup/2023 and
+    # /backup/2024 both shadowing /photos become one /backup -> /photos row, which is the whole
+    # point. But preferring the shallowest pair outright overshoots badly. Files in
+    # /Users/k/Downloads duplicating /Volumes/Photos/misc are equally well "explained" by
+    # /Users -> /Volumes, which covers the same files and tells the user nothing they can act
+    # on. Same coverage means rolling up gained nothing, so specificity wins.
+    #
+    # The depth terms also make the order deterministic: several pairs can cover identical
+    # files, and without them which one is reported depends on dictionary order.
+    qualifying.sort(key=lambda item: (-len(item[2]), -len(Path(item[0]).parts), -len(Path(item[1]).parts)))
 
     claimed = set()
     pairs = []

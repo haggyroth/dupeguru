@@ -169,6 +169,34 @@ Action Menu
 **Rename Selected:**
     Prompts you for a new name, and then rename the selected file.
 
+Folder Overlap
+--------------
+
+A large scan can produce thousands of duplicate groups, and reviewing them one at a time is
+usually the wrong shape of work: most of them have a single explanation, such as a backup folder
+shadowing an original. **Actions --> Folder Overlap...** groups the groups by the folder pair
+that explains them.
+
+Each row is one folder pair, with the number of files and the space they would free. Expanding a
+row lists the files themselves. **Mark These** marks exactly the files that row counted -- the
+number shown is the number marked, and nothing is deleted until you delete it.
+
+A pair is only shown when it explains most of what its folder contributes and covers more than a
+handful of files. Two folders that happen to share a few files are a coincidence rather than a
+pattern, and presenting that as one decision would invite acting on something that is not there.
+Duplicates no pair accounts for are listed separately rather than hidden, so nothing disappears
+from view.
+
+The pairing is reported at the level that says the most. Two subfolders both shadowed by the same
+backup are shown as the one folder pair above them; a folder whose duplicates all live in one
+place is shown against that place rather than generalised up to something uninformative.
+
+**About the direction.** Where you have marked a reference folder, dupeGuru knows which side you
+consider the original and shows an arrow. Where you have not, it chose the file to keep in each
+group by size, so neither folder is known to be the original -- the two are shown as equals
+instead, because an arrow there would be an answer the application invented rather than one you
+gave it.
+
 Deletion History
 ----------------
 
