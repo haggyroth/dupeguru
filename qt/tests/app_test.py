@@ -141,15 +141,21 @@ class TestResources:
     That is how an empty ``qt/dg_rc.py`` once produced a GUI with no icons at all while the
     build reported success. These fail instead. The resources are embedded and committed
     now, so unlike before there is no build step for these to depend on.
+
+    The tests that build a pixmap take ``qapp``. Qt requires a QGuiApplication to exist before
+    any QPixmap is constructed -- "QPixmap: Must construct a QGuiApplication before a QPixmap"
+    -- and without it the process segfaults rather than failing. These passed only because
+    some earlier test in the run happened to create the application first, which made them a
+    crash waiting on a change of ordering.
     """
 
-    def test_named_resources_load(self):
+    def test_named_resources_load(self, qapp):
         from qt import resources
 
         for name in ("logo_se", "plus", "minus", "error"):
             assert not resources.pixmap(name).isNull(), f"resource {name} did not load"
 
-    def test_every_declared_resource_loads(self):
+    def test_every_declared_resource_loads(self, qapp):
         """Guards the whole manifest, not a hand-picked few."""
         from qt import resources
 
@@ -262,6 +268,23 @@ class TestFileListCachePreference:
 
 class TestStyleSwitching:
     """qt/app.py:_set_style runs on every preferences change, on Windows."""
+
+    @pytest.fixture(autouse=True)
+    def restore_style(self, qapp):
+        """Put the application's style back afterwards.
+
+        QApplication.setStyle is process-wide, so a test that leaves a different style
+        installed changes the ground under every test that follows. That is not hypothetical:
+        leaving a foreign style in place segfaulted a later test that shows a dialog, and the
+        crash surfaced nowhere near the test responsible for it.
+        """
+        from qtpy.QtWidgets import QApplication, QStyleFactory
+
+        original = QApplication.style().objectName()
+        yield
+        style = QStyleFactory.create(original)
+        if style is not None:
+            QApplication.setStyle(style)
 
     def test_an_unavailable_style_falls_back_instead_of_unsetting_the_style(self, qapp):
         # QStyleFactory.create() returns None for a key this Qt build does not provide, and
