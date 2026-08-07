@@ -258,3 +258,40 @@ class TestFileListCachePreference:
         """The cache trades a missed in-place edit for speed, so it must be opt-in."""
         dgapp.prefs.reset()
         assert dgapp.prefs.cache_file_list is False
+
+
+class TestStyleSwitching:
+    """qt/app.py:_set_style runs on every preferences change, on Windows."""
+
+    def test_an_unavailable_style_falls_back_instead_of_unsetting_the_style(self, qapp):
+        # QStyleFactory.create() returns None for a key this Qt build does not provide, and
+        # QApplication.setStyle(None) is accepted silently -- no exception, no message, and an
+        # application left with an undefined style. "windowsvista" is exactly that case: a Qt 5
+        # name later versions do not always carry.
+        from qtpy.QtWidgets import QApplication, QStyleFactory
+
+        from qt.app import _apply_style
+
+        _apply_style("a style that does not exist")
+
+        assert QApplication.style() is not None
+        assert QStyleFactory.create("Fusion") is not None, "the fallback must exist everywhere"
+
+    def test_an_available_style_is_applied(self, qapp):
+        from qtpy.QtWidgets import QApplication
+
+        from qt.app import _apply_style
+
+        _apply_style("Fusion")
+        assert QApplication.style() is not None
+
+    def test_switching_twice_leaves_a_live_style(self, qapp):
+        # The crash signature was the *second* call: replacing a style destroys the first while
+        # widgets still reference it.
+        from qtpy.QtWidgets import QApplication
+
+        from qt.app import _apply_style
+
+        _apply_style("Fusion")
+        _apply_style("Fusion")
+        assert QApplication.style() is not None

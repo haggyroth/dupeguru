@@ -4,6 +4,7 @@
 # which should be included with this package. The terms are also available at
 # http://www.gnu.org/licenses/gpl-3.0.html
 
+import logging
 import sys
 import os.path as op
 
@@ -41,6 +42,25 @@ from qt.pe.photo import File as PlatSpecificPhoto
 from qt.tabbed_window import TabBarWindow, TabWindow
 
 tr = trget("ui")
+
+
+def _apply_style(name):
+    """Switch to the named Qt style, if it exists on this build.
+
+    QStyleFactory.create() returns None for a key the platform does not provide, and
+    QApplication.setStyle(None) is accepted without complaint -- it raises nothing and reports
+    nothing, leaving the application's style undefined. "windowsvista" is the case that
+    matters: it is a Qt 5 name that later Qt versions do not always carry.
+
+    This is applied on every preferences change, so getting it wrong is not a one-off. Falling
+    back to Fusion, which every Qt build has, keeps a real style installed instead.
+    """
+    style = QStyleFactory.create(name)
+    if style is None:
+        logging.debug("Qt style %r is not available on this build; using Fusion", name)
+        style = QStyleFactory.create("Fusion")
+    if style is not None:
+        QApplication.setStyle(style)
 
 
 class DupeGuru(QObject):
@@ -272,7 +292,7 @@ class DupeGuru(QObject):
         if not plat.ISWINDOWS:
             return
         if style == "dark":
-            QApplication.setStyle(QStyleFactory.create("Fusion"))
+            _apply_style("Fusion")
             palette = QApplication.style().standardPalette()
             palette.setColor(QPalette.ColorRole.Window, QColor(53, 53, 53))
             palette.setColor(QPalette.ColorRole.WindowText, Qt.GlobalColor.white)
@@ -295,7 +315,7 @@ class DupeGuru(QObject):
             palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Window, QColor(68, 68, 68))
             palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Highlight, QColor(68, 68, 68))
         else:
-            QApplication.setStyle(QStyleFactory.create("windowsvista" if plat.ISWINDOWS else "Fusion"))
+            _apply_style("windowsvista" if plat.ISWINDOWS else "Fusion")
             palette = QApplication.style().standardPalette()
         QToolTip.setPalette(palette)
         QApplication.setPalette(palette)
