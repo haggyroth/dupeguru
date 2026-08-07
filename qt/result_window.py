@@ -32,6 +32,7 @@ from qt.results_model import ResultsView
 from qt.stats_label import StatsLabel
 from qt.prioritize_dialog import PrioritizeDialog
 from qt.mark_dialog import MarkDialog
+from qt.folder_overlap_dialog import FolderOverlapDialog
 from qt.folder_rollup_dialog import FolderRollupDialog
 from qt.se.results_model import ResultsModel as ResultsModelStandard
 from qt.me.results_model import ResultsModel as ResultsModelMusic
@@ -84,6 +85,13 @@ class ResultWindow(QMainWindow):
                 "",
                 tr("Folder Overlap..."),
                 self.folderRollupTriggered,
+            ),
+            (
+                "actionFolderOverlapReport",
+                "",
+                "",
+                tr("Folder Overlap Report..."),
+                self.folderOverlapReportTriggered,
             ),
             (
                 "actionDeleteMarked",
@@ -265,6 +273,7 @@ class ResultWindow(QMainWindow):
         self.menuActions.addAction(self.actionReprioritize)
         self.menuActions.addSeparator()
         self.menuActions.addAction(self.actionFolderRollup)
+        self.menuActions.addAction(self.actionFolderOverlapReport)
         self.menuActions.addSeparator()
         self.menuActions.addAction(self.actionRemoveSelected)
         self.menuActions.addAction(self.actionIgnoreSelected)
@@ -432,6 +441,9 @@ class ResultWindow(QMainWindow):
 
     def folderRollupTriggered(self):
         FolderRollupDialog(self, self.app).exec()
+
+    def folderOverlapReportTriggered(self):
+        FolderOverlapDialog(self, self.app).exec()
 
     def deleteTriggered(self):
         self.app.model.delete_marked()

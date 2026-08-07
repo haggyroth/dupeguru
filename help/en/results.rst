@@ -197,6 +197,34 @@ group by size, so neither folder is known to be the original -- the two are show
 instead, because an arrow there would be an answer the application invented rather than one you
 gave it.
 
+Folder Overlap Report
+---------------------
+
+**Actions --> Folder Overlap Report...** answers a different question from the one above: not
+"what can I act on" but "what is the shape of this archive". For each scanned folder it reports
+how much of its **whole content** also exists somewhere else, and where.
+
+::
+
+    /Volumes/Photos/2023   100% of 437 files    /Volumes/Backup/2023 (437)
+    /Volumes/Backup         87% of 500 files    /Volumes/Photos/2023 (437)
+    /Users/k/Downloads      39% of 228 files    /Volumes/Photos/misc (88)
+
+There is nothing to press here but Close. It is for working out where to look before deciding
+anything; the deciding happens in the results list or in **Folder Overlap**.
+
+Note that the percentage counts everything in the folder, duplicated or not, which is what makes
+it different from the rollup's figures. A folder of a thousand files with ten duplicated is a
+confident folder pair in the rollup -- all ten resolve to the same place -- and 1% redundant
+here. Both are true; they answer different questions.
+
+Only folders dupeGuru actually scanned are listed. If you scanned ``Downloads`` but not the rest
+of your home folder, no figure is shown for the home folder, because a percentage of just the
+part that was looked at would be misleading rather than approximate.
+
+Folders duplicated in full are called out in the summary line. Those are the ones that could in
+principle be removed entirely, which is a stronger statement than "mostly duplicated".
+
 Deletion History
 ----------------
 
