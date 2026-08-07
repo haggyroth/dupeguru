@@ -15,7 +15,7 @@ from collections import defaultdict
 from hscommon.trans import tr
 from hscommon.jobprogress import job
 
-from core.engine import Match
+from core.engine import Match, MatchKind
 from core.pe.bktree import BKTree
 from core.pe.cache import colors_to_bytes
 from core.pe.cache_sqlite import SqliteCache
@@ -221,7 +221,7 @@ def prepare_pictures(pictures, cache_path, with_dimensions, match_rotated, j=job
 def get_match(first, second, percentage):
     if percentage < 0:
         percentage = 0
-    return Match(first, second, percentage)
+    return Match(first, second, percentage, kind=MatchKind.RESEMBLANCE)
 
 
 def getmatches(

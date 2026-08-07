@@ -44,6 +44,7 @@ SCAN_PREFERENCES = [
     "big_file_size_threshold",
     "full_verify",
     "cache_file_list",
+    "combine_picture_matching",
     "scan_tag_track",
     "scan_tag_artist",
     "scan_tag_album",

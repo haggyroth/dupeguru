@@ -58,9 +58,11 @@ MUSIC_ONLY_PREFS = [
     "word_weighting",
 ]
 PICTURE_ONLY_PREFS = ["match_scaled", "match_rotated"]
+#: Only standard mode offers this; picture mode already matches pictures.
+STANDARD_ONLY_PREFS = ["combine_picture_matching"]
 
 DIALOGS = {
-    "standard": (StandardPreferences, AppMode.STANDARD, SHARED_SCAN_PREFS),
+    "standard": (StandardPreferences, AppMode.STANDARD, SHARED_SCAN_PREFS + STANDARD_ONLY_PREFS),
     "music": (MusicPreferences, AppMode.MUSIC, SHARED_SCAN_PREFS + MUSIC_ONLY_PREFS),
     "picture": (PicturePreferences, AppMode.PICTURE, SHARED_SCAN_PREFS + PICTURE_ONLY_PREFS),
 }

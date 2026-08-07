@@ -133,9 +133,20 @@ class PreferencesDialog(PreferencesDialogBase):
         )
         self.verticalLayout_4.addWidget(self.ignoreHardlinkMatches)
         self.widgetsVLayout.addWidget(self.widget)
+        self._setupAddCheckbox("combinePictureMatchingBox", tr("Also find visually similar pictures"))
+        self.combinePictureMatchingBox.setToolTip(
+            tr(
+                "Additionally compare images by appearance, so a resized or re-encoded copy is "
+                "found as well as a byte-for-byte one. Slower: every image has to be decoded and "
+                "compared against the others, which a contents scan does not do."
+            )
+        )
+        self.widgetsVLayout.addWidget(self.combinePictureMatchingBox)
+
         self._setupBottomPart()
 
     def _load(self, prefs, setchecked, section):
+        setchecked(self.combinePictureMatchingBox, prefs.combine_picture_matching)
         setchecked(self.matchSimilarBox, prefs.match_similar)
         setchecked(self.wordWeightingBox, prefs.word_weighting)
         setchecked(self.ignoreSmallFilesBox, prefs.ignore_small_files)
@@ -155,6 +166,7 @@ class PreferencesDialog(PreferencesDialogBase):
         self.wordWeightingBox.setEnabled(word_based)
 
     def _save(self, prefs, ischecked):
+        prefs.combine_picture_matching = ischecked(self.combinePictureMatchingBox)
         prefs.match_similar = ischecked(self.matchSimilarBox)
         prefs.word_weighting = ischecked(self.wordWeightingBox)
         prefs.ignore_small_files = ischecked(self.ignoreSmallFilesBox)

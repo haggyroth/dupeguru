@@ -15,7 +15,7 @@ from hscommon.jobprogress import job
 from hscommon.util import dedupe, rem_file_ext, get_file_ext
 from hscommon.trans import tr
 
-from core import engine
+from core import combined_scan, engine
 from core.hash_cache import hashcachedb, hash_file_worker
 
 _BATCH_SIZE = 500  # rows written to hashcachedb per transaction
@@ -214,7 +214,9 @@ class Scanner:
             m = matches[i]
             first_digest = m.first.digest
             if first_digest and first_digest == m.second.digest:
-                verified[i] = engine.Match(m.first, m.second, m.percentage)
+                # Re-wrapped to clear `partial`; the kind is carried over rather than
+                # defaulted, or a verified content match would come out as metadata.
+                verified[i] = engine.Match(m.first, m.second, m.percentage, kind=m.kind)
             else:
                 verified[i] = None
                 discarded += 1
@@ -314,8 +316,32 @@ class Scanner:
             f.is_ref = False
         files = remove_dupe_paths(files)
         logging.info("Getting matches. Scan type: %d", self.scan_type)
-        matches = self._getmatches(files, j)
+        combining = self.combine_picture_matching and self.scan_type == ScanType.CONTENTS
+        if combining:
+            # Two matchers means two phases, and a Job hands out its budget once. Splitting it
+            # here gives each phase its own allowance -- without this the picture matcher's own
+            # start_subjob raises JobCountError, because content matching already spent it.
+            # Weighted toward pictures: decoding every image and comparing near-quadratically
+            # dwarfs a warm content scan, so an even split would show a bar that races to half
+            # and then appears to hang.
+            match_job = j.start_subjob([2, 8], tr("Looking for duplicate contents"))
+        else:
+            match_job = j
+        matches = self._getmatches(files, match_job)
         logging.info("Found %d matches" % len(matches))
+        if combining:
+            # Only alongside a contents scan. Merging resemblances into a filename or tag scan
+            # would mix two weak signals and call the result a duplicate.
+            picture_matches = combined_scan.picture_matches_over(
+                files,
+                match_job,
+                threshold=self.min_match_percentage,
+                match_scaled=self.match_scaled,
+                match_rotated=self.match_rotated,
+                cache_path=self.cache_path,
+            )
+            matches = combined_scan.merge_matches(matches, picture_matches)
+            logging.info("Found %d matches after picture matching" % len(matches))
         if self.full_verify:
             # Before any grouping, so a discarded false positive can't drag unrelated
             # files into a group with it.
@@ -384,5 +410,19 @@ class Scanner:
     large_size_threshold = 0
     big_file_size_threshold = 0
     full_verify = False
+    #: Also look for visually similar images during a standard scan. Off by default: picture
+    #: matching decodes every image and compares near-quadratically, measured at 15.9s against
+    #: 0.1s for the same file count, so it must be asked for. See core/combined_scan.py.
+    combine_picture_matching = False
+    #: Picture-matching knobs, declared on the base class rather than only on ScannerPE so a
+    #: standard scan combining picture matching can honour them. DupeGuru.start_scanning copies
+    #: an option onto the scanner only when it already has the attribute, so an option declared
+    #: only on the picture scanner is silently dropped in standard mode.
+    match_scaled = False
+    match_rotated = False
+    #: Where block signatures are cached. Declared here, not only on ScannerPE, because a
+    #: standard scan that also matches pictures needs somewhere to put them -- and reusing the
+    #: same cache means a later picture-mode scan does not recompute what this one worked out.
+    cache_path = None
     word_weighting = False
     include_exists_check = True
