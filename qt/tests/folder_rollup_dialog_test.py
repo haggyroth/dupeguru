@@ -31,6 +31,11 @@ from core.tests.base import NamedObject  # noqa: E402
 from qt.folder_rollup_dialog import FolderRollupDialog, describe_pair  # noqa: E402
 
 
+def native(path):
+    """A folder string as this platform writes it; see the note in the core rollup tests."""
+    return str(Path(path))
+
+
 def file_at(path, size=1000):
     path = Path(path)
     return NamedObject(name=path.name, size=size, folder=str(path.parent))
@@ -126,7 +131,7 @@ class TestMarkingIsThePromise:
         dialog, app = dialog_for(shadowed(20))
         dialog.markClicked()
         assert "20" in app.confirmed[0]
-        assert "/backup" in app.confirmed[0]
+        assert native("/backup") in app.confirmed[0]
         assert "Nothing is deleted yet" in app.confirmed[0]
 
 
@@ -199,7 +204,7 @@ class TestDirection:
         assert "↔" in described
 
     def test_a_reference_folder_reaches_the_pair(self, dialog_for):
-        dialog, _ = dialog_for(shadowed(20), reference_folders={"/photos"})
+        dialog, _ = dialog_for(shadowed(20), reference_folders={native("/photos")})
         assert dialog.selectedPair().direction_is_explicit is True
         assert "→" in dialog.pairTree.topLevelItem(0).text(0)
 

@@ -30,6 +30,15 @@ class FakeApp:
         self.options = {}
 
 
+def native(path):
+    """A folder string as this platform writes it.
+
+    The rollup reports whatever ``pathlib`` produces, so "/backup" is ``\\backup`` on Windows.
+    Comparing against a hardcoded POSIX string passes on macOS and Linux and fails there.
+    """
+    return str(Path(path))
+
+
 def file_at(path, size=1000):
     """A file object whose .path is the one given. NamedObject derives it from folder+name."""
     path = Path(path)
@@ -59,10 +68,10 @@ class TestCandidatePairs:
         # often at different depths on the two sides.
         pairs = list(candidate_pairs(Path("/backup/2023/a.jpg"), Path("/photos/2023/a.jpg")))
         assert set(pairs) == {
-            ("/backup/2023", "/photos/2023"),
-            ("/backup/2023", "/photos"),
-            ("/backup", "/photos/2023"),
-            ("/backup", "/photos"),
+            (native("/backup/2023"), native("/photos/2023")),
+            (native("/backup/2023"), native("/photos")),
+            (native("/backup"), native("/photos/2023")),
+            (native("/backup"), native("/photos")),
         }
 
     def test_folders_at_different_depths_still_pair(self):
@@ -70,19 +79,19 @@ class TestCandidatePairs:
         # nested /photos/set0 produces no usable pair at all -- only ("/", "/photos"), which
         # claims the filesystem root duplicates a folder.
         pairs = list(candidate_pairs(Path("/Downloads/a.jpg"), Path("/photos/set0/a.jpg")))
-        assert ("/Downloads", "/photos") in pairs
-        assert not any(dupe_folder == "/" or ref_folder == "/" for dupe_folder, ref_folder in pairs)
+        assert (native("/Downloads"), native("/photos")) in pairs
+        assert not any(dupe_folder == native("/") or ref_folder == native("/") for dupe_folder, ref_folder in pairs)
 
     def test_a_folder_never_pairs_with_its_own_ancestor(self):
         # "/photos duplicates /photos/2023" is not a statement about anything.
         pairs = list(candidate_pairs(Path("/photos/2023/a.jpg"), Path("/photos/2024/a.jpg")))
-        assert pairs == [("/photos/2023", "/photos/2024")]
+        assert pairs == [(native("/photos/2023"), native("/photos/2024"))]
 
     def test_a_shared_ancestor_ends_the_walk(self):
         # /media is common to both, and a folder does not duplicate itself. Reporting it would
         # claim the whole drive duplicates the whole drive.
         pairs = list(candidate_pairs(Path("/media/backup/a.jpg"), Path("/media/photos/a.jpg")))
-        assert pairs == [("/media/backup", "/media/photos")]
+        assert pairs == [(native("/media/backup"), native("/media/photos"))]
 
     def test_two_files_in_the_same_folder_explain_nothing(self):
         assert list(candidate_pairs(Path("/photos/a.jpg"), Path("/photos/a copy.jpg"))) == []
@@ -104,17 +113,17 @@ class TestCollapsing:
             shadowed(20, "/backup/2023", "/photos/2023") + shadowed(20, "/backup/2024", "/photos/2024")
         )
         rollup = build_rollup(results)
-        assert [(p.dupe_folder, p.ref_folder) for p in rollup.pairs] == [("/backup", "/photos")]
+        assert [(p.dupe_folder, p.ref_folder) for p in rollup.pairs] == [(native("/backup"), native("/photos"))]
         assert rollup.pairs[0].file_count == 40
 
     def test_the_rows_lead_with_the_most_space(self):
         results = results_with(shadowed(10, "/small", "/photos", start=0) + shadowed(10, "/big", "/photos", start=100))
         for group in results.groups:
             for dupe in group.dupes:
-                if str(dupe.path).startswith("/big"):
+                if str(dupe.path).startswith(native("/big")):
                     dupe.size = 100_000
         rollup = build_rollup(results)
-        assert rollup.pairs[0].dupe_folder == "/big"
+        assert rollup.pairs[0].dupe_folder == native("/big")
 
     def test_bytes_count_only_what_would_be_deleted(self):
         # The reference stays. Counting it would overstate the benefit, which is the number
@@ -148,7 +157,7 @@ class TestNotCollapsing:
         # exactly the useful statement.
         pairs = [(f"/photos/set{i % 6}/img{i}.jpg", f"/Downloads/img{i}.jpg") for i in range(30)]
         rollup = build_rollup(results_with(pairs))
-        assert [(p.dupe_folder, p.ref_folder) for p in rollup.pairs] == [("/Downloads", "/photos")]
+        assert [(p.dupe_folder, p.ref_folder) for p in rollup.pairs] == [(native("/Downloads"), native("/photos"))]
 
     def test_unrelated_folders_never_pair(self):
         results = results_with([(f"/a{i}/f.jpg", f"/b{i}/f.jpg") for i in range(20)])
@@ -238,7 +247,9 @@ class TestDirection:
         # Rolling up is only worth it where it merges genuinely different subsets.
         pairs = [(f"/Volumes/Photos/misc/p{i}.jpg", f"/Users/k/Downloads/p{i}.jpg") for i in range(20)]
         rollup = build_rollup(results_with(pairs))
-        assert [(p.dupe_folder, p.ref_folder) for p in rollup.pairs] == [("/Users/k/Downloads", "/Volumes/Photos/misc")]
+        assert [(p.dupe_folder, p.ref_folder) for p in rollup.pairs] == [
+            (native("/Users/k/Downloads"), native("/Volumes/Photos/misc"))
+        ]
 
     def test_a_pair_claims_no_direction_by_default(self):
         # dupeGuru picks the reference by size unless told otherwise, so which side is the
@@ -251,13 +262,13 @@ class TestDirection:
         # /photos/2023 there is nothing to gain by generalising to /photos, so the specific
         # pair is the one shown.
         results = results_with(shadowed(10))
-        rollup = build_rollup(results, is_reference_folder=lambda path: path == "/photos/2023")
-        assert rollup.pairs[0].ref_folder == "/photos/2023"
+        rollup = build_rollup(results, is_reference_folder=lambda path: path == native("/photos/2023"))
+        assert rollup.pairs[0].ref_folder == native("/photos/2023")
         assert rollup.pairs[0].direction_is_explicit is True
 
     def test_only_the_folder_the_user_marked_counts(self):
         results = results_with(shadowed(10))
-        rollup = build_rollup(results, is_reference_folder=lambda path: path == "/somewhere/else")
+        rollup = build_rollup(results, is_reference_folder=lambda path: path == native("/somewhere/else"))
         assert rollup.pairs[0].direction_is_explicit is False
 
 
