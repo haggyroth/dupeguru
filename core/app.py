@@ -17,7 +17,6 @@ import sys
 import shutil
 from pathlib import Path
 
-from send2trash import send2trash
 from hscommon.jobprogress import job
 from hscommon.notify import Broadcaster
 from hscommon.conflict import smart_move, smart_copy
@@ -34,7 +33,9 @@ from core.ignore import IgnoreList
 from core.exclude import ExcludeDict as ExcludeList
 from core.scanner import ScanType
 from core.gui.deletion_options import DeletionOptions
+from core.deletion_log import DeletionLog, DeletionRecord, default_log_path
 from core.scan_profile import ProfileStore, ScanProfile, ScanProfileError
+from core.trash import trash_file
 from core.gui.details_panel import DetailsPanel
 from core.gui.directory_tree import DirectoryTree
 from core.gui.ignore_list_dialog import IgnoreListDialog
@@ -270,6 +271,7 @@ class DupeGuru(Broadcaster):
         hashcachedb.connect(op.join(self.appdata, "hash_cache2.db"))
         self.directories = directories.Directories(self.exclude_list)
         self.scan_profiles = ProfileStore()
+        self.deletion_log = DeletionLog(default_log_path(self.appdata))
         self.results = results.Results(self)
         self.ignore_list = IgnoreList()
         # In addition to "app-level" options, this dictionary also holds options that will be
@@ -353,12 +355,20 @@ class DupeGuru(Broadcaster):
         return cmp_value(group.ref, key)
 
     def _do_delete(self, j, link_deleted, use_hardlinks, direct_deletion, use_clones=False):
+        # One run per press of Delete, so the log reads as the operations the user performed
+        # rather than as a flat list of files.
+        run = self.deletion_log.start_run(permanent=direct_deletion)
+
         def op(dupe):
             j.add_progress()
-            return self._do_delete_dupe(dupe, link_deleted, use_hardlinks, direct_deletion, use_clones)
+            return self._do_delete_dupe(dupe, link_deleted, use_hardlinks, direct_deletion, use_clones, run)
 
         j.start_job(self.results.mark_count)
-        self.results.perform_on_marked(op, True)
+        try:
+            self.results.perform_on_marked(op, True)
+        finally:
+            # A cancelled or wholly failed deletion should not leave an empty entry behind.
+            self.deletion_log.discard_if_empty(run)
 
     @staticmethod
     def _dirs_span_multiple_devices(directories):
@@ -373,7 +383,7 @@ class DupeGuru(Broadcaster):
                 return True
         return False
 
-    def _do_delete_dupe(self, dupe, link_deleted, use_hardlinks, direct_deletion, use_clones=False):
+    def _do_delete_dupe(self, dupe, link_deleted, use_hardlinks, direct_deletion, use_clones=False, run=None):
         # Shared with the planner: see check_deletable. Keep the decision there, not here.
         status, message = check_deletable(dupe.path, dupe.size, dupe.mtime)
         if status == DeleteStatus.GONE:
@@ -400,6 +410,12 @@ class DupeGuru(Broadcaster):
                 self._make_replacement_link(ref.path, link_tmp, use_hardlinks)
 
         logging.debug("Sending '%s' to trash", dupe.path)
+        # Recorded before anything is removed. A record for a file that survives is harmless --
+        # restore checks and reports it -- whereas a removed file with no record is an undo the
+        # user believes they have and does not.
+        record = self._deletion_record(dupe, direct_deletion)
+        if run is not None:
+            self.deletion_log.record(run, record)
         try:
             if direct_deletion:
                 if op.isdir(str_path):
@@ -407,7 +423,11 @@ class DupeGuru(Broadcaster):
                 else:
                     os.remove(str_path)
             else:
-                send2trash(str_path)  # Raises OSError when there's a problem
+                # Unlike send2trash, this reports where the file went, which is what makes a
+                # restore possible at all. See core.trash.
+                record.destination = trash_file(str_path)
+                if run is not None:
+                    self.deletion_log.save()
         except Exception:
             if link_tmp is not None:
                 try:
@@ -420,6 +440,21 @@ class DupeGuru(Broadcaster):
             # The original is gone, so this moves the link into its place.
             os.replace(str(link_tmp), str_path)
         self.clean_empty_dirs(dupe.path.parent)
+
+    def _deletion_record(self, dupe, direct_deletion):
+        """Describe *dupe* for the log, including what it duplicated."""
+        reference_path = ""
+        group = self.results.get_group_of_duplicate(dupe)
+        if group is not None and group.ref is not None and group.ref is not dupe:
+            reference_path = str(group.ref.path)
+        digest = getattr(dupe, "digest", b"")
+        return DeletionRecord(
+            original_path=dupe.path,
+            size=dupe.size,
+            digest=digest.hex() if isinstance(digest, bytes) else str(digest or ""),
+            reference_path=reference_path,
+            permanent=direct_deletion,
+        )
 
     @staticmethod
     def _unused_link_path(str_path):
@@ -883,6 +918,7 @@ class DupeGuru(Broadcaster):
         """
         self.directories.load_from_file(op.join(self.appdata, "last_directories.xml"))
         self.scan_profiles.load_from_file(op.join(self.appdata, "scan_profiles.xml"))
+        self.deletion_log.load()
         self.notify("directories_changed")
         p = op.join(self.appdata, "ignore_list.xml")
         self.ignore_list.load_from_xml(p)
