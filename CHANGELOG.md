@@ -9,6 +9,50 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [4.11.0] - 2026-08-07
+
+### Added
+
+- **Replace duplicates with copy-on-write clones instead of deleting them** (Deletion Options →
+  "Replace duplicates with copy-on-write clones"). Both files remain, both keep their own name
+  and permissions, and both stay independently editable — changing one does not change the
+  other. The space is still reclaimed, because the two share it until one is written to. This is
+  the only deletion option where nothing is lost. Available on APFS (macOS) and Btrfs or XFS
+  (Linux); elsewhere the option is disabled rather than falling back to something destructive.
+  Only offered for byte-for-byte identical files, so a picture-mode match that merely looks the
+  same is skipped and reported rather than replaced with a different image.
+- **Preview a deletion before running it** (Deletion Options → "Preview..."). Shows how many
+  files, how much space, and what would happen to each one — sent to trash, deleted permanently,
+  replaced by a clone, or skipped and why. Every marked file is re-checked against the same
+  conditions the deletion itself applies, so the preview cannot promise something that is then
+  refused. The command line has had this as `--plan`; the two now share one calculation and one
+  set of wording.
+- **Elapsed time and speed while scanning**, with an estimate of the time remaining once the
+  pace has settled. A slow scan and a hung scan previously looked identical: collecting a few
+  hundred thousand files from a cold external drive takes tens of minutes at a few hundred files
+  per second, with nothing on screen to distinguish it from a wedged process. The estimate is
+  withheld until the rate is steady and withdrawn again if it stops being steady, because a
+  confidently wrong "2 minutes remaining" shown for half an hour is worse than none. Also on the
+  command line: `--verbose` shows it inline, and `--progress-json` carries `elapsed_seconds`,
+  `files_per_second` and `remaining_seconds` as fields.
+- **Named scan profiles** (File → Save Scan Profile..., File → Scan Profiles...). Saves the
+  folders, their Normal/Reference/Excluded states, the mode, the scan type and the scanning
+  options together under a name. Loading one replaces the current selection rather than adding
+  to it. Only settings that affect what a scan finds are stored, so loading a profile will not
+  restyle the application. A profile whose folders no longer exist — an unplugged drive — is
+  marked as such before you load it, and reports what it skipped after.
+- The collection message now says whether folders are being **read or remembered**, which
+  distinguishes the fast path from the slow one while it is happening.
+
+### Fixed
+
+- **dupeGuru would not start at all on Windows.** The clone support added in this release
+  imported a module that does not exist there, and because the application core imports it, the
+  failure happened before anything could be displayed.
+- **A crash when applying preferences after a scan.** Closing the progress window destroyed its
+  labels while leaving references to them behind, and applying preferences walks every widget in
+  the application. On Windows this was an access violation that killed the process outright.
+
 ## [4.10.0] - 2026-08-05
 
 ### Added
@@ -739,7 +783,8 @@ fork no longer routes anyone or anything upstream, and CI runs for the first tim
 
 See `git log` for changes prior to this changelog.
 
-[Unreleased]: https://github.com/haggyroth/dupeguru/compare/v4.10.0...HEAD
+[Unreleased]: https://github.com/haggyroth/dupeguru/compare/v4.11.0...HEAD
+[4.11.0]: https://github.com/haggyroth/dupeguru/compare/v4.10.0...v4.11.0
 [4.10.0]: https://github.com/haggyroth/dupeguru/compare/v4.9.0...v4.10.0
 [4.9.0]: https://github.com/haggyroth/dupeguru/compare/v4.8.0...v4.9.0
 [4.8.0]: https://github.com/haggyroth/dupeguru/compare/v4.7.1...v4.8.0

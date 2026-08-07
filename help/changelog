@@ -1,3 +1,11 @@
+=== 4.11.0 (2026-08-07)
+* Replace duplicates with copy-on-write clones, reclaiming the space without losing either file
+* Preview a deletion before running it, showing what would be removed, what would be skipped and why
+* Show elapsed time and speed while scanning, and an estimate of the time left once one can be trusted
+* Save a scan configuration under a name and load it back, folders and settings together
+* Say whether folders are being read or remembered while collecting them
+* Fix the application failing to start on Windows
+
 === 4.10.0 (2026-08-05)
 * Optionally remember folder listings and picture comparisons between scans, so rescanning an unchanged drive is near-instant
 * Fix duplicate folders being impossible to delete
