@@ -19,6 +19,10 @@ Output formats:
              Suitable for streaming large result sets through jq or similar tools.
              Each group line: {"type":"group","reference":{...},"duplicates":[...]}
              Final line:      {"type":"stats","groups":N,...}
+    --sort-by
+             Group order: "found" (scanner order, default) or "reclaimable" (most bytes
+             freed first). Every group carries reclaimable_bytes, and stats carry the
+             cumulative curve, so a review can stop once the curve flattens.
 
 Progress (stderr):
     --verbose        Human-readable progress messages.
@@ -62,7 +66,8 @@ from core.app import AppMode, DeleteStatus, DupeGuru, check_deletable
 from core import sensitive_paths
 from core.confidence import Confidence, classify_group
 from core.deletion_plan import DELETE_STATUS_REASON as _DELETE_STATUS_REASON
-from core.deletion_plan import DeletionPlan, build_plan, device_of as _device_of, plan_entry as _plan_entry
+from core.deletion_plan import DeletionPlan, Reclaimable, build_plan, reclaimable_of
+from core.deletion_plan import device_of as _device_of, plan_entry as _plan_entry
 from core.deletion_plan import summarize_plan
 from core.directories import AlreadyThereError, DirectoryState, InvalidPathError
 from core.scanner import ScanType
@@ -253,6 +258,48 @@ def _run_scan(app: DupeGuru, verbose: bool, progress_json: bool = False) -> None
         print(file=sys.stderr)  # end the \r progress line
 
 
+# --- Reclaimable space -----------------------------------------------------
+
+
+def _group_reclaimable(group_dict: dict) -> Reclaimable:
+    """Reclaimable bytes of one serialised group: every duplicate, never the reference."""
+    return reclaimable_of((d["size"], d["partial_match"]) for d in group_dict["duplicates"])
+
+
+# Cumulative checkpoints for the "review N groups and stop" curve. Space freed is usually
+# Pareto-distributed, so the interesting part is the head of the list.
+_CUMULATIVE_CHECKPOINTS = (10, 20, 50, 100, 500)
+
+
+def cumulative_curve(reclaimables: list[int]) -> list[dict]:
+    """Running total of reclaimable bytes over groups already sorted best-first.
+
+    Answers "how much do I get for reviewing the first N groups", which is what turns
+    "review 5,723 groups" into "review 20 and stop when the curve flattens".
+    """
+    total = sum(reclaimables)
+    checkpoints = [n for n in _CUMULATIVE_CHECKPOINTS if n < len(reclaimables)]
+    if reclaimables:
+        checkpoints.append(len(reclaimables))
+
+    curve: list[dict] = []
+    running = 0
+    index = 0
+    for stop in checkpoints:
+        while index < stop:
+            running += reclaimables[index]
+            index += 1
+        curve.append(
+            {
+                "groups": stop,
+                "reclaimable_bytes": running,
+                # Guarded: a result set of only zero-byte files would divide by zero.
+                "fraction": (running / total) if total else 0.0,
+            }
+        )
+    return curve
+
+
 # --- Result serialisation --------------------------------------------------
 
 
@@ -294,58 +341,78 @@ def _group_to_dict(group) -> dict:
     }
 
 
-def _serialise_results(app: DupeGuru) -> dict:
-    """Convert scan results to a plain dict suitable for JSON output."""
-    groups_out = []
-    total_dupe_count = 0
-    total_dupe_size = 0
-    total_partial = 0
+def _annotate_reclaimable(group_dict: dict) -> dict:
+    """Attach this group's reclaimable bytes so the number travels with the group."""
+    reclaimable = _group_reclaimable(group_dict)
+    group_dict["reclaimable_bytes"] = reclaimable.total_bytes
+    group_dict["reclaimable_partial_bytes"] = reclaimable.partial_bytes
+    return group_dict
 
-    for group in app.results.groups:
-        g = _group_to_dict(group)
-        groups_out.append(g)
-        total_dupe_count += len(g["duplicates"])
-        total_dupe_size += sum(d["size"] for d in g["duplicates"])
-        total_partial += sum(1 for d in g["duplicates"] if d["partial_match"])
 
+def _reclaimable_rank(group_dict: dict) -> tuple[int, int]:
+    """Sort key for ``--sort-by reclaimable``: total bytes, then confirmed bytes.
+
+    Total bytes lead, with confirmed bytes only breaking ties. Ranking by confirmed bytes
+    first was the obvious alternative and it is worse: it buries a 5 GB sampled-only group
+    beneath a 10-byte certain one, which is not an order anyone wants to review. Partial
+    bytes are reported per group and split out in the stats instead, so the uncertainty is
+    visible where it matters -- the headline figure -- without distorting the ranking.
+    """
+    return (
+        group_dict["reclaimable_bytes"],
+        group_dict["reclaimable_bytes"] - group_dict["reclaimable_partial_bytes"],
+    )
+
+
+def _ordered_group_dicts(app: DupeGuru, sort_by: str) -> list[dict]:
+    """Serialised groups, annotated with reclaimable bytes, in the requested order.
+
+    ``found`` preserves the scanner's own order. ``reclaimable`` ranks by benefit, which is
+    not the same as ranking by file size: two 4 GB files reclaim 4 GB, six 700 MB files
+    reclaim 3.5 GB, so sorting by size ranks the wrong one higher.
+    """
+    groups = [_annotate_reclaimable(_group_to_dict(group)) for group in app.results.groups]
+    if sort_by == "reclaimable":
+        groups.sort(key=_reclaimable_rank, reverse=True)
+    return groups
+
+
+def _results_stats(app: DupeGuru, groups: list[dict]) -> dict:
+    """Stats shared by the JSON and ndjson emitters, computed over the emitted order."""
+    per_group = [_group_reclaimable(g) for g in groups]
+    totals = reclaimable_of((r.total_bytes, False) for r in per_group)
+    partial_bytes = sum(r.partial_bytes for r in per_group)
     return {
-        "groups": groups_out,
-        "stats": {
-            "groups": len(groups_out),
-            "total_duplicates": total_dupe_count,
-            "total_duplicate_size_bytes": total_dupe_size,
-            "partial_matches": total_partial,
-            "discarded_files": app.discarded_file_count,
-        },
+        "groups": len(groups),
+        "total_duplicates": sum(len(g["duplicates"]) for g in groups),
+        "total_duplicate_size_bytes": totals.total_bytes,
+        "partial_matches": sum(1 for g in groups for d in g["duplicates"] if d["partial_match"]),
+        "discarded_files": app.discarded_file_count,
+        # Reclaimable equals total_duplicate_size_bytes by construction (the reference always
+        # stays); it is named explicitly because that equality is a fact worth stating rather
+        # than a coincidence a reader has to rederive.
+        "total_reclaimable_bytes": totals.total_bytes,
+        "reclaimable_partial_bytes": partial_bytes,
+        "confirmed_reclaimable_bytes": totals.total_bytes - partial_bytes,
+        "cumulative": cumulative_curve([r.total_bytes for r in per_group]),
     }
 
 
-def _emit_ndjson(app: DupeGuru, out) -> tuple[int, int, int]:
-    """Write one JSON line per group then a stats line; return (groups, dupes, dupe_bytes)."""
-    total_dupe_count = 0
-    total_dupe_size = 0
-    total_partial = 0
-    group_count = 0
+def _serialise_results(app: DupeGuru, sort_by: str = "found") -> dict:
+    """Convert scan results to a plain dict suitable for JSON output."""
+    groups_out = _ordered_group_dicts(app, sort_by)
+    return {"groups": groups_out, "stats": _results_stats(app, groups_out)}
 
-    for group in app.results.groups:
-        g = _group_to_dict(group)
-        dupe_size = sum(d["size"] for d in g["duplicates"])
-        total_dupe_count += len(g["duplicates"])
-        total_dupe_size += dupe_size
-        total_partial += sum(1 for d in g["duplicates"] if d["partial_match"])
-        group_count += 1
+
+def _emit_ndjson(app: DupeGuru, out, sort_by: str = "found") -> tuple[int, int, int]:
+    """Write one JSON line per group then a stats line; return (groups, dupes, dupe_bytes)."""
+    groups_out = _ordered_group_dicts(app, sort_by)
+    for g in groups_out:
         print(json.dumps({"type": "group", **g}, ensure_ascii=False), file=out)
 
-    stats = {
-        "type": "stats",
-        "groups": group_count,
-        "total_duplicates": total_dupe_count,
-        "total_duplicate_size_bytes": total_dupe_size,
-        "partial_matches": total_partial,
-        "discarded_files": app.discarded_file_count,
-    }
+    stats = {"type": "stats", **_results_stats(app, groups_out)}
     print(json.dumps(stats, ensure_ascii=False), file=out)
-    return group_count, total_dupe_count, total_dupe_size
+    return stats["groups"], stats["total_duplicates"], stats["total_duplicate_size_bytes"]
 
 
 # --- Deletion helpers -------------------------------------------------------
@@ -889,6 +956,17 @@ def _build_parser() -> argparse.ArgumentParser:
     # --- Output format -------------------------------------------------------
     fmt = parser.add_argument_group("output format")
     fmt.add_argument(
+        "--sort-by",
+        choices=("found", "reclaimable"),
+        default="found",
+        help=(
+            "Group order. 'found' keeps the scanner's order (default). 'reclaimable' ranks "
+            "by the bytes deleting a group would actually free, which is not the same as "
+            "file size: two 4 GB files reclaim 4 GB, six 700 MB files reclaim 3.5 GB. "
+            "Stats always carry the cumulative curve so you can stop once it flattens."
+        ),
+    )
+    fmt.add_argument(
         "--ndjson",
         action="store_true",
         help=(
@@ -1424,7 +1502,7 @@ def main(argv=None) -> int:
         if args.output:
             try:
                 with open(args.output, "w", encoding="utf-8") as f:
-                    group_count, _, _ = _emit_ndjson(app, f)
+                    group_count, _, _ = _emit_ndjson(app, f, args.sort_by)
                 if args.verbose:
                     print(f"Results written to {args.output}", file=sys.stderr)
             except OSError as exc:
@@ -1432,9 +1510,9 @@ def main(argv=None) -> int:
                 app.close()
                 return EXIT_SCAN_ERROR
         else:
-            group_count, _, _ = _emit_ndjson(app, sys.stdout)
+            group_count, _, _ = _emit_ndjson(app, sys.stdout, args.sort_by)
     else:
-        result = _serialise_results(app)
+        result = _serialise_results(app, args.sort_by)
         json_output = json.dumps(result, indent=2, ensure_ascii=False)
         if args.output:
             try:

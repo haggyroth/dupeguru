@@ -33,6 +33,42 @@ DELETE_STATUS_REASON = {
 }
 
 
+class Reclaimable(NamedTuple):
+    """Bytes a deletion would actually free, split by how the match was confirmed.
+
+    Reclaimable is NOT group size: the reference stays, so only the duplicates count.
+    Getting that wrong overstates the benefit, which is the error that erodes trust in the
+    number.
+
+    ``partial_bytes`` is carried separately rather than folded in, because a sampled-hash
+    match is a probable duplicate, not a certain one. Counting those bytes in the headline
+    would inflate it with space that might not be duplicated at all.
+    """
+
+    total_bytes: int  # bytes freed by removing these files, partial matches included
+    partial_bytes: int  # of those, confirmed only by a sampled hash
+
+    @property
+    def confirmed_bytes(self) -> int:
+        """Bytes backed by a full content comparison -- the figure safe to headline."""
+        return self.total_bytes - self.partial_bytes
+
+
+def reclaimable_of(candidates) -> Reclaimable:
+    """Total reclaimable bytes over (size, is_partial) pairs.
+
+    One summation for every caller -- the CLI's results serialisation and ndjson emitter, and
+    any front end reporting a plan -- so the ordering the user sees and the bytes a deletion
+    promises cannot drift apart.
+    """
+    total = partial = 0
+    for size, is_partial in candidates:
+        total += size
+        if is_partial:
+            partial += size
+    return Reclaimable(total_bytes=total, partial_bytes=partial)
+
+
 class DeletionPlan(NamedTuple):
     """What --delete would actually do, computed without deleting anything."""
 
