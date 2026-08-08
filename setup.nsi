@@ -249,6 +249,11 @@ Section "Uninstall"
   ; property of the build machine, and naming the wrong one strands the runtime.
   RMDir /r "$INSTDIR\_internal"
 
+  ; The command-line build, a separate PyInstaller tree with its own _internal. Without this
+  ; an uninstall leaves ~24 MB behind and $INSTDIR never becomes empty, so the RMDir at the
+  ; end silently fails and the install directory survives.
+  RMDir /r "$INSTDIR\cli"
+
   ; Layout used by PyInstaller 5.x and earlier. Kept so that uninstalling over an
   ; install produced by <= 4.7.0 still cleans up; no-ops on a current install.
   RMDir /r "$INSTDIR\core"

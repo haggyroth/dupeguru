@@ -77,9 +77,14 @@ try:
         return folder
 
 except ImportError:
-    # We're either running tests, and these functions don't matter much or we're in a really
-    # weird situation. Let's just have dummy fallbacks.
-    logging.warning("Can't setup desktop functions!")
+    # No Qt binding. Three ordinary situations, none of them alarming: the test suite, a
+    # source checkout without a GUI binding, and the packaged command-line build, which
+    # excludes Qt deliberately -- it is 117 MB of it, needed only to decode images.
+    #
+    # Logged at debug rather than warning because of that third case. Opening a file manager
+    # is not something a command-line scan ever does, and a warning on every single
+    # invocation is noise in exactly the tool most likely to be run in a loop.
+    logging.debug("No Qt binding available; desktop integration falls back to no-ops")
 
     def _open_url(url: str) -> None:
         # Dummy for tests
