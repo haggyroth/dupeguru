@@ -1,3 +1,7 @@
+=== 4.16.0 (2026-08-08)
+* Prioritize photos by when they were taken, not when the file was written
+* Order command-line results by the space deleting them would actually free
+
 === 4.15.0 (2026-08-08)
 * Include the command-line scanner in the application download, on macOS and Windows
 * Add a --version flag to the command line

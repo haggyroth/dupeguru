@@ -9,6 +9,32 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [4.16.0] - 2026-08-08
+
+### Added
+
+- **EXIF Timestamp as a re-prioritization criterion** in picture mode, ordering photos by when
+  they were taken rather than when the file was last written. Copying, exporting, syncing and
+  restoring from a backup all reset the modification date, so the copy routinely looks newer
+  than the original and "Modification (Oldest)" keeps the wrong file; the capture date does not
+  move. The argument reads Newest/Oldest rather than Highest/Lowest, and photos with no usable
+  capture date — screenshots, scans, cameras whose clock was never set — sort last under both
+  rather than being treated as the oldest photograph ever taken. Thanks to @dchaudhari7177.
+
+- **`--sort-by reclaimable`** on the command line, ranking groups by the space deleting them
+  would actually free, so the biggest wins come first instead of being scattered through
+  thousands of groups. That is not the same as ranking by file size: reclaimable space is what
+  the *duplicates* free, since the reference stays. Every group carries `reclaimable_bytes`,
+  with the portion matched only on a sampled hash split out separately, and the statistics carry
+  a cumulative curve — whichever order was asked for — so a review can stop once it flattens.
+  Thanks to @dchaudhari7177.
+
+### Documentation
+
+- Documented both of the above, along with `--version` and the bundled command line from
+  4.15.0. Backfilled the 4.14.0, 4.14.1 and 4.15.0 entries, which the release process had been
+  writing to the in-application changelog only.
+
 ## [4.15.0] - 2026-08-08
 
 ### Added
@@ -929,7 +955,8 @@ fork no longer routes anyone or anything upstream, and CI runs for the first tim
 
 See `git log` for changes prior to this changelog.
 
-[Unreleased]: https://github.com/haggyroth/dupeguru/compare/v4.15.0...HEAD
+[Unreleased]: https://github.com/haggyroth/dupeguru/compare/v4.16.0...HEAD
+[4.16.0]: https://github.com/haggyroth/dupeguru/compare/v4.15.0...v4.16.0
 [4.15.0]: https://github.com/haggyroth/dupeguru/compare/v4.14.1...v4.15.0
 [4.14.1]: https://github.com/haggyroth/dupeguru/compare/v4.14.0...v4.14.1
 [4.14.0]: https://github.com/haggyroth/dupeguru/compare/v4.13.0...v4.14.0
