@@ -22,15 +22,12 @@ from core.engine import Group, Match  # noqa: E402
 from core.folder_overlap import FolderOverlap, count_files_per_folder  # noqa: E402
 from core.results import Results  # noqa: E402
 from core.tests.base import NamedObject  # noqa: E402
+from hscommon.testutil import native  # noqa: E402
 from qt.folder_overlap_dialog import (  # noqa: E402
     FolderOverlapDialog,
     describe_destinations,
     describe_redundancy,
 )
-
-
-def native(path):
-    return str(Path(path))
 
 
 def file_at(path):

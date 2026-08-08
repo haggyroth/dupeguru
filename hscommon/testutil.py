@@ -6,12 +6,33 @@
 # which should be included with this package. The terms are also available at
 # http://www.gnu.org/licenses/gpl-3.0.html
 
+from pathlib import Path
+
 import pytest
 
 
 def eq_(a, b, msg=None):
     __tracebackhide__ = True
     assert a == b, msg or "{!r} != {!r}".format(a, b)
+
+
+def native(path):
+    """A folder string as this platform writes it.
+
+    For assertions that compare against output holding real paths. ``Path("/one")`` prints as
+    ``\\one`` on Windows, so a POSIX-looking literal in the expected value passes on macOS and
+    Linux and fails only in the Windows CI job -- which has happened twice, in #122 and in the
+    first CI run of #156.
+
+    Use it on the *expected* side, wherever a test builds a path literal and compares it to
+    something a path was rendered into::
+
+        assert native("/one") in message
+
+    Not needed when both sides come from ``Path`` objects, or when the literal is only ever an
+    input rather than something to match against.
+    """
+    return str(Path(path))
 
 
 def callcounter():

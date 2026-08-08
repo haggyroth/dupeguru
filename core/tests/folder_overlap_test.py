@@ -24,11 +24,7 @@ from core.folder_overlap import (
 )
 from core.results import Results
 from core.tests.base import NamedObject
-
-
-def native(path):
-    """A folder string as this platform writes it."""
-    return str(Path(path))
+from hscommon.testutil import native
 
 
 def file_at(path, size=1000):

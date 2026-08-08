@@ -23,20 +23,12 @@ from core.engine import Group, Match
 from core.folder_rollup import MIN_FILES, MIN_SHARE, Rollup, build_rollup, candidate_pairs
 from core.results import Results
 from core.tests.base import NamedObject
+from hscommon.testutil import native
 
 
 class FakeApp:
     def __init__(self):
         self.options = {}
-
-
-def native(path):
-    """A folder string as this platform writes it.
-
-    The rollup reports whatever ``pathlib`` produces, so "/backup" is ``\\backup`` on Windows.
-    Comparing against a hardcoded POSIX string passes on macOS and Linux and fails there.
-    """
-    return str(Path(path))
 
 
 def file_at(path, size=1000):
