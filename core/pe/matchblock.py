@@ -15,10 +15,11 @@ from collections import defaultdict
 from hscommon.trans import tr
 from hscommon.jobprogress import job
 
-from core.engine import Match
+from core.engine import Match, MatchKind
 from core.pe.bktree import BKTree
 from core.pe.cache import colors_to_bytes
 from core.pe.cache_sqlite import SqliteCache
+from core.pe import match_cache as match_cache_module
 
 MIN_ITERATIONS = 3
 BLOCK_COUNT_PER_SIDE = 15
@@ -135,7 +136,10 @@ def prepare_pictures(pictures, cache_path, with_dimensions, match_rotated, j=job
     # MemoryError happens when trying to read an image file, which is freed from memory by the
     # time that MemoryError is raised.
     cache = get_cache(cache_path)
-    cache.purge_outdated()
+    # Scoped to the directories actually being scanned. Unscoped, this re-stats every
+    # directory the cache has ever held, which makes the cost grow with usage history and
+    # drags an unrelated slow or unmounted volume into every scan (issue #93).
+    cache.purge_outdated(scoped_to={str(p.path.parent) for p in pictures})
     prepared = []  # only pictures for which there was no error getting blocks
 
     # Decoding and hashing images is the dominant cost of a first scan and is entirely
@@ -217,10 +221,12 @@ def prepare_pictures(pictures, cache_path, with_dimensions, match_rotated, j=job
 def get_match(first, second, percentage):
     if percentage < 0:
         percentage = 0
-    return Match(first, second, percentage)
+    return Match(first, second, percentage, kind=MatchKind.RESEMBLANCE)
 
 
-def getmatches(pictures, cache_path, threshold, match_scaled=False, match_rotated=False, j=job.nulljob):
+def getmatches(
+    pictures, cache_path, threshold, match_scaled=False, match_rotated=False, j=job.nulljob, match_cache=None
+):
     """Return a list of Match objects for pictures whose block signatures are
     similar enough to meet *threshold* (0–100).
 
@@ -232,7 +238,20 @@ def getmatches(pictures, cache_path, threshold, match_scaled=False, match_rotate
     match_scaled : if True, skip dimension checks (scaled duplicates allowed).
     match_rotated : if True, compare each picture's 8 rotated block sets
                     against every other picture's orientation-0 blocks.
+    match_cache : optional core.pe.match_cache.MatchCache. Matching is 99% of a warm picture
+                  rescan once the block cache has removed the decoding cost (issue #28), and
+                  nothing else persists it. A hit returns the stored set; anything that could
+                  change that set changes the key, so a hit is only ever served to an
+                  identical scan.
     """
+    scan_key = None
+    if match_cache is not None:
+        scan_key = match_cache_module.compute_key(pictures, threshold, match_scaled, match_rotated)
+        cached = match_cache.get(scan_key, pictures)
+        if cached is not None:
+            logging.info("Reusing %d cached picture matches", len(cached))
+            j.set_progress(100, tr("Reusing previous match results"))
+            return cached
     j = j.start_subjob([3, 7])
     pictures = prepare_pictures(pictures, cache_path, not match_scaled, match_rotated, j=j)
 
@@ -345,5 +364,8 @@ def getmatches(pictures, cache_path, threshold, match_scaled=False, match_rotate
         ref.dimensions  # pre-read for display in results table
         other.dimensions
         result.append(get_match(ref, other, pct))
+
+    if match_cache is not None and scan_key is not None:
+        match_cache.put(scan_key, result)
 
     return result

@@ -9,17 +9,17 @@
 
 NOTE: When installing Visual Studio or the Visual Studio Build Tools with the Windows 10 SDK on versions of Windows below 10 be sure to make sure that the Universal CRT is installed before installing Visual studio as noted in the [Windows 10 SDK Notes][win10sdk] and found at [KB2999226][KB2999226].
 
-After installing python it is recommended to update setuptools before compiling packages.  To update run (example is for python launcher and 3.8):
+After installing python it is recommended to update setuptools before compiling packages. `build.py` shells out to `setup.py build_ext`, and virtual environments stopped seeding setuptools in python 3.12, so skipping this fails the build with `ModuleNotFoundError: No module named 'setuptools'`. To update run (example is for the python launcher and 3.12):
 
-    $ py -3.8 -m pip install --upgrade setuptools
+    $ py -3.12 -m pip install --upgrade setuptools
 
 More details on setting up python for compiling packages on windows can be found on the [python wiki][pythonWindowsCompilers] Take note of the required vc++ versions.
 
 ### With build.py (preferred)
-To build with a different python version 3.7 vs 3.8 or 32 bit vs 64 bit specify that version instead of -3.8 to the `py` command below.  If you want to build additional versions while keeping all virtual environments setup use a different location for each virtual environment.
+To build with a different python version or 32 bit vs 64 bit, specify that version instead of `-3.12` to the `py` command below. **3.10 is the minimum**: `core/hash_cache.py` uses PEP 604 unions in signatures that are evaluated at import time, so 3.8 and 3.9 cannot import the package at all. If you want to build additional versions while keeping all virtual environments setup use a different location for each virtual environment.
 
     $ cd <dupeGuru directory>
-    $ py -3.8 -m venv .\env
+    $ py -3.12 -m venv .\env
     $ .\env\Scripts\activate
     $ pip install -r requirements.txt
     $ python build.py
@@ -28,17 +28,17 @@ To build with a different python version 3.7 vs 3.8 or 32 bit vs 64 bit specify 
 ### With makefile
 It is possible to build dupeGuru with the makefile on windows using a compatable POSIX environment.  The following steps have been tested using [msys2][msys2]. Before running make:
 1. Install msys2 or other POSIX environment
-2. Install PyQt5 globally via pip
+2. Install a Qt binding globally via pip (`PyQt6`, or `PyQt5` if using the fallback)
 3. Use the respective console for msys2 it is `msys2 msys`
 
 Then the following execution of the makefile should work.  Pass the correct value for PYTHON to the makefile if not on the path as python3.
 
     $ cd <dupeGuru directory>
-    $ make PYTHON='py -3.8'
+    $ make PYTHON='py -3.12'
     $ make run
 
 ### Generate Windows Installer Packages
-You need to use the respective x86 or x64 version of python to build the 32 bit and 64 bit versions.  The build scripts will automatically detect the python architecture for you. When using build.py make sure the resulting python works before continuing to package.py.  NOTE: package.py looks for the 'makensis' executable in the default location for a 64 bit windows system.  The extra requirements need to be installed to run packaging: `pip install -r requirements-extra.txt`. Run the following in the respective virtual environment.
+You need to use the respective x86 or x64 version of python to build the 32 bit and 64 bit versions.  The build scripts will automatically detect the python architecture for you. When using build.py make sure the resulting python works before continuing to package.py.  NOTE: package.py finds `makensis` on PATH, falling back to the usual Program Files locations; it reports where it looked if it cannot find it, and now fails loudly rather than exiting 0 with no installer.  The extra requirements need to be installed to run packaging: `pip install -r requirements-extra.txt`. Run the following in the respective virtual environment.
 
     $ python package.py
 

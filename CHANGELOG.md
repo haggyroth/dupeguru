@@ -9,20 +9,176 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [4.13.0] - 2026-08-07
+
+### Added
+
+- **Folder Overlap** (Actions → Folder Overlap...). A large scan can produce thousands of
+  duplicate groups, and most of them usually have one explanation: a backup folder shadowing an
+  original. This groups the groups by the folder pair that accounts for them, so 437 separate
+  decisions become one. Marking a row marks exactly the files it counted, and duplicates no pair
+  accounts for are listed rather than hidden.
+
+  A pair is only shown when it explains most of what its folder contributes and covers more than
+  a handful of files, because presenting a coincidental overlap as a single decision invites
+  acting on a pattern that is not there. Where you have marked a reference folder, the direction
+  is shown as an arrow; where you have not, the two folders are shown as equals, because
+  dupeGuru chose which file to keep by size and neither side is known to be the original.
+
+- **Folder Overlap Report** (Actions → Folder Overlap Report...). A different question: not what
+  to act on, but what shape the archive is in. For each scanned folder it reports how much of its
+  *whole* content also exists somewhere else, and where. Folders duplicated in full are called
+  out, since those could in principle be removed entirely.
+
+  Only folders dupeGuru actually scanned appear. A percentage computed against just the part
+  that was looked at would be misleading rather than approximate.
+
 ### Fixed
 
-- **`--from-results` reports malformed files instead of crashing** (`cli.py`): pointing it at
-  the wrong file produced a Python traceback rather than an error message. JSON that was not
-  an object raised `AttributeError` from `data.get` — a bare `[]`, `42` or `"text"` was
-  enough — an NDJSON group record missing its keys raised `KeyError`, and a binary file
-  raised `UnicodeDecodeError`, because the caller caught only `OSError` and
-  `JSONDecodeError`. It now catches `ValueError`, which covers both of those (they are
-  subclasses) as well as the structural checks the loader gained: the document must be an
-  object, `groups` must be a list, NDJSON records must be objects carrying `reference` and
-  `duplicates`, and errors name the offending line. An empty file is rejected rather than
-  reported as "no duplicates", which would look like a successful answer about the wrong
-  file. Found by looking at what CI does *not* cover: the uncovered lines in `cli.py` were
-  almost entirely error paths.
+- **A crash on Windows when applying preferences.** A checkbox in the preferences dialog
+  outlived the dialog that owned it, because a signal was connected straight to another widget's
+  method. Applying preferences re-examines every widget in the application, and reaching that
+  one ended the process.
+- **The interface style was rebuilt on every preferences change**, even when it had not changed.
+  That discarded and recreated the style for every widget each time, which was both wasted work
+  and how the crash above was reached.
+- **An interface style that does not exist on the installed Qt** was passed on without being
+  checked, leaving the application with no style rather than reporting anything.
+
+## [4.12.0] - 2026-08-07
+
+### Added
+
+- **A record of every deletion, with the option to put the files back** (File → Deletion
+  History). Each run lists what it removed, how big it was, what the file duplicated, and --
+  for files sent to the trash -- where in the trash they went. Restoring a run moves them back.
+
+  Everything else in dupeGuru prevents a *wrong* deletion; nothing helped with one that was
+  correct at the time and regretted afterwards. This is that.
+
+  Restoring verifies before it acts and refuses rather than guessing. If a different file now
+  occupies the original path it is left alone and you are told, because putting the old copy
+  back would destroy the newer one. If the trash has been emptied there is nothing to restore
+  and it says so. If the file is already back -- restored by hand, or by an earlier restore --
+  it is reported as already there rather than as missing. Files deleted permanently were never
+  in the trash and those runs say so instead of offering a button that would fail. Whatever
+  could not be restored is listed with its reason, so a partial restore is never reported as a
+  complete one.
+
+  The record is written *before* each file is removed, so a crash cannot leave a deleted file
+  with no record of it.
+
+  Working on all three platforms took capturing where the trash actually put the file, which is
+  not something that can be worked out afterwards: trashing a second file of the same name
+  produces a name with a millisecond timestamp in it. Each platform reports it and each was
+  discarding the answer -- macOS in an out-parameter, Linux in the freedesktop record, Windows
+  in the shell's own progress callback.
+
+### Changed
+
+- The parts of the interface that decide which files are kept and which are deleted now have
+  test coverage: the re-prioritize dialog, the mark-by-rule dialog, the folder state list, and
+  all three preferences dialogs. Several carried couplings that were invisible in the code and
+  silent when broken -- a folder state stored by position, a rule chosen by row number, a
+  preference listed in one place and not the other.
+
+## [4.11.0] - 2026-08-07
+
+### Added
+
+- **Replace duplicates with copy-on-write clones instead of deleting them** (Deletion Options →
+  "Replace duplicates with copy-on-write clones"). Both files remain, both keep their own name
+  and permissions, and both stay independently editable — changing one does not change the
+  other. The space is still reclaimed, because the two share it until one is written to. This is
+  the only deletion option where nothing is lost. Available on APFS (macOS) and Btrfs or XFS
+  (Linux); elsewhere the option is disabled rather than falling back to something destructive.
+  Only offered for byte-for-byte identical files, so a picture-mode match that merely looks the
+  same is skipped and reported rather than replaced with a different image.
+- **Preview a deletion before running it** (Deletion Options → "Preview..."). Shows how many
+  files, how much space, and what would happen to each one — sent to trash, deleted permanently,
+  replaced by a clone, or skipped and why. Every marked file is re-checked against the same
+  conditions the deletion itself applies, so the preview cannot promise something that is then
+  refused. The command line has had this as `--plan`; the two now share one calculation and one
+  set of wording.
+- **Elapsed time and speed while scanning**, with an estimate of the time remaining once the
+  pace has settled. A slow scan and a hung scan previously looked identical: collecting a few
+  hundred thousand files from a cold external drive takes tens of minutes at a few hundred files
+  per second, with nothing on screen to distinguish it from a wedged process. The estimate is
+  withheld until the rate is steady and withdrawn again if it stops being steady, because a
+  confidently wrong "2 minutes remaining" shown for half an hour is worse than none. Also on the
+  command line: `--verbose` shows it inline, and `--progress-json` carries `elapsed_seconds`,
+  `files_per_second` and `remaining_seconds` as fields.
+- **Named scan profiles** (File → Save Scan Profile..., File → Scan Profiles...). Saves the
+  folders, their Normal/Reference/Excluded states, the mode, the scan type and the scanning
+  options together under a name. Loading one replaces the current selection rather than adding
+  to it. Only settings that affect what a scan finds are stored, so loading a profile will not
+  restyle the application. A profile whose folders no longer exist — an unplugged drive — is
+  marked as such before you load it, and reports what it skipped after.
+- The collection message now says whether folders are being **read or remembered**, which
+  distinguishes the fast path from the slow one while it is happening.
+
+### Fixed
+
+- **dupeGuru would not start at all on Windows.** The clone support added in this release
+  imported a module that does not exist there, and because the application core imports it, the
+  failure happened before anything could be displayed.
+- **A crash when applying preferences after a scan.** Closing the progress window destroyed its
+  labels while leaving references to them behind, and applying preferences walks every widget in
+  the application. On Windows this was an access violation that killed the process outright.
+
+## [4.10.0] - 2026-08-05
+
+### Added
+
+- **Remember scan results between scans** (opt-in, Preferences → "Remember scan results
+  between scans", or `--file-list-cache` on the command line). Folder listings are reused when
+  a folder has not changed, and in Picture mode the comparison results are reused too. On an
+  external drive these are the slow parts: re-reading 15,294 folders' worth of metadata went
+  from 0.80s to 0.12s, and picture matching from 17.9s to 0.015s. Files added, removed or
+  renamed are still noticed; a file edited in place without its folder changing may be missed
+  until the next full scan. Nothing is ever deleted on the basis of stale information.
+- **Picture mode works from the command line.** `--mode picture` had never run — it aborted on
+  the first file — because the image decoder was only ever wired up by the GUI.
+- **`--match-scaled`** so command-line picture scans can find resized copies. Without it only
+  images of identical dimensions match, at any `--min-match` value.
+- Windows installers and macOS disk images are now built by CI, and the packaging workflow
+  produces the real deliverables rather than only a frozen CLI.
+- Accessible names on the icon-only controls, so screen readers announce the Add and Remove
+  folder buttons, the search field's clear button and the colour picker.
+
+### Fixed
+
+- **Duplicate folders could not be deleted at all.** Every attempt reported that the folder had
+  changed since the scan and refused, because a folder's total size was being compared against
+  the size of its directory entry. `--scan-type folders` was unusable in both the GUI and the
+  command line.
+- **Copying or moving a folder that was itself one of the scanned folders** raised an error
+  that abandoned the whole batch, leaving files moved on disk but still listed in the results.
+  Unexpected errors are now recorded per file instead of stopping everything.
+- **Scans got slower the more the application was used.** Every picture scan re-checked every
+  folder the cache had ever seen, whether or not it was being scanned. Scanning two small local
+  files against a cache holding 20,000 entries from an external drive took over five minutes;
+  it now takes a fifth of a second.
+- **Unplugging a drive threw away everything cached from it**, so the next scan of that drive
+  started from nothing.
+- **The command line wrote its caches into the wrong directory**, so the command line and the
+  GUI never shared cached work and a 119 MB file was left loose in the user's application data
+  folder.
+- Number formatting on macOS fell back to a default locale on every run.
+- `--from-results` reports malformed files instead of crashing on them.
+
+### Changed
+
+- Continuous integration runs with a read-only token, and the build tooling passes file paths
+  as arguments rather than composing shell commands from them.
+
+### Internal
+
+- The test suite no longer writes into the real application data directory, and no longer
+  leaks database connections.
+- Tests now cover the checks that stand between a user and data loss: the sampled-hash
+  warning, the multiple-drives warning, copy-versus-move result handling, and what the
+  application reports after an operation finishes.
 
 ## [4.9.0] - 2026-08-04
 
@@ -700,7 +856,11 @@ fork no longer routes anyone or anything upstream, and CI runs for the first tim
 
 See `git log` for changes prior to this changelog.
 
-[Unreleased]: https://github.com/haggyroth/dupeguru/compare/v4.9.0...HEAD
+[Unreleased]: https://github.com/haggyroth/dupeguru/compare/v4.13.0...HEAD
+[4.13.0]: https://github.com/haggyroth/dupeguru/compare/v4.12.0...v4.13.0
+[4.12.0]: https://github.com/haggyroth/dupeguru/compare/v4.11.0...v4.12.0
+[4.11.0]: https://github.com/haggyroth/dupeguru/compare/v4.10.0...v4.11.0
+[4.10.0]: https://github.com/haggyroth/dupeguru/compare/v4.9.0...v4.10.0
 [4.9.0]: https://github.com/haggyroth/dupeguru/compare/v4.8.0...v4.9.0
 [4.8.0]: https://github.com/haggyroth/dupeguru/compare/v4.7.1...v4.8.0
 [4.7.1]: https://github.com/haggyroth/dupeguru/compare/v4.7.0...v4.7.1

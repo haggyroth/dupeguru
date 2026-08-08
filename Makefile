@@ -49,6 +49,35 @@ all: | env i18n modules qt/dg_rc.py
 run:
 	$(VENV_PYTHON) run.py
 
+# The one command to run before pushing.
+#
+# `git add -A` first is not a convenience: pre-commit reads `git ls-files`, so a newly created
+# file is invisible to it. That produced a clean local run and a red CI run more than once --
+# the hooks reported passing on work they had never looked at.
+#
+# Runs the hooks twice on purpose. black and end-of-file-fixer *modify* files and report
+# failure when they do, so the first pass can legitimately fail while fixing everything; the
+# second pass is the one whose result means anything.
+check:
+	git add -A
+	$(VENV_PYTHON) -m pre_commit run --all-files || true
+	git add -A
+	$(VENV_PYTHON) -m pre_commit run --all-files
+	$(VENV_PYTHON) -m pytest core hscommon qt tests -q
+
+# Mutation testing: an audit of whether the tests would notice if the code were wrong.
+#
+# Not part of CI and not a gate. It is scoped in pyproject.toml to the modules where a
+# surviving mutant means a user loses files, because it runs the suite once per mutant.
+# Expect noise -- `mutants-report` separates the survivors worth reading from the equivalent
+# ones. See the handoff for what the numbers mean.
+mutants:
+	$(VENV_PYTHON) -m mutmut run --max-children 8
+	@$(MAKE) mutants-report
+
+mutants-report:
+	@PATH="$(CURDIR)/env/bin:$$PATH" $(VENV_PYTHON) scripts/mutants_report.py
+
 pyc: | env
 	${VENV_PYTHON} -m compileall ${packages}
 
@@ -120,4 +149,4 @@ clean:
 	-rm locale/*/LC_MESSAGES/*.mo
 	-rm core/pe/*.$(SO) qt/pe/*.$(SO)
 
-.PHONY: clean normpo mergepot modules i18n reqs run pyc install uninstall all
+.PHONY: check mutants mutants-report clean normpo mergepot modules i18n reqs run pyc install uninstall all

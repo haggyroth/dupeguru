@@ -23,7 +23,10 @@ Output formats:
 Progress (stderr):
     --verbose        Human-readable progress messages.
     --progress-json  Machine-readable {"type":"progress","percent":N,"description":"..."} lines.
-                     Combine with --ndjson for fully structured pipelines.
+                     Also carries "elapsed_seconds", plus "files_per_second" once a rate can
+                     be measured and "remaining_seconds" once one can be trusted. The latter
+                     two are absent rather than guessed, so consumers must treat them as
+                     optional. Combine with --ndjson for fully structured pipelines.
 
 Deletion:
     --delete         Send all duplicate files (non-reference) to the system trash after scanning.
@@ -34,7 +37,8 @@ Deletion:
                      without removing it. Takes precedence over --delete.
     --plan           Report what a deletion would do and exit. Needs no --delete. Emits a
                      per-file JSON plan on stdout in place of the normal results, with a
-                     would_delete verdict and match_confidence for every candidate.
+                     would_delete verdict and match_confidence for every candidate, and a
+                     confidence tier per group matching the GUI's Confidence column.
     --allow-partial-matches
                      Permit deleting files matched only on a partial (sampled) hash.
                      Without it, --delete refuses when any such match is marked. This
@@ -52,14 +56,17 @@ import json
 import logging
 import sys
 from pathlib import Path
-from typing import NamedTuple
 
 from core import fs, se, file_list_cache, __version__
 from core.app import AppMode, DeleteStatus, DupeGuru, check_deletable
+from core import sensitive_paths
+from core.confidence import Confidence, classify_group
+from core.deletion_plan import DELETE_STATUS_REASON as _DELETE_STATUS_REASON
+from core.deletion_plan import DeletionPlan, build_plan, device_of as _device_of, plan_entry as _plan_entry
+from core.deletion_plan import summarize_plan
 from core.directories import AlreadyThereError, DirectoryState, InvalidPathError
 from core.scanner import ScanType
 from hscommon.jobprogress.job import Job
-from hscommon.util import format_size
 
 EXIT_OK = 0
 EXIT_DUPES_FOUND = 1
@@ -185,18 +192,41 @@ def _run_scan(app: DupeGuru, verbose: bool, progress_json: bool = False) -> None
     if app.app_mode == AppMode.PICTURE:
         scanner.cache_path = app._get_picture_cache_path()
         _wire_photo_class()
+    elif scanner.combine_picture_matching:
+        # A contents scan that also matches pictures needs the block cache and a decoder, the
+        # same as picture mode does -- but unlike --mode picture, a missing decoder is not fatal
+        # here. The content matches are the greater part of what was asked for, so say what will
+        # be missing and carry on rather than refusing the whole scan.
+        scanner.cache_path = app._get_picture_cache_path()
+        try:
+            _wire_photo_class()
+        except SystemExit as e:
+            print(f"warning: {e}", file=sys.stderr)
+            print("warning: continuing without picture matching", file=sys.stderr)
+            scanner.combine_picture_matching = False
 
     def _progress(progress: int, desc: str = "") -> bool:
+        # Elapsed time and rate, for the same reason the GUI shows them: a scan that is merely
+        # slow reads as a hung one, and cold external metadata is slow enough to be mistaken
+        # for wedged. Machine consumers get the numbers as fields rather than in the prose.
+        timing = j.tracker.summary()
         if progress_json and desc:
-            print(
-                json.dumps({"type": "progress", "percent": progress, "description": desc}),
-                file=sys.stderr,
-                flush=True,
-            )
+            record = {"type": "progress", "percent": progress, "description": desc}
+            record["elapsed_seconds"] = round(j.tracker.elapsed, 3)
+            rate = j.tracker.rate
+            if rate is not None:
+                record["files_per_second"] = round(rate, 3)
+            remaining = j.tracker.remaining_seconds
+            if remaining is not None:
+                record["remaining_seconds"] = round(remaining, 1)
+            print(json.dumps(record), file=sys.stderr, flush=True)
         elif verbose and desc:
-            print(f"\r  {desc}...{' ' * 10}", end="", file=sys.stderr, flush=True)
+            line = f"{desc} ({timing})" if timing else desc
+            print(f"\r  {line}...{' ' * 10}", end="", file=sys.stderr, flush=True)
         return True  # returning False would cancel the job
 
+    # _progress closes over j, which is assigned below; the name resolves when the callback
+    # first fires, which cannot happen until the job exists.
     j = Job(1, _progress)
 
     if scanner.scan_type == ScanType.FOLDERS:
@@ -251,7 +281,17 @@ def _group_to_dict(group) -> dict:
                 "partial_match": bool(getattr(match, "partial", False)) if match else False,
             }
         )
-    return {"reference": ref_entry, "duplicates": dupes_out}
+    # Recorded here rather than re-derived when the file is read back. Classifying needs the
+    # match kind and the reference-folder state of every member, and a results file carries
+    # neither -- a saved resemblance would be indistinguishable from a saved content match, which
+    # is precisely the confusion the tiers exist to end.
+    group_confidence = classify_group(group)
+    return {
+        "reference": ref_entry,
+        "confidence": group_confidence.tier,
+        "confidence_reason": group_confidence.reason,
+        "duplicates": dupes_out,
+    }
 
 
 def _serialise_results(app: DupeGuru) -> dict:
@@ -311,122 +351,18 @@ def _emit_ndjson(app: DupeGuru, out) -> tuple[int, int, int]:
 # --- Deletion helpers -------------------------------------------------------
 
 
-class DeletionPlan(NamedTuple):
-    """What --delete would actually do, computed without deleting anything."""
-
-    groups: int  # groups containing at least one file that would be deleted
-    files: int  # files that would actually be deleted
-    total_bytes: int  # bytes reclaimed by those files
-    partial: int  # of those, confirmed only by a sampled hash
-    full_content: int  # of those, confirmed by a full content comparison
-    blocked: dict  # DeleteStatus -> count, for candidates that would be refused
-    blocked_bytes: int  # bytes those refused files would have freed
-    cross_volume: int  # would-delete files on a different volume from their group's ref
-    entries: list  # per-group plan, for machine-readable output
-
-
-def _device_of(path) -> int | None:
-    """st_dev for *path*, or None if it cannot be read."""
-    try:
-        return path.stat().st_dev
-    except OSError:
-        return None
-
-
-def _plan_entry(path, size, mtime, is_partial: bool) -> tuple:
-    """Verdict for one candidate file: (status, would_delete, entry dict).
-
-    Shared by the live and saved-results planners so the two cannot drift apart.
-    """
-    status, _ = check_deletable(path, size, mtime)
-    would_delete = status == DeleteStatus.OK
-    entry = {
-        "path": str(path),
-        "size": size,
-        "mtime": mtime,
-        "would_delete": would_delete,
-        "match_confidence": "partial" if is_partial else "full",
-    }
-    if not would_delete:
-        entry["blocked_reason"] = _DELETE_STATUS_REASON[status]
-    return status, would_delete, entry
-
-
 def _deletion_plan(app: DupeGuru) -> DeletionPlan:
-    """Compute what --delete would do, touching nothing.
+    """Plan every duplicate, leaving the results marked as they were.
 
-    Marks and then unmarks, leaving the results in their original state, so this is safe
-    to call before either a dry run or a real deletion.
-
-    Every candidate is re-validated with check_deletable -- the same predicate the deletion
-    itself uses -- so the plan reports the files that would be refused instead of assuming
-    every marked file is removable. That costs a stat() per marked file, which is nothing
-    beside the scan that produced the results.
+    The CLI has no user selection -- it acts on all non-reference dupes -- so it marks
+    everything, plans, and puts the marks back. The GUI plans whatever the user chose, which
+    is why the marking is here rather than inside build_plan.
     """
     app.results.mark_all()
-    files = total_bytes = partial = full_content = blocked_bytes = cross_volume = 0
-    blocked: dict = {}
-    entries = []
-    group_count = 0
-
-    for group in app.results.groups:
-        ref_device = None
-        ref_device_read = False
-        group_entries = []
-        group_has_deletion = False
-
-        for dupe in group.dupes:
-            if not app.results.is_marked(dupe):
-                continue
-            match = group.get_match_of(dupe)
-            is_partial = bool(getattr(match, "partial", False)) if match else False
-            status, would_delete, entry = _plan_entry(dupe.path, dupe.size, dupe.mtime, is_partial)
-
-            if would_delete:
-                files += 1
-                total_bytes += dupe.size
-                group_has_deletion = True
-                if is_partial:
-                    partial += 1
-                else:
-                    full_content += 1
-                # Only meaningful for files that would actually go: a cross-volume dupe
-                # cannot be replaced by a hardlink to its reference.
-                if not ref_device_read:
-                    ref_device = _device_of(group.ref.path)
-                    ref_device_read = True
-                device = _device_of(dupe.path)
-                if ref_device is not None and device is not None and device != ref_device:
-                    cross_volume += 1
-                    entry["cross_volume"] = True
-            else:
-                blocked[status] = blocked.get(status, 0) + 1
-                blocked_bytes += dupe.size
-
-            group_entries.append(entry)
-
-        if group_entries:
-            if group_has_deletion:
-                group_count += 1
-            entries.append(
-                {
-                    "reference": {"path": str(group.ref.path), "size": group.ref.size},
-                    "duplicates": group_entries,
-                }
-            )
-
-    app.results.mark_none()
-    return DeletionPlan(
-        groups=group_count,
-        files=files,
-        total_bytes=total_bytes,
-        partial=partial,
-        full_content=full_content,
-        blocked=blocked,
-        blocked_bytes=blocked_bytes,
-        cross_volume=cross_volume,
-        entries=entries,
-    )
+    try:
+        return build_plan(app)
+    finally:
+        app.results.mark_none()
 
 
 def _plan_from_saved_results(groups: list[dict]) -> DeletionPlan:
@@ -437,6 +373,7 @@ def _plan_from_saved_results(groups: list[dict]) -> DeletionPlan:
     """
     files = total_bytes = partial = full_content = blocked_bytes = cross_volume = 0
     blocked: dict = {}
+    confidence = {tier: 0 for tier in Confidence.ORDER}
     entries = []
     group_count = 0
 
@@ -478,7 +415,21 @@ def _plan_from_saved_results(groups: list[dict]) -> DeletionPlan:
         if group_entries:
             if group_has_deletion:
                 group_count += 1
-            entries.append({"reference": {"path": ref_path}, "duplicates": group_entries})
+            # Results written before this field existed cannot be classified after the fact --
+            # the kind and reference-folder state are gone. Unconfirmed is the honest reading:
+            # it says "not established here", which is exactly true of an older file.
+            tier = group.get("confidence", Confidence.UNCONFIRMED)
+            if tier not in confidence:
+                tier = Confidence.UNCONFIRMED
+            confidence[tier] += 1
+            entries.append(
+                {
+                    "reference": {"path": ref_path},
+                    "confidence": tier,
+                    "confidence_reason": group.get("confidence_reason", Confidence.EXPLANATIONS[tier]),
+                    "duplicates": group_entries,
+                }
+            )
 
     return DeletionPlan(
         groups=group_count,
@@ -489,6 +440,11 @@ def _plan_from_saved_results(groups: list[dict]) -> DeletionPlan:
         blocked=blocked,
         blocked_bytes=blocked_bytes,
         cross_volume=cross_volume,
+        # Saved results carry no digests, so cloning cannot be assessed from them. Zero here
+        # means "unknown", not "none possible" -- reporting it as a count would overstate what
+        # a saved-results plan can tell you.
+        cloneable=0,
+        confidence=confidence,
         entries=entries,
     )
 
@@ -506,6 +462,7 @@ def _serialise_plan(plan: DeletionPlan) -> dict:
             "blocked": {status: count for status, count in sorted(plan.blocked.items())},
             "blocked_bytes": plan.blocked_bytes,
             "cross_volume": plan.cross_volume,
+            "confidence": dict(plan.confidence),
         },
     }
 
@@ -533,34 +490,12 @@ def _report_deletion_plan(
     footer: str = "  re-run without --dry-run to execute.",
 ) -> None:
     """Print what a deletion would do. Writes to stderr only."""
-    verb = "permanently delete" if direct_delete else "send to trash"
+    # Wording lives in core so the GUI preview says exactly what --plan says (issue #131).
     print(f"{label}: no files have been deleted.", file=sys.stderr)
-    print(
-        f"  would {verb} {plan.files} file(s) in {plan.groups} group(s), "
-        f"reclaiming {format_size(plan.total_bytes, 2)}",
-        file=sys.stderr,
-    )
-    if plan.partial or plan.full_content:
-        print(f"  {plan.full_content} matched on full content", file=sys.stderr)
-    if plan.partial:
-        print(
-            f"  {plan.partial} matched on a partial (sampled) hash only and would be "
-            "refused without --allow-partial-matches",
-            file=sys.stderr,
-        )
-    for status, count in sorted(plan.blocked.items()):
-        print(f"  {count} would be skipped: {_DELETE_STATUS_REASON[status]}", file=sys.stderr)
-    if plan.blocked_bytes:
-        print(
-            f"  {format_size(plan.blocked_bytes, 2)} would not be reclaimed because of those skips",
-            file=sys.stderr,
-        )
-    if plan.cross_volume:
-        print(
-            f"  {plan.cross_volume} are on a different volume from their reference "
-            "(hardlink replacement would fail)",
-            file=sys.stderr,
-        )
+    for line in summarize_plan(
+        plan, direct_delete, partial_hint=" and would be refused without --allow-partial-matches"
+    ):
+        print(f"  {line}", file=sys.stderr)
     print(footer, file=sys.stderr)
 
 
@@ -645,12 +580,6 @@ def _load_results_json(path: str) -> list[dict]:
 # as "skipped <path>: <reason>".
 # No "skipped:" prefix here: both consumers supply their own framing ("skipped <path>: ..."
 # and "N would be skipped: ..."), and baking it in doubled the word in both.
-_DELETE_STATUS_REASON = {
-    DeleteStatus.GONE: "file no longer exists",
-    DeleteStatus.SYMLINK: "path is a symlink",
-    DeleteStatus.UNREADABLE: "could not read file metadata",
-    DeleteStatus.CHANGED: "file changed since last scan",
-}
 
 
 def _saved_partial_counts(groups: list[dict]) -> tuple[int, bool]:
@@ -791,7 +720,9 @@ def _build_parser() -> argparse.ArgumentParser:
         dest="ref_folders",
         help=(
             "Mark FOLDER as a Reference folder: its files are scanned but never "
-            "considered for deletion. May be repeated."
+            "considered for deletion. FOLDER may be one of the scanned folders, a "
+            "subfolder of one, or somewhere else entirely -- it is scanned either "
+            "way. May be repeated."
         ),
     )
     parser.add_argument(
@@ -868,13 +799,16 @@ def _build_parser() -> argparse.ArgumentParser:
     knobs.add_argument(
         "--file-list-cache",
         metavar="DB",
+        nargs="?",
+        const=True,
         default=None,
         help=(
-            "Cache directory listings in DB so a rescan does not re-stat every file. Off by "
-            "default. Validated per directory: a directory whose mtime is unchanged is not "
-            "read again. Adding, removing or renaming a file is detected; editing one in "
-            "place is NOT, so a rescan can miss a duplicate whose size changed. Never causes "
-            "a wrong deletion -- files are re-checked immediately before removal."
+            "Cache directory listings so a rescan does not re-stat every file. Off unless "
+            "given. Pass a path to choose the database, or the flag alone to use the default "
+            "location alongside the other caches. Validated per directory: one whose mtime is "
+            "unchanged is not read again. Adding, removing or renaming a file is detected; "
+            "editing one in place is NOT, so a rescan can miss a duplicate whose size changed. "
+            "Never causes a wrong deletion -- files are re-checked immediately before removal."
         ),
     )
     knobs.add_argument(
@@ -1014,8 +948,9 @@ def _build_parser() -> argparse.ArgumentParser:
         "--progress-json",
         action="store_true",
         help=(
-            'Emit {"type":"progress","percent":N,"description":"..."} lines to stderr. '
-            "Mutually exclusive with --verbose."
+            'Emit {"type":"progress","percent":N,"description":"..."} lines to stderr, with '
+            "elapsed_seconds always and files_per_second/remaining_seconds when they can be "
+            "measured. Mutually exclusive with --verbose."
         ),
     )
     return parser
@@ -1262,9 +1197,23 @@ def main(argv=None) -> int:
 
     # Scanner knobs -------------------------------------------------------
     if args.file_list_cache:
+        # `--file-list-cache` alone yields True; a path yields the path. The default lives
+        # beside the other caches, which only became a sane place to put it once every front
+        # end started resolving the same appdata directory (#94).
+        cache_path = (
+            file_list_cache.default_cache_path(app.appdata) if args.file_list_cache is True else args.file_list_cache
+        )
         flcache = file_list_cache.FileListCache()
-        flcache.connect(args.file_list_cache)
+        flcache.connect(cache_path)
         app.directories.file_list_cache = flcache
+        # Same flag covers picture matching, which is 99% of a warm picture rescan. Enabling
+        # listings but not matching would be the slow path with none of the safety.
+        if app.app_mode == AppMode.PICTURE:
+            from core.pe.match_cache import MatchCache, default_cache_path as match_cache_path
+
+            mcache = MatchCache()
+            mcache.connect(match_cache_path(app.appdata))
+            app.picture_match_cache = mcache
     app.options["min_match_percentage"] = args.min_match
     app.options["match_scaled"] = args.match_scaled
     app.options["word_weighting"] = args.word_weighting
@@ -1329,8 +1278,42 @@ def main(argv=None) -> int:
             print(f"error: cannot add path: {folder}", file=sys.stderr)
             app.close()
             return EXIT_BAD_ARGS
-        if folder in ref_folders:
-            app.directories.set_state(folder, DirectoryState.REFERENCE)
+
+    # Reference folders, applied after every scan folder is in place.
+    #
+    # Done in its own pass rather than inside the loop above, which is what issue #162 was: a
+    # --ref folder that was not *also* given positionally never reached set_state, so the
+    # protection silently did not apply and its files were marked and deleted like any other
+    # duplicate. Existence was still validated, so a typo errored cleanly -- which made the
+    # silent case worse, because the flag looked like it had been checked.
+    #
+    # A folder outside the scan is added rather than refused: --ref promises "its files are
+    # scanned but never considered for deletion", so `--ref /originals` alongside `/copies`
+    # should do the obvious thing.
+    #
+    # Sorted only because ref_folders is a set and an unordered walk gives add_path a different
+    # order each run. Nested --ref folders reach the same result either way -- set_state returns
+    # early when the state already matches, and get_state walks parents -- so this is for a
+    # stable directory list, not for correctness.
+    for folder in sorted(ref_folders):
+        try:
+            app.directories.add_path(folder)
+        except AlreadyThereError:
+            pass  # already covered by a scanned folder; only the state needs setting
+        except InvalidPathError:
+            print(f"error: cannot add reference path: {folder}", file=sys.stderr)
+            app.close()
+            return EXIT_BAD_ARGS
+        app.directories.set_state(folder, DirectoryState.REFERENCE)
+
+    # Said before the scan rather than before the deletion, so it is on screen while the user
+    # decides what to do with the results. A warning and not a gate: a scan removes nothing, and
+    # --delete already has its own confirmation. Refusing here would also break scripted
+    # cleanups of application-support directories, which are a legitimate thing to automate.
+    location_warnings = sensitive_paths.warnings_for(folders)
+    if location_warnings:
+        for line in sensitive_paths.describe(location_warnings).splitlines():
+            print(f"warning: {line}" if line else "warning:", file=sys.stderr)
 
     if args.verbose:
         _reverse_scan_type = {v: k for k, v in _SCAN_TYPE_MAP.items()}

@@ -27,6 +27,7 @@ class ResultsModel(ResultsModelBase):
         Column("track", default_width=40),
         Column("comment", default_width=120),
         Column("percentage", default_width=60),
+        Column("confidence", default_width=110),
         Column("words", default_width=120),
         Column("dupe_count", default_width=80),
     ]

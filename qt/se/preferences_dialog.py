@@ -111,15 +111,42 @@ class PreferencesDialog(PreferencesDialogBase):
         )
         self.verticalLayout_4.addWidget(self.fullVerifyBox)
         self._setupAddCheckbox(
+            "cacheFileListBox",
+            tr("Remember scan results between scans"),
+            self.widget,
+        )
+        self.cacheFileListBox.setToolTip(
+            tr(
+                "Reuses what the last scan found when nothing has changed: folder listings, "
+                "and in Picture mode the comparison results too. This is the slow part of "
+                "scanning an external or network drive, and of comparing a large photo "
+                "library. Files added, removed or renamed are still noticed. A file edited in "
+                "place without its folder changing may be missed until the next full scan; "
+                "nothing is ever deleted on the basis of stale information."
+            )
+        )
+        self.verticalLayout_4.addWidget(self.cacheFileListBox)
+        self._setupAddCheckbox(
             "ignoreHardlinkMatches",
             tr("Ignore duplicates hardlinking to the same file"),
             self.widget,
         )
         self.verticalLayout_4.addWidget(self.ignoreHardlinkMatches)
         self.widgetsVLayout.addWidget(self.widget)
+        self._setupAddCheckbox("combinePictureMatchingBox", tr("Also find visually similar pictures"))
+        self.combinePictureMatchingBox.setToolTip(
+            tr(
+                "Additionally compare images by appearance, so a resized or re-encoded copy is "
+                "found as well as a byte-for-byte one. Slower: every image has to be decoded and "
+                "compared against the others, which a contents scan does not do."
+            )
+        )
+        self.widgetsVLayout.addWidget(self.combinePictureMatchingBox)
+
         self._setupBottomPart()
 
     def _load(self, prefs, setchecked, section):
+        setchecked(self.combinePictureMatchingBox, prefs.combine_picture_matching)
         setchecked(self.matchSimilarBox, prefs.match_similar)
         setchecked(self.wordWeightingBox, prefs.word_weighting)
         setchecked(self.ignoreSmallFilesBox, prefs.ignore_small_files)
@@ -129,6 +156,7 @@ class PreferencesDialog(PreferencesDialogBase):
         setchecked(self.bigFilePartialHashesBox, prefs.big_file_partial_hashes)
         self.bigSizeThresholdSpinBox.setValue(prefs.big_file_size_threshold)
         setchecked(self.fullVerifyBox, prefs.full_verify)
+        setchecked(self.cacheFileListBox, prefs.cache_file_list)
 
         # Update UI state based on selected scan type
         scan_type = prefs.get_scan_type(AppMode.STANDARD)
@@ -138,6 +166,7 @@ class PreferencesDialog(PreferencesDialogBase):
         self.wordWeightingBox.setEnabled(word_based)
 
     def _save(self, prefs, ischecked):
+        prefs.combine_picture_matching = ischecked(self.combinePictureMatchingBox)
         prefs.match_similar = ischecked(self.matchSimilarBox)
         prefs.word_weighting = ischecked(self.wordWeightingBox)
         prefs.ignore_small_files = ischecked(self.ignoreSmallFilesBox)
@@ -147,3 +176,4 @@ class PreferencesDialog(PreferencesDialogBase):
         prefs.big_file_partial_hashes = ischecked(self.bigFilePartialHashesBox)
         prefs.big_file_size_threshold = self.bigSizeThresholdSpinBox.value()
         prefs.full_verify = ischecked(self.fullVerifyBox)
+        prefs.cache_file_list = ischecked(self.cacheFileListBox)

@@ -221,6 +221,7 @@ class Preferences(PreferencesBase):
         self.big_file_partial_hashes = get("BigFilePartialHashes", self.big_file_partial_hashes)
         self.big_file_size_threshold = get("BigFileSizeThreshold", self.big_file_size_threshold)
         self.full_verify = get("FullVerify", self.full_verify)
+        self.cache_file_list = get("CacheFileList", self.cache_file_list)
         self.scan_tag_track = get("ScanTagTrack", self.scan_tag_track)
         self.scan_tag_artist = get("ScanTagArtist", self.scan_tag_artist)
         self.scan_tag_album = get("ScanTagAlbum", self.scan_tag_album)
@@ -229,6 +230,7 @@ class Preferences(PreferencesBase):
         self.scan_tag_year = get("ScanTagYear", self.scan_tag_year)
         self.match_scaled = get("MatchScaled", self.match_scaled)
         self.match_rotated = get("MatchRotated", self.match_rotated)
+        self.combine_picture_matching = get("CombinePictureMatching", self.combine_picture_matching)
 
     def reset(self):
         self.filter_hardness = 95
@@ -277,6 +279,7 @@ class Preferences(PreferencesBase):
         self.big_file_partial_hashes = False
         self.big_file_size_threshold = 100  # MB
         self.full_verify = False
+        self.cache_file_list = False
         self.scan_tag_track = False
         self.scan_tag_artist = True
         self.scan_tag_album = True
@@ -285,6 +288,7 @@ class Preferences(PreferencesBase):
         self.scan_tag_year = False
         self.match_scaled = False
         self.match_rotated = False
+        self.combine_picture_matching = False
 
     def _save_values(self, settings):
         set_ = self.set_value
@@ -334,6 +338,7 @@ class Preferences(PreferencesBase):
         set_("BigFilePartialHashes", self.big_file_partial_hashes)
         set_("BigFileSizeThreshold", self.big_file_size_threshold)
         set_("FullVerify", self.full_verify)
+        set_("CacheFileList", self.cache_file_list)
         set_("ScanTagTrack", self.scan_tag_track)
         set_("ScanTagArtist", self.scan_tag_artist)
         set_("ScanTagAlbum", self.scan_tag_album)
@@ -342,6 +347,7 @@ class Preferences(PreferencesBase):
         set_("ScanTagYear", self.scan_tag_year)
         set_("MatchScaled", self.match_scaled)
         set_("MatchRotated", self.match_rotated)
+        set_("CombinePictureMatching", self.combine_picture_matching)
 
     # scan_type is special because we save it immediately when we set it.
     def get_scan_type(self, app_mode):

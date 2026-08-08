@@ -77,6 +77,12 @@ def dgapp(qapp):
 
     app = DupeGuru()
     yield app
+    # Disconnect the module-level caches this connected. Without it the two SQLite
+    # connections survive to interpreter exit and are finalised by the garbage collector,
+    # which is what produced "ResourceWarning: unclosed database" on every run (issue #84).
+    # FilesDB batches writes and flushes on close, so an unclosed connection is also the
+    # shape of a bug that loses cached hashes -- worth eliminating rather than silencing.
+    app.model.close()
 
 
 @pytest.fixture
@@ -91,3 +97,97 @@ def restore_prefs(dgapp):
     yield prefs
     for k, v in saved.items():
         setattr(prefs, k, v)
+
+
+def pytest_report_header(config):
+    """Name the Qt binding in the pytest header.
+
+    qtpy prefers PyQt5 when several bindings are installed -- its order is
+    ['pyqt5', 'pyside2', 'pyqt6', 'pyside6'] -- regardless of PyQt6 being this project's
+    default. An environment that has both, which any checkout used to exercise the fallback
+    will, therefore runs the whole Qt suite against the *fallback* while looking green.
+
+    Printing it costs nothing and removes the guessing. Reading the QT_API environment
+    variable does not work for this: qtpy sets it during import to whatever it resolved, so
+    after `import qtpy` it always looks as if someone configured it deliberately.
+    """
+    try:
+        import qtpy
+    except ImportError:
+        return "Qt binding: none installed (Qt tests will skip)"
+    return f"Qt binding: {qtpy.API_NAME} (override with QT_API=pyqt6)"
+
+
+@pytest.fixture(autouse=True)
+def qt_style_unchanged():
+    """Fail a test that leaves the application's style switched.
+
+    ``QApplication.setStyle`` is process-wide, so a test that changes it and does not put it
+    back changes the ground under every test that follows. That is not hypothetical: it
+    segfaulted a later test that showed a dialog, and the crash surfaced in a file with no
+    connection to the one responsible.
+
+    The style is also put back before failing. Reporting alone is not enough: the tests that
+    follow would keep running under the foreign style, and one of them segfaults showing a
+    dialog -- taking the process down before pytest can print why. Restoring means the run
+    finishes and the error names the test responsible.
+
+    Costs one string comparison, so it runs for every test.
+    """
+    from qtpy.QtWidgets import QApplication, QStyleFactory
+
+    app = QApplication.instance()
+    before = app.style().objectName() if app is not None else None
+    yield
+    app = QApplication.instance()
+    if app is None or before is None:
+        return
+    after = app.style().objectName()
+    if after != before:
+        restored = QStyleFactory.create(before)
+        if restored is not None:
+            app.setStyle(restored)
+    assert after == before, (
+        f"this test left the application style as {after!r} (was {before!r}); it has been put "
+        "back so the rest of the run survives. setStyle is process-wide -- restore it in the "
+        "test, or every later test runs under it."
+    )
+
+
+@pytest.fixture(autouse=True, scope="module")
+def no_dangling_widgets():
+    """Fail a module that leaves a Qt widget wrapper alive around a destroyed C++ object.
+
+    Those are what a style or palette change walks into: applying preferences re-polishes
+    *every* widget, and reaching a destroyed one is an access violation on Windows and silent
+    luck elsewhere. The usual cause is a signal connected straight to another widget's bound
+    method, which keeps that widget's wrapper alive past the dialog that owns it.
+
+    Module-scoped deliberately. The sweep walks the whole heap at about 9 ms, which is nothing
+    once per file and a threefold slowdown of this suite once per test. Naming the file is
+    enough to find the test.
+
+    Asked of sip rather than of a weak reference: a weakref dies when the *wrapper* is
+    collected, which happens either way, while the fault is a live wrapper around a dead C++
+    object.
+    """
+    yield
+
+    sip = pytest.importorskip("qtpy.sip", reason="needs sip to inspect wrapper lifetimes")
+    import gc
+
+    from qtpy.QtWidgets import QWidget
+
+    gc.collect()
+    orphaned = []
+    for obj in gc.get_objects():
+        try:
+            if isinstance(obj, QWidget) and sip.isdeleted(obj):
+                orphaned.append(type(obj).__name__)
+        except Exception:
+            continue
+    assert not orphaned, (
+        f"this module left {len(orphaned)} widget wrapper(s) around destroyed C++ objects "
+        f"({', '.join(sorted(set(orphaned)))}). Applying preferences walks every widget and "
+        "will reach them. Look for a signal connected to another widget's bound method."
+    )

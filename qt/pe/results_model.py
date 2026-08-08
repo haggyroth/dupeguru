@@ -19,5 +19,6 @@ class ResultsModel(ResultsModelBase):
         Column("exif_timestamp", default_width=120),
         Column("mtime", default_width=120),
         Column("percentage", default_width=60),
+        Column("confidence", default_width=110),
         Column("dupe_count", default_width=80),
     ]

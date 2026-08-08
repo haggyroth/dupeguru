@@ -20,6 +20,8 @@ import sys
 
 import pytest
 
+from hscommon.plat import ISWINDOWS
+
 from hscommon.build import BuildError, run_checked
 
 
@@ -79,3 +81,62 @@ class TestProducesCheck:
         target.write_bytes(b"left over from an earlier build")
         with pytest.raises(BuildError, match="exit code"):
             run_checked(_python("import sys; sys.exit(1)"), produces=target)
+
+
+class TestSequenceCommands:
+    """A path must be an argument, never shell syntax (issue #80).
+
+    print_and_do ran everything through the shell, and every caller composed its command by
+    interpolating paths into a string. Manual double-quoting was the only defence, and a
+    quote in a path ends the quoting. Demonstrated before the fix: a directory named
+    'dest"; touch INJECTED; echo "' -- legal on macOS and Linux -- caused
+    'ln -s /Applications "{}"' to create INJECTED.
+    """
+
+    @pytest.mark.skipif(
+        ISWINDOWS,
+        reason=(
+            "unreachable on Windows: the characters needed to break out of the old code's "
+            "double-quoting -- notably '\"' -- are illegal in Windows filenames, so mkdir "
+            "raises before the command is ever built. Characters that *are* legal there, "
+            "like '&', are not special inside the quotes the old code emitted."
+        ),
+    )
+    def test_a_path_containing_shell_metacharacters_is_not_executed(self, tmp_path, monkeypatch):
+        """The injection itself. The marker file must not appear."""
+        monkeypatch.chdir(tmp_path)
+        evil = tmp_path / 'weird"; touch INJECTED; echo "'
+        evil.mkdir()
+        source = tmp_path / "src.txt"
+        source.write_text("data")
+
+        run_checked(["cp", str(source), str(evil / "out.txt")])
+
+        assert not (tmp_path / "INJECTED").exists(), "the path was executed as shell syntax"
+        assert (evil / "out.txt").exists(), "the copy did not happen"
+
+    def test_a_sequence_command_still_raises_on_failure(self):
+        with pytest.raises(BuildError):
+            run_checked([sys.executable, "-c", "import sys; sys.exit(3)"])
+
+    def test_a_sequence_command_still_checks_its_artifact(self, tmp_path):
+        target = tmp_path / "never-written"
+        with pytest.raises(BuildError):
+            run_checked([sys.executable, "-c", "pass"], produces=target)
+
+    def test_a_sequence_command_succeeds_normally(self, tmp_path):
+        target = tmp_path / "written"
+        run_checked([sys.executable, "-c", f"open({str(target)!r}, 'w').write('x')"], produces=target)
+        assert target.exists()
+
+    def test_string_commands_still_go_through_the_shell(self, tmp_path):
+        """Kept deliberately: some callers need a pipeline. The docstring says when not to."""
+        target = tmp_path / "shelled"
+        run_checked(f"echo hi > {target}", produces=target)
+        assert target.read_text().strip() == "hi"
+
+    def test_a_sequence_is_printed_readably(self, capsys):
+        """The build log is how anyone diagnoses a packaging failure."""
+        run_checked([sys.executable, "-c", "pass"])
+        out = capsys.readouterr().out
+        assert sys.executable in out

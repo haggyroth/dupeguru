@@ -17,7 +17,6 @@ import sys
 import shutil
 from pathlib import Path
 
-from send2trash import send2trash
 from hscommon.jobprogress import job
 from hscommon.notify import Broadcaster
 from hscommon.conflict import smart_move, smart_copy
@@ -26,7 +25,9 @@ from hscommon.util import delete_if_empty, first, escape, nonone, allsame
 from hscommon.trans import tr
 from hscommon import desktop
 
-from core import se, me, pe
+from core import se, me, pe, clone
+from core import sensitive_paths
+from core.confidence import classify_group
 from core.pe.photo import get_delta_dimensions
 from core.util import cmp_value, fix_surrogate_encoding
 from core import directories, results, export, fs, prioritize
@@ -34,6 +35,10 @@ from core.ignore import IgnoreList
 from core.exclude import ExcludeDict as ExcludeList
 from core.scanner import ScanType
 from core.gui.deletion_options import DeletionOptions
+from core.deletion_log import DeletionLog, DeletionRecord, default_log_path
+from core.folder_overlap import count_files_per_folder
+from core.scan_profile import ProfileStore, ScanProfile, ScanProfileError
+from core.trash import trash_file
 from core.gui.details_panel import DetailsPanel
 from core.gui.directory_tree import DirectoryTree
 from core.gui.ignore_list_dialog import IgnoreListDialog
@@ -126,6 +131,27 @@ def _aggregate_size(path):
             except OSError:
                 pass
     return total
+
+
+def _is_byte_identical(dupe, ref):
+    """Whether *dupe* and *ref* are provably the same bytes.
+
+    Cloning replaces a duplicate with a clone of its reference, which is only harmless when
+    the two are already identical. That holds for a contents scan, where a match *means*
+    equal digests. It does not hold for picture matching, where two files can score 100%
+    because their block signatures agree while the files differ -- a resized copy, a
+    re-encode, a different crop. Replacing one of those would substitute a different image
+    and call it deduplication.
+
+    So this compares full digests rather than trusting the match. A digest that is missing or
+    only partial is not proof, and is treated as a refusal: sampled hashing compares three
+    chunks, and three matching chunks are not a guarantee of the rest.
+    """
+    dupe_digest = getattr(dupe, "digest", b"")
+    ref_digest = getattr(ref, "digest", b"")
+    if not dupe_digest or not ref_digest:
+        return False
+    return dupe_digest == ref_digest
 
 
 def check_deletable(path, expected_size, expected_mtime):
@@ -230,6 +256,9 @@ class DupeGuru(Broadcaster):
         Broadcaster.__init__(self)
         self.view = view
         self.appdata = desktop.special_folder_path(desktop.SpecialFolder.APPDATA, portable=portable)
+        # Optional core.pe.match_cache.MatchCache, attached by the front end when the user
+        # opts in. None means picture matching is recomputed on every scan.
+        self.picture_match_cache = None
         if not op.exists(self.appdata):
             os.makedirs(self.appdata)
         self.app_mode = AppMode.STANDARD
@@ -244,6 +273,10 @@ class DupeGuru(Broadcaster):
 
         hashcachedb.connect(op.join(self.appdata, "hash_cache2.db"))
         self.directories = directories.Directories(self.exclude_list)
+        self.scan_profiles = ProfileStore()
+        self.deletion_log = DeletionLog(default_log_path(self.appdata))
+        #: Files scanned under each folder, at every depth. Empty until a scan runs.
+        self.folder_file_counts = {}
         self.results = results.Results(self)
         self.ignore_list = IgnoreList()
         # In addition to "app-level" options, this dictionary also holds options that will be
@@ -258,6 +291,10 @@ class DupeGuru(Broadcaster):
             "rehash_ignore_mtime": False,
         }
         self.selected_dupes = []
+        #: Sensitive folders the user has already agreed to scan, so re-scanning while tuning
+        #: filters asks once rather than every time. A prompt that fires often enough to be
+        #: dismissed reflexively also trains people to dismiss the two that guard data loss.
+        self._accepted_sensitive_paths = set()
         self.details_panel = DetailsPanel(self)
         self.directory_tree = DirectoryTree(self)
         self.problem_dialog = ProblemDialog(self)
@@ -326,13 +363,21 @@ class DupeGuru(Broadcaster):
             return len([dupe for dupe in group.dupes if self.results.is_marked(dupe)])
         return cmp_value(group.ref, key)
 
-    def _do_delete(self, j, link_deleted, use_hardlinks, direct_deletion):
+    def _do_delete(self, j, link_deleted, use_hardlinks, direct_deletion, use_clones=False):
+        # One run per press of Delete, so the log reads as the operations the user performed
+        # rather than as a flat list of files.
+        run = self.deletion_log.start_run(permanent=direct_deletion)
+
         def op(dupe):
             j.add_progress()
-            return self._do_delete_dupe(dupe, link_deleted, use_hardlinks, direct_deletion)
+            return self._do_delete_dupe(dupe, link_deleted, use_hardlinks, direct_deletion, use_clones, run)
 
         j.start_job(self.results.mark_count)
-        self.results.perform_on_marked(op, True)
+        try:
+            self.results.perform_on_marked(op, True)
+        finally:
+            # A cancelled or wholly failed deletion should not leave an empty entry behind.
+            self.deletion_log.discard_if_empty(run)
 
     @staticmethod
     def _dirs_span_multiple_devices(directories):
@@ -347,7 +392,7 @@ class DupeGuru(Broadcaster):
                 return True
         return False
 
-    def _do_delete_dupe(self, dupe, link_deleted, use_hardlinks, direct_deletion):
+    def _do_delete_dupe(self, dupe, link_deleted, use_hardlinks, direct_deletion, use_clones=False, run=None):
         # Shared with the planner: see check_deletable. Keep the decision there, not here.
         status, message = check_deletable(dupe.path, dupe.size, dupe.mtime)
         if status == DeleteStatus.GONE:
@@ -368,9 +413,18 @@ class DupeGuru(Broadcaster):
             # swallowed the exception, so the file was gone, no link replaced it, and
             # the operation was reported as a success.
             link_tmp = self._unused_link_path(str_path)
-            self._make_replacement_link(ref.path, link_tmp, use_hardlinks)
+            if use_clones:
+                self._make_replacement_clone(dupe, ref, link_tmp)
+            else:
+                self._make_replacement_link(ref.path, link_tmp, use_hardlinks)
 
         logging.debug("Sending '%s' to trash", dupe.path)
+        # Recorded before anything is removed. A record for a file that survives is harmless --
+        # restore checks and reports it -- whereas a removed file with no record is an undo the
+        # user believes they have and does not.
+        record = self._deletion_record(dupe, direct_deletion)
+        if run is not None:
+            self.deletion_log.record(run, record)
         try:
             if direct_deletion:
                 if op.isdir(str_path):
@@ -378,7 +432,11 @@ class DupeGuru(Broadcaster):
                 else:
                     os.remove(str_path)
             else:
-                send2trash(str_path)  # Raises OSError when there's a problem
+                # Unlike send2trash, this reports where the file went, which is what makes a
+                # restore possible at all. See core.trash.
+                record.destination = trash_file(str_path)
+                if run is not None:
+                    self.deletion_log.save()
         except Exception:
             if link_tmp is not None:
                 try:
@@ -392,6 +450,21 @@ class DupeGuru(Broadcaster):
             os.replace(str(link_tmp), str_path)
         self.clean_empty_dirs(dupe.path.parent)
 
+    def _deletion_record(self, dupe, direct_deletion):
+        """Describe *dupe* for the log, including what it duplicated."""
+        reference_path = ""
+        group = self.results.get_group_of_duplicate(dupe)
+        if group is not None and group.ref is not None and group.ref is not dupe:
+            reference_path = str(group.ref.path)
+        digest = getattr(dupe, "digest", b"")
+        return DeletionRecord(
+            original_path=dupe.path,
+            size=dupe.size,
+            digest=digest.hex() if isinstance(digest, bytes) else str(digest or ""),
+            reference_path=reference_path,
+            permanent=direct_deletion,
+        )
+
     @staticmethod
     def _unused_link_path(str_path):
         """Return a free path beside ``str_path`` to build a replacement link at."""
@@ -402,6 +475,33 @@ class DupeGuru(Broadcaster):
             counter += 1
             candidate = Path(f"{str_path}.dupeguru-link{counter}")
         return candidate
+
+    @staticmethod
+    def _make_replacement_clone(dupe, ref, clone_path):
+        """Create a copy-on-write clone of *ref* at *clone_path*.
+
+        Refuses unless the two files are provably identical, and refuses when the filesystem
+        cannot clone rather than falling back. Both fallbacks available here are wrong: a copy
+        would double the space this exists to reclaim, and a delete would destroy the file the
+        user was told would survive.
+        """
+        if not _is_byte_identical(dupe, ref):
+            raise OSError(
+                tr(
+                    "'{}' was skipped: it is not byte-for-byte identical to its reference, so "
+                    "replacing it with a clone would change its contents. Cloning is only "
+                    "possible for exact duplicates."
+                ).format(str(dupe.path))
+            )
+        try:
+            clone.clone_file(ref.path, clone_path)
+        except clone.CloneNotSupportedError as e:
+            raise OSError(
+                tr(
+                    "'{}' was skipped: this filesystem cannot make copy-on-write clones, or "
+                    "the two files are on different volumes. Nothing was deleted."
+                ).format(str(dupe.path))
+            ) from e
 
     @staticmethod
     def _make_replacement_link(source, link_path, use_hardlinks):
@@ -622,7 +722,12 @@ class DupeGuru(Broadcaster):
         if dest_type in {DestType.RELATIVE, DestType.ABSOLUTE}:
             # no filename, no windows drive letter
             source_base = source_path.relative_to(source_path.anchor).parent
-            if dest_type == DestType.RELATIVE:
+            # location_path is None when the dupe *is* one of the scanned folders rather than
+            # living inside one, which is the ordinary shape of a folder-mode result: add
+            # /photos/2023 and /photos/2024, scan with --scan-type folders, and the dupes are
+            # the added directories themselves. There is no meaningful path relative to
+            # itself, so fall back to the absolute layout instead of dereferencing None.
+            if dest_type == DestType.RELATIVE and location_path is not None:
                 source_base = source_base.relative_to(location_path.relative_to(location_path.anchor))
             dest_path = dest_path.joinpath(source_base)
         if not dest_path.exists():
@@ -678,9 +783,68 @@ class DupeGuru(Broadcaster):
             self.deletion_options.link_deleted,
             self.deletion_options.use_hardlinks,
             self.deletion_options.direct,
+            self.deletion_options.use_clones,
         ]
         logging.debug("Starting deletion job with args %r", args)
         self._start_job(JobType.DELETE, self._do_delete, args=args)
+
+    def save_scan_profile(self, name, settings=None):
+        """Save the current folders, states and mode under *name*, replacing any profile of
+        that name.
+
+        *settings* is whatever the front end wants remembered alongside them, as a flat dict of
+        scalars. Core stores it and hands it back unchanged; see :mod:`core.scan_profile` for
+        why it does not try to interpret it.
+
+        :rtype: core.scan_profile.ScanProfile
+        """
+        profile = ScanProfile.capture(name, self.directories, self.app_mode, settings)
+        self.scan_profiles.set(profile)
+        self.notify("scan_profiles_changed")
+        return profile
+
+    def apply_scan_profile(self, name):
+        """Restore the folders, states and mode saved under *name*.
+
+        Returns the profile's folders that no longer exist. They are skipped rather than
+        refused -- with a drive unplugged, scanning what is present and being told what is not
+        beats refusing outright -- but the caller must surface them. A scan that quietly covers
+        four folders instead of five reports fewer duplicates, and that reads exactly like a
+        clean result.
+
+        Applying the profile's *settings* is the front end's job, since it is the front end
+        that knows what they mean.
+
+        :rtype: list of str
+        """
+        profile = self.scan_profiles.get(name)
+        if profile is None:
+            raise ScanProfileError(f"no scan profile named {name!r}")
+        missing = profile.apply_folders(self.directories)
+        self.app_mode = profile.app_mode
+        self.notify("directories_changed")
+        return missing
+
+    def delete_scan_profile(self, name):
+        """Forget the profile saved under *name*. Unknown names are ignored."""
+        self.scan_profiles.remove(name)
+        self.notify("scan_profiles_changed")
+
+    def deletion_preview(self):
+        """What :meth:`delete_marked` would actually do, without touching anything.
+
+        Plans the files the user has marked, using the same predicate the deletion itself uses,
+        so the preview cannot promise something the deletion then refuses. Cloning is assessed
+        only when the user has asked for it, because the probe costs a filesystem test per
+        candidate and answers a question nobody asked otherwise.
+
+        :rtype: core.deletion_plan.DeletionPlan
+        """
+        # Imported here: core.deletion_plan imports check_deletable from this module.
+        from core.deletion_plan import build_plan, default_clone_probe
+
+        probe = default_clone_probe if self.deletion_options.use_clones else None
+        return build_plan(self, clone_probe=probe)
 
     def export_to_xhtml(self):
         """Export current results to XHTML.
@@ -714,10 +878,15 @@ class DupeGuru(Broadcaster):
         if (dupe is None) or (group is None):
             return empty_data()
         try:
-            return dupe.get_display_info(group, delta)
+            info = dupe.get_display_info(group, delta)
         except Exception as e:
             logging.warning("Exception (type: %s) on GetDisplayInfo for %s: %s", type(e), str(dupe.path), str(e))
             return empty_data()
+        # Added here rather than in each mode's get_display_info: the tier is a property of the
+        # group, computed the same way for files, photos and songs, and three copies of one rule
+        # is three chances for the modes to disagree about what is confirmed.
+        info["confidence"] = classify_group(group).label
+        return info
 
     def invoke_custom_command(self):
         """Calls command in ``CustomCommand`` pref with ``%d`` and ``%r`` placeholders replaced.
@@ -762,6 +931,8 @@ class DupeGuru(Broadcaster):
         called).
         """
         self.directories.load_from_file(op.join(self.appdata, "last_directories.xml"))
+        self.scan_profiles.load_from_file(op.join(self.appdata, "scan_profiles.xml"))
+        self.deletion_log.load()
         self.notify("directories_changed")
         p = op.join(self.appdata, "ignore_list.xml")
         self.ignore_list.load_from_xml(p)
@@ -842,6 +1013,38 @@ class DupeGuru(Broadcaster):
         self.results.mark_all()
         self.notify("marking_changed")
         self._results_changed()
+
+    def mark_confidence(self, tier):
+        """Mark every duplicate in groups sitting at exactly *tier*, leaving the rest alone.
+
+        Additive on purpose: marking the corroborated groups and then the content-only ones
+        should leave both marked, so the user can build up a selection one tier at a time and
+        look at what they have before acting. Replacing the selection would make the second
+        click silently undo the first.
+
+        Only duplicates are marked -- ``mark`` refuses a group's reference and any file in a
+        folder marked Reference, which is what makes the corroborated tier act on the copies
+        rather than on the originals it was corroborated by.
+
+        :param str tier: one of :attr:`core.confidence.Confidence.ORDER`
+        :returns: the number of newly marked files
+        """
+        marked = 0
+        for group in self.results.groups:
+            if classify_group(group).tier != tier:
+                continue
+            for dupe in group.dupes:
+                if self.results.is_markable(dupe) and not self.results.is_marked(dupe):
+                    self.results.mark(dupe)
+                    marked += 1
+        self.notify("marking_changed")
+        return marked
+
+    def confidence_tally(self):
+        """How many groups sit in each confidence tier, keyed by tier."""
+        from core.confidence import tally
+
+        return tally(self.results.groups)
 
     def mark_none(self):
         """Set all dupes in the results as unmarked."""
@@ -967,6 +1170,7 @@ class DupeGuru(Broadcaster):
         if not op.exists(self.appdata):
             os.makedirs(self.appdata)
         self.directories.save_to_file(op.join(self.appdata, "last_directories.xml"))
+        self.scan_profiles.save_to_file(op.join(self.appdata, "scan_profiles.xml"))
         p = op.join(self.appdata, "ignore_list.xml")
         self.ignore_list.save_to_xml(p)
         p = op.join(self.appdata, "exclude_list.xml")
@@ -974,6 +1178,9 @@ class DupeGuru(Broadcaster):
         self.notify("save_session")
 
     def close(self):
+        if self.picture_match_cache is not None:
+            self.picture_match_cache.close()
+            self.picture_match_cache = None
         fs.filesdb.close()
         from core.hash_cache import hashcachedb
 
@@ -998,6 +1205,31 @@ class DupeGuru(Broadcaster):
             self.directories.save_to_file(filename)
         except OSError as e:
             self.view.show_message(tr("Couldn't write to file: {}").format(str(e)))
+
+    def _confirm_sensitive_locations(self):
+        """Ask before scanning somewhere the operating system or an application keeps its files.
+
+        A warning, not a refusal: cleaning a duplicate-ridden application-support directory is a
+        real thing to want to do, and dupeGuru is not in a position to say the user is wrong
+        about their own machine. Returns False only when the user answers no.
+
+        Folders already agreed to are not raised again for the rest of the session. Re-scanning
+        the same folder while adjusting filters is normal, and a prompt on every pass is how a
+        warning becomes something people click through without reading -- which would also blunt
+        the multi-drive and partial-hash prompts standing beside it.
+        """
+        warnings = [
+            (path, reason)
+            for path, reason in sensitive_paths.warnings_for(self.directories)
+            if path not in self._accepted_sensitive_paths
+        ]
+        if not warnings:
+            return True
+        msg = sensitive_paths.describe(warnings) + tr("\n\nContinue with the scan?")
+        if not self.view.ask_yes_no(msg):
+            return False
+        self._accepted_sensitive_paths.update(path for path, _ in warnings)
+        return True
 
     def start_scanning(self, profile_scan=False):
         """Starts an async job to scan for duplicates.
@@ -1025,11 +1257,18 @@ class DupeGuru(Broadcaster):
             )
             if not self.view.ask_yes_no(msg):
                 return
+        if not self._confirm_sensitive_locations():
+            return
         # Send relevant options down to the scanner instance
         for k, v in self.options.items():
             if hasattr(scanner, k):
                 setattr(scanner, k, v)
         if self.app_mode == AppMode.PICTURE:
+            scanner.cache_path = self._get_picture_cache_path()
+            scanner.match_cache = self.picture_match_cache
+        elif scanner.combine_picture_matching:
+            # A standard scan that also matches pictures needs the block cache too. Same file
+            # as picture mode uses, so the two share the work rather than each recomputing it.
             scanner.cache_path = self._get_picture_cache_path()
         self.results.groups = []
         self._recreate_result_table()
@@ -1047,6 +1286,10 @@ class DupeGuru(Broadcaster):
             if self.options["ignore_hardlink_matches"]:
                 files = self._remove_hardlink_dupes(files)
             logging.info("Scanning %d files" % len(files))
+            # Counted here because this list is discarded once the scan finishes, and results
+            # hold only duplicates -- a folder's *total* size cannot be recovered from them
+            # afterwards without walking the tree again. See core/folder_overlap.py.
+            self.folder_file_counts = count_files_per_folder(files, [str(path) for path in self.directories])
             self.results.groups = scanner.get_dupe_groups(files, self.ignore_list, j)
             self.discarded_file_count = scanner.discarded_file_count
             self.discarded_partial_count = getattr(scanner, "discarded_partial_count", 0)

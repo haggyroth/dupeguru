@@ -32,6 +32,7 @@ Contents:
     scan
     results
     reprioritize
+    command_line
     faq
     developer/index
     changelog

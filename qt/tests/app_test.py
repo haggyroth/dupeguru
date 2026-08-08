@@ -141,15 +141,21 @@ class TestResources:
     That is how an empty ``qt/dg_rc.py`` once produced a GUI with no icons at all while the
     build reported success. These fail instead. The resources are embedded and committed
     now, so unlike before there is no build step for these to depend on.
+
+    The tests that build a pixmap take ``qapp``. Qt requires a QGuiApplication to exist before
+    any QPixmap is constructed -- "QPixmap: Must construct a QGuiApplication before a QPixmap"
+    -- and without it the process segfaults rather than failing. These passed only because
+    some earlier test in the run happened to create the application first, which made them a
+    crash waiting on a change of ordering.
     """
 
-    def test_named_resources_load(self):
+    def test_named_resources_load(self, qapp):
         from qt import resources
 
         for name in ("logo_se", "plus", "minus", "error"):
             assert not resources.pixmap(name).isNull(), f"resource {name} did not load"
 
-    def test_every_declared_resource_loads(self):
+    def test_every_declared_resource_loads(self, qapp):
         """Guards the whole manifest, not a hand-picked few."""
         from qt import resources
 
@@ -211,3 +217,118 @@ class TestDialogAttributeNaming:
             assert assigned == 2, (
                 f"expected self.{name} to be assigned in both _setup branches, " f"found {assigned} assignment(s)"
             )
+
+
+class TestFileListCachePreference:
+    """The preference must reach Directories, and unticking must actually detach it.
+
+    A preference that is stored and displayed but never connected is the failure mode this
+    project keeps hitting -- a scanner knob that reaches the dialog and not the scan looks
+    identical to a working one from the UI.
+    """
+
+    def test_enabling_attaches_a_cache(self, dgapp, restore_prefs):
+        dgapp.prefs.cache_file_list = True
+        dgapp._update_options()
+        assert dgapp.model.directories.file_list_cache is not None
+
+    def test_disabling_detaches_it(self, dgapp, restore_prefs):
+        """Unticking has to stop the cache being used, not just stop refreshing it."""
+        dgapp.prefs.cache_file_list = True
+        dgapp._update_options()
+        assert dgapp.model.directories.file_list_cache is not None
+
+        dgapp.prefs.cache_file_list = False
+        dgapp._update_options()
+        assert dgapp.model.directories.file_list_cache is None
+
+    def test_enabling_twice_reuses_the_same_cache(self, dgapp, restore_prefs):
+        """_update_options runs before every scan; each one must not open another connection."""
+        dgapp.prefs.cache_file_list = True
+        dgapp._update_options()
+        first = dgapp.model.directories.file_list_cache
+        dgapp._update_options()
+        assert dgapp.model.directories.file_list_cache is first
+
+    def test_cache_lands_in_appdata(self, dgapp, restore_prefs):
+        """Beside the other caches, not in the root of the application data folder (#94)."""
+        from core.file_list_cache import default_cache_path
+
+        dgapp.prefs.cache_file_list = True
+        dgapp._update_options()
+        expected = default_cache_path(dgapp.model.appdata)
+        assert expected.startswith(dgapp.model.appdata)
+        assert expected.endswith("file_list_cache.db")
+
+    def test_default_is_off(self, dgapp, restore_prefs):
+        """The cache trades a missed in-place edit for speed, so it must be opt-in."""
+        dgapp.prefs.reset()
+        assert dgapp.prefs.cache_file_list is False
+
+
+class TestStyleSwitching:
+    """qt/app.py:_set_style runs on every preferences change, on Windows."""
+
+    @pytest.fixture(autouse=True)
+    def restore_style(self, qapp):
+        """Put the application's style back afterwards.
+
+        QApplication.setStyle is process-wide, so a test that leaves a different style
+        installed changes the ground under every test that follows. That is not hypothetical:
+        leaving a foreign style in place segfaulted a later test that shows a dialog, and the
+        crash surfaced nowhere near the test responsible for it.
+        """
+        from qtpy.QtWidgets import QApplication, QStyleFactory
+
+        original = QApplication.style().objectName()
+        yield
+        style = QStyleFactory.create(original)
+        if style is not None:
+            QApplication.setStyle(style)
+
+    def test_an_unavailable_style_falls_back_instead_of_unsetting_the_style(self, qapp):
+        # QStyleFactory.create() returns None for a key this Qt build does not provide, and
+        # QApplication.setStyle(None) is accepted silently -- no exception, no message, and an
+        # application left with an undefined style. "windowsvista" is exactly that case: a Qt 5
+        # name later versions do not always carry.
+        from qtpy.QtWidgets import QApplication, QStyleFactory
+
+        from qt.app import _apply_style
+
+        _apply_style("a style that does not exist")
+
+        assert QApplication.style() is not None
+        assert QStyleFactory.create("Fusion") is not None, "the fallback must exist everywhere"
+
+    def test_an_available_style_is_applied(self, qapp):
+        from qtpy.QtWidgets import QApplication
+
+        from qt.app import _apply_style
+
+        _apply_style("Fusion")
+        assert QApplication.style() is not None
+
+    def test_reapplying_the_same_style_is_a_no_op(self, qapp):
+        # Not cosmetic. QApplication.setStyle destroys the live QStyle and re-polishes every
+        # widget; doing that on every preferences change is wasted work, and it is the walk
+        # that was aborting the Windows CI run.
+        from qtpy.QtWidgets import QApplication
+
+        from qt.app import _apply_style
+
+        _apply_style("Fusion")
+        first = QApplication.style()
+        _apply_style("Fusion")
+        assert QApplication.style() is first, "the style object should not have been replaced"
+
+    def test_a_different_style_is_still_applied(self, qapp):
+        from qtpy.QtWidgets import QApplication, QStyleFactory
+
+        from qt.app import _apply_style
+
+        others = [key for key in QStyleFactory.keys() if key.lower() != "fusion"]
+        if not others:
+            pytest.skip("this build offers only one style")
+        _apply_style("Fusion")
+        _apply_style(others[0])
+        assert QApplication.style().objectName().lower() == others[0].lower()

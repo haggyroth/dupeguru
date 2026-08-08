@@ -44,6 +44,7 @@ behaviour change, which is why this is opt-in rather than the default.
 
 import logging
 import os
+import os.path as op
 import sqlite3
 from typing import Union
 
@@ -51,6 +52,24 @@ from typing import Union
 # attempting migration: this holds nothing that cannot be recomputed, so a rebuild is always
 # cheaper and safer than a migration path nobody exercises.
 SCHEMA_VERSION = 1
+
+# A directory whose mtime is younger than this is not cached at all.
+#
+# Invalidation compares the directory's stored mtime against its current one, which assumes
+# the filesystem updates that mtime promptly and with fine resolution. Neither holds
+# everywhere: FAT and exFAT store 2-second mtimes, and NTFS updates directory timestamps
+# lazily. So a file added and the directory rescanned inside the same tick leaves the mtime
+# unchanged, the cache looks valid, and the new file is invisible -- add and remove are
+# exactly what this cache promises to detect.
+#
+# CI caught this on Windows after the first version shipped: two invalidation tests failed
+# there and passed on macOS and Linux, because the whole test ran inside one timestamp tick.
+#
+# Refusing to cache a recently-touched directory closes it. A directory being actively
+# written to is served live until it settles, which costs a rescan of the directories most
+# likely to have changed and is the safe direction. 2 seconds matches FAT's resolution and
+# the tolerance core.app.check_deletable already uses for the same reason.
+MTIME_SETTLE_NS = 2_000_000_000
 
 
 class FileListCache:
@@ -143,3 +162,18 @@ def directory_mtime_ns(path: Union[str, os.PathLike]) -> Union[int, None]:
         return os.stat(os.fspath(path)).st_mtime_ns
     except OSError:
         return None
+
+
+CACHE_FILENAME = "file_list_cache.db"
+
+
+def default_cache_path(appdata):
+    """Where the listing cache lives when the caller does not choose.
+
+    Beside the hash and picture caches, so all of a user's cached scan state is in one place
+    and `clear cache` style operations can find it. Only became a sane default once every
+    front end resolved the same appdata directory -- before that the CLI wrote to the root of
+    the user's application data folder (#94), and defaulting here would have put a fourth
+    stray file there.
+    """
+    return op.join(appdata, CACHE_FILENAME)

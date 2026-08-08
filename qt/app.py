@@ -4,6 +4,7 @@
 # which should be included with this package. The terms are also available at
 # http://www.gnu.org/licenses/gpl-3.0.html
 
+import logging
 import sys
 import os.path as op
 
@@ -30,6 +31,7 @@ from qt.problem_dialog import ProblemDialog
 from qt.ignore_list_dialog import IgnoreListDialog
 from qt.exclude_list_dialog import ExcludeListDialog
 from qt.deletion_options import DeletionOptions
+from qt.scan_profile import apply_settings, capture_settings
 from qt.se.details_dialog import DetailsDialog as DetailsDialogStandard
 from qt.me.details_dialog import DetailsDialog as DetailsDialogMusic
 from qt.pe.details_dialog import DetailsDialog as DetailsDialogPicture
@@ -40,6 +42,33 @@ from qt.pe.photo import File as PlatSpecificPhoto
 from qt.tabbed_window import TabBarWindow, TabWindow
 
 tr = trget("ui")
+
+
+def _apply_style(name):
+    """Switch to the named Qt style, if it exists on this build.
+
+    QStyleFactory.create() returns None for a key the platform does not provide, and
+    QApplication.setStyle(None) is accepted without complaint -- it raises nothing and reports
+    nothing, leaving the application's style undefined. "windowsvista" is the case that
+    matters: it is a Qt 5 name that later Qt versions do not always carry.
+
+    This is applied on every preferences change, so getting it wrong is not a one-off. Falling
+    back to Fusion, which every Qt build has, keeps a real style installed instead.
+    """
+    current = QApplication.style()
+    if current is not None and current.objectName().lower() == name.lower():
+        # Already this style. Setting it again is not a no-op inside Qt: it destroys the live
+        # QStyle and re-polishes every widget in the application. That is wasted work on every
+        # preferences change, and it is the operation that was aborting the Windows CI run
+        # with an access violation -- a re-polish walks widgets, and any one of them whose C++
+        # object has outlived its wrapper takes the process with it.
+        return
+    style = QStyleFactory.create(name)
+    if style is None:
+        logging.debug("Qt style %r is not available on this build; using Fusion", name)
+        style = QStyleFactory.create("Fusion")
+    if style is not None:
+        QApplication.setStyle(style)
 
 
 class DupeGuru(QObject):
@@ -97,7 +126,7 @@ class DupeGuru(QObject):
                 app=self, parent=parent_window, model=self.model.exclude_list_dialog
             )
 
-        self.deletionOptions = DeletionOptions(parent=parent_window, model=self.model.deletion_options)
+        self.deletionOptions = DeletionOptions(parent=parent_window, model=self.model.deletion_options, app=self)
         self.about_box = AboutBox(parent_window, self)
 
         parent_window.show()
@@ -183,6 +212,7 @@ class DupeGuru(QObject):
         # Only meaningful alongside partial hashing: with no partial matches there is
         # nothing to verify, and the scanner's verification pass is a no-op.
         self.model.options["full_verify"] = self.prefs.full_verify and self.prefs.big_file_partial_hashes
+        self._apply_file_list_cache()
         scanned_tags = set()
         if self.prefs.scan_tag_track:
             scanned_tags.add("track")
@@ -199,6 +229,7 @@ class DupeGuru(QObject):
         self.model.options["scanned_tags"] = scanned_tags
         self.model.options["match_scaled"] = self.prefs.match_scaled
         self.model.options["match_rotated"] = self.prefs.match_rotated
+        self.model.options["combine_picture_matching"] = self.prefs.combine_picture_matching
         self.model.options["include_exists_check"] = self.prefs.include_exists_check
         self.model.options["rehash_ignore_mtime"] = self.prefs.rehash_ignore_mtime
 
@@ -208,6 +239,47 @@ class DupeGuru(QObject):
         self._set_style("dark" if self.prefs.use_dark_style else "light")
 
     # --- Private
+
+    def _apply_file_list_cache(self):
+        """Attach or detach the directory listing cache to match the preference.
+
+        Not an entry in model.options: the cache is a collaborator on Directories rather than
+        a scanner knob, so it has to be connected and disconnected explicitly. Handling the
+        off case matters as much as the on case -- unticking the box has to actually stop the
+        cache being used, not merely stop refreshing it.
+
+        The default location only became sane once every front end resolved the same appdata
+        directory (#94); before that this would have written into the root of the user's
+        application data folder.
+        """
+        from core.file_list_cache import FileListCache, default_cache_path
+
+        from core.pe.match_cache import MatchCache
+        from core.pe.match_cache import default_cache_path as match_cache_path
+
+        directories = self.model.directories
+        if self.prefs.cache_file_list:
+            if directories.file_list_cache is None:
+                cache = FileListCache()
+                cache.connect(default_cache_path(self.model.appdata))
+                directories.file_list_cache = cache
+            if self.model.picture_match_cache is None:
+                # Same preference, deliberately. Both caches answer one user-facing question --
+                # "may dupeGuru remember what it saw last time" -- and they carry the same
+                # tradeoff. Two checkboxes would ask it twice and invite the half-on state,
+                # where listings are reused but matching is not, which is the slow path with
+                # none of the safety.
+                match_cache = MatchCache()
+                match_cache.connect(match_cache_path(self.model.appdata))
+                self.model.picture_match_cache = match_cache
+        else:
+            if directories.file_list_cache is not None:
+                directories.file_list_cache.close()
+                directories.file_list_cache = None
+            if self.model.picture_match_cache is not None:
+                self.model.picture_match_cache.close()
+                self.model.picture_match_cache = None
+
     def _get_details_dialog_class(self):
         if self.model.app_mode == AppMode.PICTURE:
             return DetailsDialogPicture
@@ -229,7 +301,7 @@ class DupeGuru(QObject):
         if not plat.ISWINDOWS:
             return
         if style == "dark":
-            QApplication.setStyle(QStyleFactory.create("Fusion"))
+            _apply_style("Fusion")
             palette = QApplication.style().standardPalette()
             palette.setColor(QPalette.ColorRole.Window, QColor(53, 53, 53))
             palette.setColor(QPalette.ColorRole.WindowText, Qt.GlobalColor.white)
@@ -252,7 +324,7 @@ class DupeGuru(QObject):
             palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Window, QColor(68, 68, 68))
             palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Highlight, QColor(68, 68, 68))
         else:
-            QApplication.setStyle(QStyleFactory.create("windowsvista" if plat.ISWINDOWS else "Fusion"))
+            _apply_style("windowsvista" if plat.ISWINDOWS else "Fusion")
             palette = QApplication.style().standardPalette()
         QToolTip.setPalette(palette)
         QApplication.setPalette(palette)
@@ -279,6 +351,37 @@ class DupeGuru(QObject):
                 self.details_dialog.show()
             else:
                 self.details_dialog.hide()
+
+    def saveScanProfile(self, name):
+        """Remember the current folders, mode and scan settings under *name*."""
+        self.model.save_scan_profile(name, capture_settings(self.prefs, self.model.app_mode))
+        # Written out now rather than at quit. A profile the user just named and then lost to a
+        # crash is worse than no profile feature, and there is nothing else in flight to batch
+        # the write with.
+        self.model.save()
+
+    def loadScanProfile(self, name):
+        """Restore a saved profile, and say so if any of its folders have gone.
+
+        Restoring the folders alone would give a scan with the right folders and whatever
+        settings happened to be set, so the preferences travel with them.
+        """
+        profile = self.model.scan_profiles.get(name)
+        if profile is None:
+            return
+        # Order matters. apply_scan_profile sets app_mode, and _update_options reads app_mode
+        # to pick which of the three saved scan types applies -- so the mode has to change
+        # before the options are rebuilt, or a picture profile would scan with the standard
+        # mode's scan type.
+        missing = self.model.apply_scan_profile(name)
+        apply_settings(self.prefs, profile.settings, profile.app_mode)
+        self.directories_dialog.refreshAppMode()
+        if missing:
+            self.show_message(
+                tr("Loaded scan profile '{}', but {} of its folders no longer exist and were " "skipped:\n\n{}").format(
+                    name, len(missing), "\n".join(missing)
+                )
+            )
 
     def showResultsWindow(self):
         if self.resultWindow is not None:

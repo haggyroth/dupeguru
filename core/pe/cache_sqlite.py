@@ -303,15 +303,25 @@ class SqliteCache:
             for rowid, blocks, blocks2, blocks3, blocks4, blocks5, blocks6, blocks7, blocks8 in cur
         )
 
-    def purge_outdated(self):
+    def purge_outdated(self, scoped_to=None):
         """Go through the cache and purge outdated records.
 
         A record is outdated if the picture doesn't exist or if its mtime is greater than the one in
         the db.  Skipped entirely when the cache was opened readonly.
+
+        ``scoped_to`` limits the check to that set of directories. Without it this walks every
+        directory the cache has ever seen, so the cost is a function of cache *history* rather
+        than of the scan being run: a two-file scan of a local folder took over a minute
+        against a cache holding 129,607 rows from an external drive it was not scanning
+        (issue #93). Cached rows are validated against mtime when they are read, so leaving
+        another directory's stale rows in place is harmless -- they simply miss.
         """
         if self.readonly:
             return
         rows = list(self.con.execute("select rowid, path, mtime_ns from pictures"))
+        if scoped_to is not None:
+            wanted = {str(d) for d in scoped_to}
+            rows = [r for r in rows if op.dirname(r[1]) in wanted]
         if not rows:
             return
 
@@ -323,15 +333,22 @@ class SqliteCache:
             dir_to_rows[op.dirname(path_str)].append((rowid, path_str, mtime_ns))
 
         path_mtime: dict = {}
+        unreachable = set()
         for dirpath in dir_to_rows:
             try:
                 for entry in os.scandir(dirpath):
                     path_mtime[entry.path] = entry.stat().st_mtime
             except OSError:
-                pass
+                # An unmounted drive raises here. Treating its files as "gone" would delete
+                # every row cached from it, so unplugging a disk silently threw away its whole
+                # cache and the next scan of it started cold. Absent is not the same as
+                # deleted, so these are left alone.
+                unreachable.add(dirpath)
 
         todelete = []
         for rowid, path_str, mtime_ns in rows:
+            if op.dirname(path_str) in unreachable:
+                continue
             file_mtime = path_mtime.get(path_str)
             if file_mtime is None:
                 todelete.append(rowid)  # file gone

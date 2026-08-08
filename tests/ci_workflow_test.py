@@ -142,3 +142,30 @@ def test_every_job_runs_with_least_privilege_permissions():
                 f"{path.name}: job {job_name!r} runs with contents: "
                 f"{effective.get('contents')!r}; none of these jobs write to the repository."
             )
+
+
+def test_no_matrix_cancels_its_siblings_on_first_failure():
+    """Every matrix job must set `fail-fast: false`.
+
+    With the default, a failure on one leg cancels the rest mid-run, and a cancelled job
+    reports as a *failure* carrying no test output. One real failure becomes several, most of
+    which say nothing about why -- diagnosing one meant reading the raw log to find "The
+    operation was canceled". Whether a failure is one platform or all of them is usually the
+    first question, and this is the setting that destroys that information.
+
+    Checked across every workflow rather than a pinned list: default.yml was the outlier while
+    the other two already set it, which is exactly the drift this catches.
+    """
+    workflows = sorted(WORKFLOW.parent.glob("*.yml"))
+    assert workflows, "no workflows found; the glob or the path is wrong"
+    for path in workflows:
+        workflow = yaml.safe_load(path.read_text(encoding="utf-8"))
+        for job_name, job in workflow["jobs"].items():
+            strategy = job.get("strategy")
+            if strategy is None or "matrix" not in strategy:
+                continue  # not a matrix job; nothing to cancel
+            assert strategy.get("fail-fast") is False, (
+                f"{path.name}: job {job_name!r} leaves fail-fast at its default, so one "
+                "failing leg will cancel the others and report them as failures with no "
+                "test output."
+            )

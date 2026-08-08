@@ -30,9 +30,50 @@ Preferences
     If you check this box, duplicate groups are allowed to have files with different extensions. If
     you don't check it, well, they aren't!
 
+**Also find visually similar pictures:**
+    A standard scan compares file contents, so it finds byte-for-byte copies and nothing else --
+    two photographs that are the same picture at different sizes are simply not duplicates to
+    it. Picture mode finds those, but collects only images, so pointing dupeGuru at a folder of
+    documents, videos and photographs means choosing which half of the problem to look at.
+
+    With this on, a Contents scan also compares the images it finds by appearance and merges the
+    results, so one scan covers both.
+
+    It is off by default because it is slow. Comparing contents mostly reads files; comparing
+    appearance decodes every image and compares each against the others, which grows sharply
+    with the number of pictures.
+
+    Matches found this way are a *resemblance*, not proof of identity: a re-encode, a crop or a
+    resize can look identical while the files differ. dupeGuru records which kind each match was
+    and never treats a resemblance as a reason to replace a file with a copy-on-write clone.
+
 **Ignore duplicates hardlinking to the same file:**
     If this option is enabled, dupeGuru will verify duplicates to see if they refer to the same
     `inode`_. If they do, they will not be considered duplicates. (Only for OS X and Linux)
+
+**Partially hash files bigger than:**
+    Above this size, dupeGuru compares three sampled chunks of a file instead of reading it
+    from end to end. Large scans get much faster, but it is a real trade: two different files
+    can agree on every sampled chunk and still be reported as duplicates. Such a pair still
+    scores 100%, so the match percentage alone will not tell you. Set it to 0 to always
+    compare full contents.
+
+**Verify partially hashed matches by comparing full contents:**
+    Re-reads only the files involved in a partial match and discards any pair that does not
+    match in full. This gives you the speed of partial hashing with the certainty of a full
+    comparison, at the cost of reading the matched files a second time. Has no effect unless
+    partial hashing is enabled above.
+
+**Remember scan results between scans:**
+    Reuses what the previous scan found when nothing has changed: folder listings, and in
+    Picture mode the comparison results too. Re-reading folders is the slow part of scanning
+    an external or network drive, and comparing a large photo library is slower still, so a
+    repeat scan of an unchanged drive becomes close to instant.
+
+    Files added, removed or renamed are still noticed. A file edited *in place* without its
+    folder changing may be missed until the next full scan, which is why this is off by
+    default. Nothing is ever deleted on the basis of remembered information -- every file is
+    re-checked against the disk immediately before it is removed.
 
 **Use regular expressions when filtering:**
     If you check this box, the filtering feature will treat your filter query as a

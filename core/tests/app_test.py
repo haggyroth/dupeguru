@@ -16,11 +16,12 @@ from pathlib import Path
 import hscommon.conflict
 import hscommon.util
 from hscommon.testutil import eq_, log_calls
-from hscommon.jobprogress.job import Job
+from hscommon.jobprogress.job import Job, nulljob
 
 from core.tests.base import TestApp
 from core.tests.results_test import GetTestGroups
 from core import app, fs, engine
+from core.results import Results
 from core.scanner import ScanType
 
 
@@ -145,7 +146,7 @@ class TestCaseDupeGuru:
         # If the ignore_hardlink_matches option is set, don't match files hardlinking to the same
         # inode.
         tmppath = Path(str(tmpdir))
-        tmppath.joinpath("myfile").open("wt").write("foo")
+        tmppath.joinpath("myfile").write_text("foo")
         os.link(str(tmppath.joinpath("myfile")), str(tmppath.joinpath("hardlink")))
         app = TestApp().app
         app.directories.add_path(tmppath)
@@ -301,6 +302,40 @@ class TestCaseDupeGuru:
         dgapp = TestApp().app
         dgapp._do_delete_dupe(folder, False, False, True)
         assert not sub.exists()
+
+    def test_check_deletable_at_exactly_the_tolerance(self, tmpdir):
+        """The boundary the tolerance exists for, which the surrounding tests step over.
+
+        Found by mutation testing: changing `>` to `>=` survived, because the existing tests
+        use 1 second (accepted) and 3 seconds (refused) and never touch 2. FAT32 stores mtimes
+        to a 2-second resolution, so a file that has not changed can legitimately report
+        exactly that difference -- refusing it would make deletion impossible on FAT volumes,
+        which is the case the constant was added for.
+        """
+        f = Path(str(tmpdir)) / "file.txt"
+        f.write_text("hello")
+        st = f.stat()
+        eq_(app.check_deletable(f, st.st_size, st.st_mtime - app._MTIME_TOLERANCE)[0], app.DeleteStatus.OK)
+        eq_(
+            app.check_deletable(f, st.st_size, st.st_mtime - app._MTIME_TOLERANCE - 0.5)[0],
+            app.DeleteStatus.CHANGED,
+        )
+
+    def test_unused_link_path_increments_past_several_collisions(self, tmpdir):
+        """`counter += 1`, not `counter = 1`.
+
+        Found by mutation testing: replacing the increment with an assignment survived,
+        because no test created two collisions. With `= 1` the loop would retry the same
+        candidate forever -- a hang during deletion, not an error.
+        """
+        tmppath = Path(str(tmpdir))
+        base = tmppath / "f.txt"
+        base.write_text("x")
+        (tmppath / "f.txt.dupeguru-link").write_text("x")
+        (tmppath / "f.txt.dupeguru-link1").write_text("x")
+        result = app.DupeGuru._unused_link_path(str(base))
+        assert not result.exists()
+        assert str(result).endswith("dupeguru-link2")
 
     def test_check_deletable_refuses_a_symlink(self, tmpdir):
         tmppath = Path(str(tmpdir))
@@ -969,3 +1004,775 @@ class TestAppWithDirectoriesInTree:
         subnode = node[0]
         eq_(subnode.state, 1)
         self.dtree.view.check_gui_calls(["refresh_states"])
+
+
+class TestCopyMoveWhenDupeIsAScanDirectory:
+    """A folder-mode dupe is often a scanned folder itself, not a file inside one (issue #78)."""
+
+    @staticmethod
+    def _app(dirs):
+        class Standalone(app.DupeGuru):
+            def __init__(self, directories):
+                self.directories = directories
+
+        return Standalone(dirs)
+
+    def test_relative_destination_does_not_crash(self, tmpdir):
+        """first() returns None when no scan directory is a *parent* of the dupe.
+
+        That is true whenever the dupe is a scanned directory: `p in path.parents` is false
+        for p == path. The old code dereferenced it and raised AttributeError.
+        """
+        tmp_path = Path(str(tmpdir))
+        a = tmp_path / "A"
+        b = tmp_path / "B"
+        a.mkdir()
+        b.mkdir()
+        (b / "f.txt").write_text("data")
+        dest = tmp_path / "dest"
+        dest.mkdir()
+
+        dgapp = self._app([a, b])
+        dgapp.copy_or_move(fs.Folder(b), copy=True, destination=str(dest), dest_type=app.DestType.RELATIVE)
+        # With no location to be relative *to*, the fallback keeps the absolute layout, so the
+        # folder lands under its full source path rather than directly in dest.
+        assert any(dest.rglob("B")), "the folder was not copied anywhere under dest"
+
+    def test_direct_destination_does_not_recreate_the_source_tree(self, tmpdir):
+        """`dest_type == DestType.RELATIVE` -- flipping it to `!=` survived mutation testing.
+
+        DIRECT means "put the file straight in the chosen folder". If the comparison inverts,
+        DIRECT starts rebuilding the source directory tree under the destination and RELATIVE
+        stops, which silently scatters files somewhere the user did not choose.
+        """
+        tmp_path = Path(str(tmpdir))
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "f.txt").write_text("data")
+        dest = tmp_path / "dest"
+        dest.mkdir()
+
+        dgapp = self._app([tmp_path])
+        dgapp.copy_or_move(fs.File(src / "f.txt"), copy=True, destination=str(dest), dest_type=app.DestType.DIRECT)
+
+        assert (dest / "f.txt").exists(), "DIRECT did not put the file straight into dest"
+        assert not any(p.is_dir() for p in dest.iterdir()), "DIRECT recreated a directory tree"
+
+    def test_absolute_and_relative_place_the_file_differently(self, tmpdir):
+        """ABSOLUTE keeps the whole source path; RELATIVE strips the scanned folder from it.
+
+        The previous version only asserted the file landed *somewhere* under dest, which is
+        true either way -- so inverting `dest_type == DestType.RELATIVE` survived mutation
+        testing. DIRECT never reaches that branch (the enclosing `if dest_type in {RELATIVE,
+        ABSOLUTE}` excludes it), so ABSOLUTE against RELATIVE is the only comparison that can
+        catch the inversion.
+        """
+        tmp_path = Path(str(tmpdir))
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "f.txt").write_text("data")
+        dgapp = self._app([tmp_path])
+
+        abs_dest = tmp_path / "abs"
+        abs_dest.mkdir()
+        dgapp.copy_or_move(
+            fs.File(src / "f.txt"), copy=True, destination=str(abs_dest), dest_type=app.DestType.ABSOLUTE
+        )
+        rel_dest = tmp_path / "rel"
+        rel_dest.mkdir()
+        dgapp.copy_or_move(
+            fs.File(src / "f.txt"), copy=True, destination=str(rel_dest), dest_type=app.DestType.RELATIVE
+        )
+
+        [absolute] = list(abs_dest.rglob("f.txt"))
+        [relative] = list(rel_dest.rglob("f.txt"))
+        abs_depth = len(absolute.relative_to(abs_dest).parts)
+        rel_depth = len(relative.relative_to(rel_dest).parts)
+        assert abs_depth > rel_depth, (
+            f"ABSOLUTE nested {abs_depth} deep and RELATIVE {rel_depth}; RELATIVE strips the "
+            "scanned folder from the path, so it must be shallower"
+        )
+        assert relative.parent.name == "src"
+
+
+class TestPerformOnMarkedKeepsResultsConsistent:
+    """An unexpected exception must not abandon the batch (issue #78).
+
+    perform_on_marked caught only OSError and UnicodeEncodeError. Anything else unwound the
+    loop, so dupes already moved or deleted on disk were never removed from the results --
+    the table then disagreed with the filesystem, and a second run operated on entries whose
+    sources no longer existed.
+    """
+
+    def test_unexpected_error_is_recorded_rather_than_raised(self):
+        results = Results(TestApp().app)
+        objects, matches, groups = GetTestGroups()
+        results.groups = groups
+        first_dupe, second_dupe = objects[1], objects[2]
+        results.mark(first_dupe)
+        results.mark(second_dupe)
+
+        def op(dupe):
+            if dupe is second_dupe:
+                raise AttributeError("boom")
+
+        results.perform_on_marked(op, True)
+
+        assert len(results.problems) == 1, "the unexpected error was not recorded as a problem"
+        assert results.problems[0][0] is second_dupe
+        assert first_dupe not in results.dupes, (
+            "the dupe processed before the failure stayed in the results; the table now "
+            "disagrees with what happened on disk"
+        )
+
+    def test_oserror_still_behaves_as_before(self):
+        results = Results(TestApp().app)
+        objects, matches, groups = GetTestGroups()
+        results.groups = groups
+        dupe = objects[1]
+        results.mark(dupe)
+
+        def op(d):
+            raise OSError("nope")
+
+        results.perform_on_marked(op, True)
+        eq_(len(results.problems), 1)
+
+
+class TestDeleteMarkedGuards:
+    """The three checks that gate every deletion (issue #82).
+
+    delete_marked was 12% covered. The machinery underneath it -- _do_delete_dupe,
+    check_deletable, the link replacement -- is well tested, so a regression in these guards
+    would let deletion proceed while every other test in this file still passed.
+
+    The middle guard is the one that matters most: it warns that some marked duplicates were
+    matched on a *sampled* hash rather than full contents, so a false positive is possible.
+    Inverting it, or losing the return, would delete files the user was never asked about.
+
+    _start_job is spied on rather than allowed to run. These tests are about whether deletion
+    is *started*, not what it does once started, and letting a real job run would make a
+    failure here look like a filesystem problem.
+    """
+
+    @staticmethod
+    def _app_with_marked_dupes():
+        dgapp = TestApp().app
+        objects, matches, groups = GetTestGroups()
+        dgapp.results.groups = groups
+        dgapp.results.mark(objects[1])
+        started = []
+        dgapp._start_job = lambda *a, **k: started.append((a, k))
+
+        def accept(mark_count):
+            # The real show() initialises _link_deleted before returning; link_deleted reads
+            # it and DeletionOptions.__init__ does not set it, so a stub that skips this
+            # raises AttributeError from inside delete_marked rather than testing anything.
+            dgapp.deletion_options._link_deleted = False
+            return True
+
+        dgapp.deletion_options.show = accept
+        return dgapp, started
+
+    def test_nothing_marked_shows_a_message_and_starts_no_job(self):
+        dgapp = TestApp().app
+        objects, matches, groups = GetTestGroups()
+        dgapp.results.groups = groups
+        dgapp.results.mark_none()
+        started = []
+        dgapp._start_job = lambda *a, **k: started.append(a)
+
+        dgapp.delete_marked()
+
+        assert not started
+        assert app.MSG_NO_MARKED_DUPES in dgapp.view.messages
+
+    def test_partial_matches_prompt_the_user(self):
+        """The warning must actually be asked, not merely available."""
+        dgapp, started = self._app_with_marked_dupes()
+        dgapp.results.has_marked_partial_matches = lambda: True
+        asked = []
+        dgapp.view.ask_yes_no = lambda prompt: asked.append(prompt) or True
+
+        dgapp.delete_marked()
+
+        assert asked == [app.MSG_PARTIAL_HASH_WARNING], "the partial-match warning was not shown"
+        assert started, "deletion should proceed once the user accepts"
+
+    def test_declining_the_partial_match_prompt_aborts(self):
+        """The regression that would cost files: answering no must stop the deletion."""
+        dgapp, started = self._app_with_marked_dupes()
+        dgapp.results.has_marked_partial_matches = lambda: True
+        dgapp.view.ask_yes_no = lambda prompt: False
+
+        dgapp.delete_marked()
+
+        assert not started, "deletion started despite the user declining the warning"
+
+    def test_no_partial_matches_does_not_prompt(self):
+        """Asking every time would train people to click through it."""
+        dgapp, started = self._app_with_marked_dupes()
+        dgapp.results.has_marked_partial_matches = lambda: False
+        asked = []
+        dgapp.view.ask_yes_no = lambda prompt: asked.append(prompt) or True
+
+        dgapp.delete_marked()
+
+        assert asked == []
+        assert started
+
+    def test_cancelling_the_options_dialog_aborts(self):
+        dgapp, started = self._app_with_marked_dupes()
+        dgapp.results.has_marked_partial_matches = lambda: False
+        dgapp.deletion_options.show = lambda mark_count: False
+
+        dgapp.delete_marked()
+
+        assert not started, "deletion started even though the options dialog was cancelled"
+
+    def test_options_dialog_is_told_how_many_are_marked(self):
+        """It shows the count to the user, so passing the wrong one misinforms them."""
+        dgapp, started = self._app_with_marked_dupes()
+        dgapp.results.has_marked_partial_matches = lambda: False
+        seen = []
+
+        def record(mark_count):
+            seen.append(mark_count)
+            dgapp.deletion_options._link_deleted = False
+            return True
+
+        dgapp.deletion_options.show = record
+
+        dgapp.delete_marked()
+
+        assert seen == [dgapp.results.mark_count]
+
+    def test_job_receives_the_chosen_deletion_options(self):
+        """The options the user picked have to reach the job, or they silently do nothing."""
+        dgapp, started = self._app_with_marked_dupes()
+        dgapp.results.has_marked_partial_matches = lambda: False
+
+        def choose_everything(mark_count):
+            # The options are set *by* the dialog, so they have to be applied here: the real
+            # show() resets _link_deleted on entry, and anything set before it is discarded.
+            # Assigned to the backing attribute because the property's setter calls into the
+            # dialog's view to enable the hardlink widget, and there is no view here.
+            dgapp.deletion_options._link_deleted = True
+            dgapp.deletion_options.use_hardlinks = True
+            dgapp.deletion_options.direct = True
+            dgapp.deletion_options.use_clones = True
+            return True
+
+        dgapp.deletion_options.show = choose_everything
+
+        dgapp.delete_marked()
+
+        assert started, "no job was started"
+        _, kwargs = started[0]
+        assert kwargs["args"] == [True, True, True, True]
+
+
+class TestCopyOrMoveMarkedGuards:
+    """The guards around copy/move, and the copy-vs-move difference (issue #82).
+
+    Same shape as TestDeleteMarkedGuards: copy_or_move itself is well covered, so a
+    regression in the orchestration would go unnoticed. The difference that matters here is
+    the last argument to perform_on_marked -- a move removes dupes from the results because
+    they are no longer where the table says, a copy must not because they still are.
+    """
+
+    @staticmethod
+    def _app_with_marked_dupes(destination="/dest"):
+        dgapp = TestApp().app
+        objects, matches, groups = GetTestGroups()
+        dgapp.results.groups = groups
+        dgapp.results.mark(objects[1])
+        started = []
+        dgapp._start_job = lambda *a, **k: started.append(a)
+        prompts = []
+        dgapp.view.select_dest_folder = lambda prompt: prompts.append(prompt) or destination
+        return dgapp, started, prompts
+
+    def test_nothing_marked_shows_a_message_and_starts_no_job(self):
+        dgapp = TestApp().app
+        objects, matches, groups = GetTestGroups()
+        dgapp.results.groups = groups
+        dgapp.results.mark_none()
+        started = []
+        dgapp._start_job = lambda *a, **k: started.append(a)
+        dgapp.view.select_dest_folder = lambda prompt: "/dest"
+
+        dgapp.copy_or_move_marked(True)
+
+        assert not started
+        assert app.MSG_NO_MARKED_DUPES in dgapp.view.messages
+
+    def test_nothing_marked_does_not_even_ask_for_a_destination(self):
+        """Prompting for a folder and then doing nothing would be a confusing dead end."""
+        dgapp, started, prompts = self._app_with_marked_dupes()
+        dgapp.results.mark_none()
+
+        dgapp.copy_or_move_marked(True)
+
+        assert prompts == []
+        assert not started
+
+    def test_cancelling_the_folder_picker_starts_no_job(self):
+        dgapp, started, prompts = self._app_with_marked_dupes(destination="")
+
+        dgapp.copy_or_move_marked(True)
+
+        assert prompts, "the user should have been asked"
+        assert not started, "a job was started despite no destination being chosen"
+
+    def test_copy_and_move_use_distinct_job_types(self):
+        """The job id drives the progress window's title; swapping them mislabels the work."""
+        dgapp, started, _ = self._app_with_marked_dupes()
+        dgapp.copy_or_move_marked(True)
+        dgapp.copy_or_move_marked(False)
+
+        assert [a[0] for a in started] == [app.JobType.COPY, app.JobType.MOVE]
+
+    def test_the_prompt_says_which_operation_it_is(self):
+        """Same dialog for both, so the wording is the only thing telling them apart."""
+        dgapp, started, prompts = self._app_with_marked_dupes()
+        dgapp.copy_or_move_marked(True)
+        dgapp.copy_or_move_marked(False)
+
+        assert "copy" in prompts[0].lower()
+        assert "move" in prompts[1].lower()
+        assert prompts[0] != prompts[1]
+
+    def _run_job(self, dgapp, started):
+        """Invoke the closure handed to _start_job, spying on perform_on_marked."""
+        seen = {}
+
+        def spy(op, remove_from_results):
+            seen["remove_from_results"] = remove_from_results
+
+        dgapp.results.perform_on_marked = spy
+        _, func = started[0]
+        func(nulljob)
+        return seen
+
+    def test_move_removes_dupes_from_the_results(self):
+        dgapp, started, _ = self._app_with_marked_dupes()
+        dgapp.copy_or_move_marked(False)
+        assert self._run_job(dgapp, started)["remove_from_results"] is True
+
+    def test_copy_leaves_dupes_in_the_results(self):
+        """Inverting this would drop files from the table that are still on disk."""
+        dgapp, started, _ = self._app_with_marked_dupes()
+        dgapp.copy_or_move_marked(True)
+        assert self._run_job(dgapp, started)["remove_from_results"] is False
+
+    def test_the_chosen_destination_reaches_copy_or_move(self):
+        """destination and desttype are closure variables assigned after `do` is defined."""
+        dgapp, started, _ = self._app_with_marked_dupes(destination="/chosen")
+        dgapp.options["copymove_dest_type"] = app.DestType.ABSOLUTE
+        dgapp.copy_or_move_marked(True)
+
+        calls = []
+        dgapp.copy_or_move = lambda dupe, copy, destination, dest_type: calls.append((copy, destination, dest_type))
+        dgapp.results.perform_on_marked = lambda op, remove: op(dgapp.results.dupes[0])
+        _, func = started[0]
+        func(nulljob)
+
+        assert calls == [(True, "/chosen", app.DestType.ABSOLUTE)]
+
+
+class TestJobCompleted:
+    """What the user is told, and what is made durable, when a job finishes (issue #82).
+
+    _job_completed was 3% covered. It is not the view glue it looks like from the outside:
+    it decides between four different success messages, whether the results window or the
+    problem dialog appears, and it is where the hash caches are committed.
+
+    The message chain is the part worth guarding. Telling someone their files went to the
+    Trash when they were permanently deleted is a statement about whether the operation can
+    be undone, and it is decided by a single `elif` on deletion_options.direct.
+    """
+
+    @staticmethod
+    def _app():
+        dgapp = TestApp().app
+        calls = {"results_window": 0, "problem_dialog": 0}
+        dgapp.view.show_results_window = lambda: calls.__setitem__("results_window", calls["results_window"] + 1)
+        dgapp.view.show_problem_dialog = lambda: calls.__setitem__("problem_dialog", calls["problem_dialog"] + 1)
+        dgapp.problem_dialog.refresh = lambda: None
+        return dgapp, calls
+
+    # --- scan ---
+
+    def test_scan_with_no_groups_says_so_and_opens_nothing(self):
+        dgapp, calls = self._app()
+        dgapp.results.groups = []
+        dgapp._job_completed(app.JobType.SCAN)
+        assert "No duplicates found." in dgapp.view.messages
+        assert calls["results_window"] == 0
+
+    def test_scan_with_groups_opens_the_results_window_silently(self):
+        dgapp, calls = self._app()
+        objects, matches, groups = GetTestGroups()
+        dgapp.results.groups = groups
+        dgapp._job_completed(app.JobType.SCAN)
+        assert calls["results_window"] == 1
+        assert dgapp.view.messages == []
+
+    def test_scan_commits_both_hash_caches(self, monkeypatch):
+        """Durability: FilesDB batches writes and only a commit makes them survive.
+
+        Losing this would not fail anything visibly -- the scan still works, the next one is
+        just slow again for no apparent reason.
+
+        monkeypatch, not plain assignment: filesdb and hashcachedb are module-level
+        singletons, so replacing a method on them without restoring would leak a stub into
+        every test that ran afterwards.
+        """
+        from core.hash_cache import hashcachedb
+
+        dgapp, _ = self._app()
+        dgapp.results.groups = []
+        committed = []
+        monkeypatch.setattr(fs.filesdb, "commit", lambda: committed.append("filesdb"))
+        monkeypatch.setattr(hashcachedb, "commit", lambda: committed.append("hashcachedb"))
+        dgapp._job_completed(app.JobType.SCAN)
+        assert committed == ["filesdb", "hashcachedb"]
+
+    # --- load ---
+
+    def test_load_rebuilds_the_table_and_opens_the_results_window(self):
+        dgapp, calls = self._app()
+        rebuilt = []
+        dgapp._recreate_result_table = lambda: rebuilt.append(True)
+        dgapp._job_completed(app.JobType.LOAD)
+        assert rebuilt == [True]
+        assert calls["results_window"] == 1
+
+    # --- problems take priority over any success message ---
+
+    def test_problems_open_the_problem_dialog_instead_of_reporting_success(self):
+        dgapp, calls = self._app()
+        objects, matches, groups = GetTestGroups()
+        dgapp.results.groups = groups
+        dgapp.results.problems = [(objects[1], "nope")]
+        dgapp._job_completed(app.JobType.DELETE)
+        assert calls["problem_dialog"] == 1
+        assert dgapp.view.messages == [], "a success message was shown despite failures"
+
+    def test_the_problem_dialog_is_refreshed_before_being_shown(self):
+        """Showing a stale dialog would list the previous run's failures."""
+        dgapp, calls = self._app()
+        objects, matches, groups = GetTestGroups()
+        dgapp.results.groups = groups
+        dgapp.results.problems = [(objects[1], "nope")]
+        order = []
+        dgapp.problem_dialog.refresh = lambda: order.append("refresh")
+        dgapp.view.show_problem_dialog = lambda: order.append("show")
+        dgapp._job_completed(app.JobType.COPY)
+        assert order == ["refresh", "show"]
+
+    # --- the four success messages ---
+
+    def test_copy_reports_copying(self):
+        dgapp, _ = self._app()
+        dgapp._job_completed(app.JobType.COPY)
+        assert dgapp.view.messages == ["All marked files were copied successfully."]
+
+    def test_move_reports_moving(self):
+        dgapp, _ = self._app()
+        dgapp._job_completed(app.JobType.MOVE)
+        assert dgapp.view.messages == ["All marked files were moved successfully."]
+
+    def test_direct_delete_reports_deletion_not_trash(self):
+        """The distinction is whether the files can be recovered."""
+        dgapp, _ = self._app()
+        dgapp.deletion_options.direct = True
+        dgapp._job_completed(app.JobType.DELETE)
+        assert dgapp.view.messages == ["All marked files were deleted successfully."]
+
+    def test_trash_delete_reports_trash_not_deletion(self):
+        dgapp, _ = self._app()
+        dgapp.deletion_options.direct = False
+        dgapp._job_completed(app.JobType.DELETE)
+        assert dgapp.view.messages == ["All marked files were successfully sent to Trash."]
+
+    def test_move_and_delete_refresh_the_results(self):
+        """`if jobid in {MOVE, DELETE}` -- inverting it survived mutation testing.
+
+        Files have left their old locations by this point, so the results have to be told.
+        Without it the table keeps listing what was moved or deleted, which is the same
+        disagreement between table and disk that #78 was about.
+        """
+        for jobid in (app.JobType.MOVE, app.JobType.DELETE):
+            dgapp, _ = self._app()
+            refreshed = []
+            dgapp._results_changed = lambda: refreshed.append(jobid)
+            dgapp._job_completed(jobid)
+            assert refreshed, f"{jobid} did not refresh the results"
+
+    def test_copy_does_not_refresh_the_results(self):
+        """The other half: a copy leaves everything where it was, so nothing needs refreshing."""
+        dgapp, _ = self._app()
+        refreshed = []
+        dgapp._results_changed = lambda: refreshed.append("copy")
+        dgapp._job_completed(app.JobType.COPY)
+        assert refreshed == []
+
+    def test_scan_reports_no_success_message(self):
+        """Only copy, move and delete report success; a scan opening a window is enough."""
+        dgapp, _ = self._app()
+        objects, matches, groups = GetTestGroups()
+        dgapp.results.groups = groups
+        dgapp._job_completed(app.JobType.SCAN)
+        assert dgapp.view.messages == []
+
+
+class TestStartScanning:
+    """Guards and wiring around starting a scan (issue #82).
+
+    Two of these matter more than coverage. The multi-device warning is a data-loss guard --
+    scanning a drive holding backups alongside originals risks marking the originals for
+    deletion if reference folders are wrong -- and it is the second such prompt in this file
+    with nothing testing it. The other is that the options actually reach the scanner: an
+    option that stops being copied across looks identical from the UI and silently changes
+    every scan.
+    """
+
+    @staticmethod
+    def _app(monkeypatch, has_files=True, spans_devices=False):
+        from core.hash_cache import hashcachedb
+
+        dgapp = TestApp().app
+        started = []
+        dgapp._start_job = lambda *a, **k: started.append(a)
+        dgapp.directories.has_any_file = lambda: has_files
+        monkeypatch.setattr(app.DupeGuru, "_dirs_span_multiple_devices", staticmethod(lambda d: spans_devices))
+        # Module-level singletons: stub through monkeypatch so nothing leaks into later tests.
+        monkeypatch.setattr(fs.filesdb, "purge_if_stale", lambda: None)
+        monkeypatch.setattr(hashcachedb, "purge_if_stale", lambda: None)
+        return dgapp, started
+
+    def test_no_scannable_files_says_so_and_starts_no_job(self, monkeypatch):
+        dgapp, started = self._app(monkeypatch, has_files=False)
+        dgapp.start_scanning()
+        assert not started
+        assert any("no scannable file" in m for m in dgapp.view.messages)
+
+    def test_scan_starts_when_there_are_files(self, monkeypatch):
+        dgapp, started = self._app(monkeypatch)
+        dgapp.start_scanning()
+        assert [a[0] for a in started] == [app.JobType.SCAN]
+
+    # --- the multi-device warning ---
+
+    def _two_directories(self, dgapp, tmpdir):
+        tmppath = Path(str(tmpdir))
+        for name in ("one", "two"):
+            (tmppath / name).mkdir()
+            dgapp.directories.add_path(tmppath / name)
+
+    def test_multiple_devices_warns_before_scanning(self, monkeypatch, tmpdir):
+        dgapp, started = self._app(monkeypatch, spans_devices=True)
+        self._two_directories(dgapp, tmpdir)
+        asked = []
+        dgapp.view.ask_yes_no = lambda prompt: asked.append(prompt) or True
+
+        dgapp.start_scanning()
+
+        assert len(asked) == 1, "the multi-device warning was not shown"
+        assert "different drives" in asked[0]
+        assert started, "the scan should proceed once the user accepts"
+
+    def test_declining_the_multi_device_warning_aborts(self, monkeypatch, tmpdir):
+        """The data-loss guard: answering no must stop the scan."""
+        dgapp, started = self._app(monkeypatch, spans_devices=True)
+        self._two_directories(dgapp, tmpdir)
+        dgapp.view.ask_yes_no = lambda prompt: False
+
+        dgapp.start_scanning()
+
+        assert not started, "the scan started despite the user declining the warning"
+
+    def test_one_directory_never_warns(self, monkeypatch, tmpdir):
+        """A single folder cannot span devices, so asking would just be noise."""
+        dgapp, started = self._app(monkeypatch, spans_devices=True)
+        tmppath = Path(str(tmpdir))
+        (tmppath / "only").mkdir()
+        dgapp.directories.add_path(tmppath / "only")
+        asked = []
+        dgapp.view.ask_yes_no = lambda prompt: asked.append(prompt) or True
+
+        dgapp.start_scanning()
+
+        assert asked == []
+        assert started
+
+    def test_same_device_does_not_warn(self, monkeypatch, tmpdir):
+        dgapp, started = self._app(monkeypatch, spans_devices=False)
+        self._two_directories(dgapp, tmpdir)
+        asked = []
+        dgapp.view.ask_yes_no = lambda prompt: asked.append(prompt) or True
+
+        dgapp.start_scanning()
+
+        assert asked == []
+        assert started
+
+    # --- wiring ---
+
+    def test_options_are_copied_onto_the_scanner(self, monkeypatch):
+        """An option that stops reaching the scanner silently changes every scan."""
+        dgapp, started = self._app(monkeypatch)
+        built = []
+        real_class = dgapp.SCANNER_CLASS
+
+        class Recording(real_class):
+            def __init__(self):
+                super().__init__()
+                built.append(self)
+
+        monkeypatch.setattr(type(dgapp), "SCANNER_CLASS", property(lambda self: Recording))
+        dgapp.options["min_match_percentage"] = 42
+        dgapp.options["mix_file_kind"] = False
+
+        dgapp.start_scanning()
+
+        assert built, "no scanner was constructed"
+        assert built[0].min_match_percentage == 42
+        assert built[0].mix_file_kind is False
+
+    def test_rehash_ignore_mtime_reaches_the_hash_cache(self, monkeypatch):
+        dgapp, started = self._app(monkeypatch)
+        dgapp.options["rehash_ignore_mtime"] = True
+        dgapp.start_scanning()
+        assert fs.filesdb.ignore_mtime is True
+
+        dgapp.options["rehash_ignore_mtime"] = False
+        dgapp.start_scanning()
+        assert fs.filesdb.ignore_mtime is False
+
+    def test_previous_results_are_cleared_before_scanning(self, monkeypatch):
+        """Leaving the old groups in place would show stale results during the new scan."""
+        dgapp, started = self._app(monkeypatch)
+        objects, matches, groups = GetTestGroups()
+        dgapp.results.groups = groups
+        assert dgapp.results.groups
+
+        dgapp.start_scanning()
+
+        assert dgapp.results.groups == []
+
+
+class TestCloneInsteadOfDelete:
+    """Replacing a duplicate with a clone of its reference (issue #129).
+
+    The gate is the feature. Cloning is only harmless when the two files are already
+    identical: it replaces the duplicate's contents with the reference's. For a contents scan
+    that is a no-op on the bytes and a win on the space. For a picture match it would
+    substitute a different image -- a resized copy, a re-encode -- and report it as
+    deduplication.
+    """
+
+    @staticmethod
+    def _pair(tmp_path, same=True):
+        """A dupe and a ref, with digests set the way a scan would leave them.
+
+        Skips where the filesystem cannot clone. Platform support is not filesystem support:
+        the Linux CI runners are ext4, which has no FICLONE, so a test that assumed cloning
+        works failed there while passing on APFS.
+        """
+        from core import clone as clone_module
+
+        ref_path = tmp_path / "ref.bin"
+        dupe_path = tmp_path / "dupe.bin"
+        ref_path.write_bytes(b"A" * 4096)
+        dupe_path.write_bytes(b"A" * 4096 if same else b"B" * 4096)
+        if not clone_module.can_clone(ref_path, tmp_path):
+            pytest.skip("this filesystem cannot clone")
+        ref, dupe = fs.File(ref_path), fs.File(dupe_path)
+        for f in (ref, dupe):
+            f._read_info("size")
+            f._read_info("mtime")
+        ref.digest = b"same-digest"
+        dupe.digest = b"same-digest" if same else b"other-digest"
+        return dupe, ref
+
+    def test_identical_files_may_be_cloned(self, tmpdir):
+        tmp_path = Path(str(tmpdir))
+        dupe, ref = self._pair(tmp_path)
+        clone_path = tmp_path / "made.bin"
+        app.DupeGuru._make_replacement_clone(dupe, ref, clone_path)
+        assert clone_path.read_bytes() == b"A" * 4096
+
+    def test_differing_files_are_refused(self, tmpdir):
+        """The case that would silently substitute one image for another."""
+        tmp_path = Path(str(tmpdir))
+        dupe, ref = self._pair(tmp_path, same=False)
+        clone_path = tmp_path / "made.bin"
+        with pytest.raises(OSError) as exc:
+            app.DupeGuru._make_replacement_clone(dupe, ref, clone_path)
+        assert "not byte-for-byte identical" in str(exc.value)
+        assert not clone_path.exists(), "a clone was created despite the refusal"
+        assert dupe.path.read_bytes() == b"B" * 4096, "the duplicate was altered"
+
+    def test_a_missing_digest_is_refused(self, tmpdir):
+        """Picture matches carry no full digest, and an absent digest proves nothing.
+
+        Sampled hashing is refused for the same reason: three matching chunks are not a
+        guarantee about the rest of the file.
+        """
+        tmp_path = Path(str(tmpdir))
+        dupe, ref = self._pair(tmp_path)
+        dupe.digest = b""
+        with pytest.raises(OSError) as exc:
+            app.DupeGuru._make_replacement_clone(dupe, ref, tmp_path / "made.bin")
+        assert "not byte-for-byte identical" in str(exc.value)
+
+    def test_unsupported_filesystem_is_refused_not_worked_around(self, tmpdir, monkeypatch):
+        """Both available fallbacks are wrong, so there must not be one.
+
+        Copying would double the space this exists to reclaim; deleting would destroy the file
+        the user was told would survive.
+        """
+        from core import clone as clone_module
+
+        tmp_path = Path(str(tmpdir))
+        dupe, ref = self._pair(tmp_path)
+
+        def unsupported(source, dest):
+            raise clone_module.CloneNotSupportedError(errno.ENOTSUP, "nope", str(source))
+
+        monkeypatch.setattr(clone_module, "clone_file", unsupported)
+        clone_path = tmp_path / "made.bin"
+        with pytest.raises(OSError) as exc:
+            app.DupeGuru._make_replacement_clone(dupe, ref, clone_path)
+        assert "cannot make copy-on-write clones" in str(exc.value)
+        assert not clone_path.exists()
+        assert dupe.path.exists(), "the duplicate was removed despite the clone failing"
+
+    def test_the_duplicate_survives_when_cloning_fails(self, tmpdir, monkeypatch):
+        """End to end: a failed clone must leave the file on disk.
+
+        The replacement is built before anything is deleted, exactly as the link path does,
+        so a failure propagates as a recorded problem with the file still there.
+        """
+        from core import clone as clone_module
+
+        tmp_path = Path(str(tmpdir))
+        # Identical files, so the identity gate passes and the *clone itself* is what fails.
+        # Using differing files here would test the gate again and never reach this path.
+        dupe, ref = self._pair(tmp_path)
+
+        def unsupported(source, dest):
+            raise clone_module.CloneNotSupportedError(errno.ENOTSUP, "nope", str(source))
+
+        monkeypatch.setattr(clone_module, "clone_file", unsupported)
+
+        dgapp = TestApp().app
+        dgapp.results.get_group_of_duplicate = lambda d: type("G", (), {"ref": ref})()
+
+        with pytest.raises(OSError):
+            dgapp._do_delete_dupe(dupe, True, False, True, use_clones=True)
+        assert dupe.path.exists(), "the duplicate was deleted even though cloning failed"
+        assert dupe.path.read_bytes() == b"A" * 4096, "the duplicate was altered"

@@ -12,11 +12,12 @@ import os.path as op
 import os
 import logging
 
+from core import __appname__, __orgname__
 from core.util import executable_folder
 from hscommon.util import first
 from hscommon.plat import ISWINDOWS
 
-from qtpy.QtCore import QStandardPaths, QSettings
+from qtpy.QtCore import QCoreApplication, QStandardPaths, QSettings
 from qtpy.QtGui import QGuiApplication
 
 from qt import resources
@@ -105,8 +106,23 @@ def set_accel_keys(menu):
 def get_appdata(portable=False):
     if portable:
         return op.join(executable_folder(), "data")
-    else:
-        return QStandardPaths.standardLocations(QStandardPaths.StandardLocation.AppDataLocation)[0]
+    # QStandardPaths appends the organisation and application name only when they are set on
+    # the QCoreApplication. run.py sets them for the GUI, but the CLI never constructs one, so
+    # Qt returned the bare base directory and the CLI wrote its databases straight into the
+    # root of the user's application-data folder -- a different location from the GUI's, so
+    # neither front end could reuse the other's cached work (issue #94).
+    #
+    # Setting them here rather than in each front end means any future entry point is correct
+    # by default. Only filled in when absent, so a caller that deliberately chose other names
+    # keeps them.
+    # organizationName is the sentinel, not applicationName: Qt synthesises the latter from
+    # the executable basename when nobody sets it, so a CLI run under python would test as
+    # "already named" and resolve to .../Application Support/Python. organizationName has no
+    # such default and is empty until someone assigns it.
+    if not QCoreApplication.organizationName():
+        QCoreApplication.setOrganizationName(__orgname__)
+        QCoreApplication.setApplicationName(__appname__)
+    return QStandardPaths.standardLocations(QStandardPaths.StandardLocation.AppDataLocation)[0]
 
 
 class SysWrapper(io.IOBase):

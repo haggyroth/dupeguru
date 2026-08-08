@@ -11,6 +11,7 @@
 
 from argparse import ArgumentParser
 import os
+import shlex
 import sys
 import os.path as op
 import shutil
@@ -21,7 +22,7 @@ import re
 import importlib
 from datetime import datetime
 import glob
-from typing import Any, AnyStr, Callable, Dict, List, Union
+from typing import Any, AnyStr, Callable, Dict, List, Union, Sequence
 
 from hscommon.plat import ISWINDOWS
 
@@ -30,19 +31,28 @@ class BuildError(Exception):
     """A build or packaging step failed, or produced nothing."""
 
 
-def print_and_do(cmd: str) -> int:
-    """Prints ``cmd`` and executes it in the shell.
+def print_and_do(cmd: Union[str, Sequence[str]]) -> int:
+    """Prints ``cmd`` and runs it, returning the exit code.
 
-    Returns the exit code. Note that this **fails open**: ignoring the return value is
-    silent, and callers have done exactly that repeatedly. Prefer :func:`run_checked` for
-    anything whose failure should stop the build.
+    Pass a **sequence** wherever a path is involved. A sequence is handed to the OS
+    unchanged, so a filename containing a quote or a semicolon is an argument rather than
+    syntax. A string is still evaluated by the shell, which is what callers composing a
+    pipeline need -- but composing one from interpolated paths is a command injection:
+    a directory named ``dest"; touch INJECTED; echo "`` is legal on macOS and Linux, and
+    ``ln -s /Applications "{}"`` around it executes the middle part (issue #80).
+
+    Note also that this **fails open**: ignoring the return value is silent, and callers
+    have done exactly that repeatedly. Prefer :func:`run_checked` for anything whose failure
+    should stop the build.
     """
-    print(cmd)
-    p = Popen(cmd, shell=True)
-    return p.wait()
+    if isinstance(cmd, str):
+        print(cmd)
+        return Popen(cmd, shell=True).wait()
+    print(" ".join(shlex.quote(str(part)) for part in cmd))
+    return Popen([str(part) for part in cmd]).wait()
 
 
-def run_checked(cmd: str, produces: Union[os.PathLike, None] = None, min_size: int = 1) -> None:
+def run_checked(cmd: Union[str, Sequence[str]], produces: Union[os.PathLike, None] = None, min_size: int = 1) -> None:
     """Run ``cmd``, raising :class:`BuildError` unless it succeeds and produces its artifact.
 
     The counterpart to :func:`print_and_do`, and the difference is the point. print_and_do
@@ -166,7 +176,7 @@ def package_cocoa_app_in_dmg(app_path: os.PathLike, destfolder: os.PathLike, arg
     # a valid signature.
     if args.sign_identity:
         sign_identity = f"Developer ID Application: {args.sign_identity}"
-        result = print_and_do(f'codesign --force --deep --sign "{sign_identity}" "{app_path}"')
+        result = print_and_do(["codesign", "--force", "--deep", "--sign", sign_identity, app_path])
         if result != 0:
             print("ERROR: Signing failed. Aborting packaging.")
             return
@@ -187,8 +197,11 @@ def build_dmg(app_path: os.PathLike, destfolder: os.PathLike) -> None:
     workpath = tempfile.mkdtemp()
     dmgpath = op.join(workpath, plist["CFBundleName"])
     os.mkdir(dmgpath)
-    run_checked('cp -R "{}" "{}"'.format(app_path, dmgpath))
-    run_checked('ln -s /Applications "%s"' % op.join(dmgpath, "Applications"))
+    # shutil and os rather than cp and ln: no subprocess, no shell, and nothing to quote.
+    # These were the two clearest injection sites -- both interpolated a path into a string
+    # the shell then parsed -- and neither needed a shell in the first place.
+    shutil.copytree(app_path, op.join(dmgpath, op.basename(app_path)), symlinks=True)
+    os.symlink("/Applications", op.join(dmgpath, "Applications"))
     # CFBundleVersion is not always present -- PyInstaller does not write one unless asked --
     # so fall back rather than raising KeyError after the app has already been built.
     version = plist.get("CFBundleVersion") or plist.get("CFBundleShortVersionString") or "unknown"
@@ -202,7 +215,7 @@ def build_dmg(app_path: os.PathLike, destfolder: os.PathLike) -> None:
     # Checked, and the .dmg asserted to exist: this used to print "Build Complete" whether or
     # not hdiutil had produced anything.
     run_checked(
-        'hdiutil create "{}" -format UDBZ -nocrossdev -srcdir "{}"'.format(dmgpath_out, dmgpath),
+        ["hdiutil", "create", dmgpath_out, "-format", "UDBZ", "-nocrossdev", "-srcdir", dmgpath],
         produces=dmgpath_out,
     )
     print("Build Complete")
