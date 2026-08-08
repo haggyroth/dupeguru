@@ -1,6 +1,6 @@
 # Handoff
 
-Written 2026-08-03 moving development from Windows 11 to a MacBook Air; refreshed 2026-08-05 after 4.10.0.
+Written 2026-08-03 moving development from Windows 11 to a MacBook Air; refreshed 2026-08-07 after 4.13.0.
 
 ## The one rule
 
@@ -20,10 +20,10 @@ it renders links for *historical* upstream ticket numbers in `help/changelog`. D
 | | |
 |---|---|
 | Branch | `master` (not `main`) |
-| Version | 4.10.0, released, with Windows and macOS binaries attached |
-| Releases | v4.4.0 through v4.10.0. From 4.9.0 they carry binaries |
-| Issues | 29 closed, 1 open (#83, left with an outside contributor) |
-| Tests | **1090 passing, 6 skipped** on macOS. Windows/Linux counts differ (see below) |
+| Version | 4.13.0, released, with Windows and macOS binaries attached |
+| Releases | v4.4.0 through v4.13.0. From 4.9.0 they carry binaries |
+| Issues | 37 closed, 7 open. Two are claimed by open contributor PRs |
+| Tests | **1477 passing, 6 skipped** on macOS. Windows/Linux counts differ (see below) |
 | Qt bindings | PyQt6 by default, PyQt5 as a fallback with its own CI leg |
 | CI | Linux on 3.10 / 3.12 / 3.14, plus Windows, macOS and a PyQt5 leg; `master` is protected |
 
@@ -79,7 +79,7 @@ move and a green run looks different.
 | 3 Windows junction tests | run | **skip** | **skip** |
 | 1 case-sensitivity test | skip | skip (APFS is case-insensitive) | run |
 | 2 exclude union-mode tests | skip | skip | skip |
-| **Totals** | measured on CI | **1090 / 6 skipped** | measured on CI |
+| **Totals** | measured on CI | **1477 / 6 skipped** | measured on CI |
 
 Only the macOS column is measured here; the Windows and Linux totals move with the suite and
 are best read off a CI run rather than copied into this file, since they went stale within a
@@ -145,6 +145,39 @@ Commits follow Conventional Commits. `commitlint` is configured but not enforced
 unless you `pre-commit install`.
 
 ## Traps that cost time here
+
+**Qt global state and widget lifetimes cause crashes far from their cause, three times over.**
+All three surfaced in a test that had nothing to do with them, and none is visible in review:
+
+* a signal connected straight to *another widget's* bound method keeps that widget's Python
+  wrapper alive past the dialog that owns it. Applying preferences re-polishes every widget and
+  walks into the corpse. Route such connections through a method on the owner.
+* `QApplication.setStyle` is process-wide. A test that switches it and does not put it back
+  changes the ground under every later test; one of them segfaulted showing a dialog.
+* a `QPixmap` constructed before a `QGuiApplication` exists segfaults. Qt says so plainly, but
+  only if you are looking. Any test touching `qt.resources` needs the `qapp` fixture.
+
+`sip.isdeleted()` over `gc.get_objects()` finds the first class directly, and costs 13 ms --
+`qt/tests/preferences_dialog_roundtrip_test.py` has a worked example. A weak reference does
+*not* work: it dies when the wrapper is collected, which happens either way, while the fault is
+a live wrapper around a dead C++ object.
+
+**A Qt widget reference outliving its parent is a Windows-only crash, far from its cause.**
+Closing a dialog destroys its children on the C++ side while any Python attributes go on
+referencing them. Nothing complains until something walks every widget in the application --
+`QApplication.setPalette()` and `setStyle()` both do, and `qt/app.py::_update_options` calls
+them every time preferences are applied. On macOS and Linux this is survivable; on Windows it is
+an access violation that kills the process. It surfaced in a *preferences* test, twelve tests
+into a file that has nothing to do with the dialog at fault. `qt/progress_window.py::close`
+clears its children for this reason. If a Windows CI leg dies with `Windows fatal exception:
+access violation` inside `_set_style`, look for a widget reference that outlived its window
+rather than at the code in the traceback.
+
+**A CI run that is never created is not a CI run that is pending.** During a GitHub Actions
+outage the push webhook was dropped, so PR #139 sat at "0 checks" indefinitely -- not queued,
+simply never dispatched. Waiting would not have fixed it. Closing and reopening the PR fired a
+fresh `pull_request` event and the full matrix ran. Check `gh run list --branch <branch>`: if it
+is empty rather than showing something in progress, no amount of patience helps.
 
 **`pre-commit run --all-files` silently skips untracked files.** It reads `git ls-files`, so a
 newly created file is invisible until `git add`. This produced a false "all six hooks passed"
@@ -270,7 +303,8 @@ That changes the stakes of everything in this section: a packaging bug now reach
 downloads the installer.
 
 The binaries are still built and attached **deliberately**, not as a side effect of tagging —
-`.github/workflows/packaging.yml` is `workflow_dispatch` only. The flow used for 4.10.0 was:
+`.github/workflows/packaging.yml` is `workflow_dispatch` only. The flow used for 4.10.0 through
+4.13.0 was:
 merge the release PR, tag, dispatch packaging **on the tag**, download the artifacts, verify
 them, then upload to the release. Building from the tag matters: for 4.9.0 the first artifacts
 were built from a branch three commits ahead and had to be rebuilt, because a binary stamped
@@ -415,6 +449,24 @@ nobody is running 4.4.0.
   feedback. Taking it over would be faster and would also be the last time they contributed.
   Nothing depends on it.
 
+Everything else open is an unstarted feature proposal, written by me rather than requested by
+anyone. Read them sceptically; several say so themselves.
+
+- **#125** (record deletions, offer to restore) and **#134** (warn before scanning a system
+  location) are the two labelled `safety`. #125 is the most valuable thing left: cloning (#129)
+  made deletion non-destructive only for byte-identical files on a filesystem that supports it,
+  so picture-mode matches and cross-volume duplicates are still genuinely destructive, and
+  nothing records what went.
+- **#122, #123, #124, #127** are the review-workflow cluster — folder-pair rollup, ordering by
+  reclaimable space, confidence triage, folder overlap scoring. All are about acting on more
+  files with less individual scrutiny, which #131's preview was built to make reasonable. #123
+  is the most concrete of them.
+- **#128** (find exact duplicates and visually similar images in one scan) is the largest.
+- **#130** (prioritise photos by EXIF capture date) is genuinely small.
+- **#126** (report only duplicates involving newly added files) is speculative in the way #133
+  was: it assumes repeat scanning of the same tree, and nothing has established that anyone
+  does. #133 was built anyway on request; that does not make #126 evidence for itself.
+
 Closed, but the reasoning is worth keeping:
 
 - **#28** (resumable scans) was closed on measurement rather than completion. Checkpoints 1
@@ -431,7 +483,7 @@ Closed, but the reasoning is worth keeping:
 
 No issue is open for any of these; they are judgement calls rather than tracked work.
 
-**1. Run the installer and uninstaller on Windows.** The largest gap. Two releases now carry
+**1. Run the installer and uninstaller on Windows.** The largest gap. Five releases now carry
 binaries and nobody has run the NSIS installer end to end, or its uninstaller — whose
 `RMDir /r "$INSTDIR\_internal"` has never been executed. If it is wrong it either strands files
 or removes too much. This needs the Windows machine; CI cannot do it.
@@ -446,16 +498,20 @@ this file was measured on macOS against one exFAT volume, mostly with warm metad
 cold-path numbers are extrapolations from per-file costs, not observations of a full run. An
 unmount/remount between passes gives the real figure.
 
-**4. Consider a GUI progress signal for the caches.** When the listing cache hits, collection
-finishes so fast that the progress window barely appears; when it misses on a cold external
-drive, the same phase takes tens of minutes with no indication of why. The user cannot tell
-which happened.
+**4. The Qt layer is at 69%, and the risky parts are now covered.** Everything that decides
+which files are kept or deleted has tests: the re-prioritize and mark-by-rule dialogs, the
+folder state list, and all three preferences dialogs. What is left is lower stakes --
+`error_report_dialog.py` at 0% is the one worth doing, because it is what appears when
+something breaks, so a fault in it hides real errors. The image viewer is large and mostly
+uncovered but a wrong render there costs a look, not a file.
 
-**5. The Qt layer is still smoke-only at ~60%.** The preview pane, results table and preferences
-dialogs construct and are barely exercised. This is the largest untested surface left now that
-`core/app.py` is at 77%, and it is where a change renders wrongly without failing anything.
+**Testing preferences needs two directions, not one.** A round trip -- load the dialog, save it
+back untouched, expect no change -- catches a preference missing from `_load`. It *cannot*
+catch one missing from `_save`: a value that is never written keeps whatever was there, so the
+cycle looks clean. That version missed three of five seeded faults. The save direction has to
+be driven by moving the widgets and checking the values follow.
 
-**6. Watch `merge_similar_words`.** It is genuinely quadratic — 4.0x per doubling, measured. The
+**5. Watch `merge_similar_words`.** It is genuinely quadratic — 4.0x per doubling, measured. The
 test now guards against a return to *cubic*, which is what an O(n) membership check in the loop
 produces, but the quadratic cost itself is real and will bite on a large filename scan.
 

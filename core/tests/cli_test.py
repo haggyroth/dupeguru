@@ -9,6 +9,7 @@ import pytest
 from hscommon.testutil import eq_
 
 import cli
+import core
 from cli import main, EXIT_OK, EXIT_DUPES_FOUND, EXIT_BAD_ARGS, EXIT_SCAN_ERROR
 
 
@@ -252,6 +253,10 @@ class TestNdjsonOutput:
                 "total_duplicate_size_bytes": 0,
                 "partial_matches": 0,
                 "discarded_files": 0,
+                "total_reclaimable_bytes": 0,
+                "reclaimable_partial_bytes": 0,
+                "confirmed_reclaimable_bytes": 0,
+                "cumulative": [],
             }
         ]
 
@@ -262,6 +267,187 @@ class TestNdjsonOutput:
         assert rc == EXIT_DUPES_FOUND
         lines = [json.loads(ln) for ln in out_file.read_text().splitlines() if ln.strip()]
         assert lines[-1]["type"] == "stats"
+
+
+# ---------------------------------------------------------------------------
+# Reclaimable space and group ordering
+# ---------------------------------------------------------------------------
+
+
+def _three_groups(directory: Path) -> None:
+    """Three groups whose reclaimable space is deliberately not their file size order.
+
+    ``small`` has the most members and the smallest files, and reclaims the most; ``big`` has
+    the largest files and reclaims the least. Ranking by file size would get this backwards,
+    which is the whole point of ranking by reclaimable bytes.
+    """
+    _write_files(
+        directory,
+        {
+            "big1.bin": b"B" * 600,
+            "big2.bin": b"B" * 600,  # 1 dupe  -> 600 reclaimable
+            "mid1.bin": b"M" * 400,
+            "mid2.bin": b"M" * 400,
+            "mid3.bin": b"M" * 400,  # 2 dupes -> 800 reclaimable
+            "small1.bin": b"S" * 200,
+            "small2.bin": b"S" * 200,
+            "small3.bin": b"S" * 200,
+            "small4.bin": b"S" * 200,
+            "small5.bin": b"S" * 200,
+            "small6.bin": b"S" * 200,  # 5 dupes -> 1000 reclaimable
+        },
+    )
+
+
+def _groups_from(tmp_path, capsys, *extra_args) -> list[dict]:
+    rc = main([str(tmp_path), *extra_args])
+    assert rc == EXIT_DUPES_FOUND
+    return json.loads(capsys.readouterr().out)["groups"]
+
+
+def _identity(group: dict) -> tuple:
+    """A group's members, as something stable to compare orders by.
+
+    Which member ends up as the reference is not fixed between runs, so the reference path
+    alone does not identify a group; the membership does.
+    """
+    return tuple(sorted([group["reference"]["path"], *(d["path"] for d in group["duplicates"])]))
+
+
+class TestReclaimableOf:
+    def test_sums_sizes_and_splits_out_partial_bytes(self):
+        result = cli.reclaimable_of([(100, False), (250, True), (50, False)])
+        eq_(result.total_bytes, 400)
+        eq_(result.partial_bytes, 250)
+        eq_(result.confirmed_bytes, 150)
+
+    def test_no_candidates_is_all_zero(self):
+        result = cli.reclaimable_of([])
+        eq_(result.total_bytes, 0)
+        eq_(result.partial_bytes, 0)
+        eq_(result.confirmed_bytes, 0)
+
+    def test_group_reclaimable_counts_duplicates_only(self):
+        group = {
+            "reference": {"path": "ref", "size": 900},
+            "duplicates": [
+                {"size": 100, "partial_match": False},
+                {"size": 200, "partial_match": True},
+            ],
+        }
+        result = cli._group_reclaimable(group)
+        # The reference stays behind, so its 900 bytes are not reclaimed by anything.
+        eq_(result.total_bytes, 300)
+        eq_(result.partial_bytes, 200)
+
+
+class TestReclaimableRank:
+    def _group(self, total, partial):
+        return {"reclaimable_bytes": total, "reclaimable_partial_bytes": partial}
+
+    def test_total_bytes_lead_even_when_wholly_unconfirmed(self):
+        sampled_but_huge = self._group(5_000_000_000, 5_000_000_000)
+        certain_but_tiny = self._group(10, 0)
+        ranked = sorted([certain_but_tiny, sampled_but_huge], key=cli._reclaimable_rank, reverse=True)
+        assert ranked[0] is sampled_but_huge
+
+    def test_confirmed_bytes_break_ties(self):
+        mostly_sampled = self._group(1000, 900)
+        fully_confirmed = self._group(1000, 0)
+        ranked = sorted([mostly_sampled, fully_confirmed], key=cli._reclaimable_rank, reverse=True)
+        assert ranked[0] is fully_confirmed
+
+    def test_identical_groups_rank_equal(self):
+        eq_(cli._reclaimable_rank(self._group(500, 100)), cli._reclaimable_rank(self._group(500, 100)))
+
+
+class TestCumulativeCurve:
+    def test_no_groups_gives_an_empty_curve(self):
+        eq_(cli.cumulative_curve([]), [])
+
+    def test_all_zero_byte_groups_do_not_divide_by_zero(self):
+        curve = cli.cumulative_curve([0, 0, 0])
+        eq_(curve, [{"groups": 3, "reclaimable_bytes": 0, "fraction": 0.0}])
+
+    def test_short_run_gets_a_single_final_checkpoint(self):
+        curve = cli.cumulative_curve([600, 300, 100])
+        eq_(curve, [{"groups": 3, "reclaimable_bytes": 1000, "fraction": 1.0}])
+
+    def test_checkpoints_are_running_totals_of_the_given_order(self):
+        curve = cli.cumulative_curve([100] * 12)
+        eq_([point["groups"] for point in curve], [10, 12])
+        eq_([point["reclaimable_bytes"] for point in curve], [1000, 1200])
+        assert curve[0]["fraction"] == pytest.approx(1000 / 1200)
+
+
+class TestSortByReclaimable:
+    def test_more_small_duplicates_outrank_fewer_large_ones(self, tmp_path, capsys):
+        _three_groups(tmp_path)
+        groups = _groups_from(tmp_path, capsys, "--sort-by", "reclaimable")
+        eq_([g["reclaimable_bytes"] for g in groups], [1000, 800, 600])
+
+    def test_order_is_never_increasing(self, tmp_path, capsys):
+        _three_groups(tmp_path)
+        groups = _groups_from(tmp_path, capsys, "--sort-by", "reclaimable")
+        ranks = [cli._reclaimable_rank(g) for g in groups]
+        eq_(ranks, sorted(ranks, reverse=True))
+
+    def test_found_is_the_default_and_leaves_the_order_alone(self, tmp_path, capsys):
+        _three_groups(tmp_path)
+        default_order = [_identity(g) for g in _groups_from(tmp_path, capsys)]
+        explicit_order = [_identity(g) for g in _groups_from(tmp_path, capsys, "--sort-by", "found")]
+        eq_(default_order, explicit_order)
+
+    def test_sorting_reorders_groups_without_adding_or_losing_any(self, tmp_path, capsys):
+        _three_groups(tmp_path)
+        found = _groups_from(tmp_path, capsys)
+        reclaimable = _groups_from(tmp_path, capsys, "--sort-by", "reclaimable")
+        eq_(sorted(_identity(g) for g in found), sorted(_identity(g) for g in reclaimable))
+
+    def test_unknown_sort_key_is_rejected(self, tmp_path, capsys):
+        _write_files(tmp_path, {"a.txt": b"same", "b.txt": b"same"})
+        with pytest.raises(SystemExit):
+            main([str(tmp_path), "--sort-by", "size"])
+        assert "--sort-by" in capsys.readouterr().err
+
+    def test_every_group_carries_its_own_reclaimable_bytes(self, tmp_path, capsys):
+        _three_groups(tmp_path)
+        for group in _groups_from(tmp_path, capsys, "--sort-by", "reclaimable"):
+            eq_(group["reclaimable_bytes"], sum(d["size"] for d in group["duplicates"]))
+            # Never the whole group: the reference is what everything else is a duplicate of.
+            assert group["reclaimable_bytes"] < group["reclaimable_bytes"] + group["reference"]["size"]
+
+    def test_stats_split_the_headline_from_the_merely_probable(self, tmp_path, capsys):
+        _three_groups(tmp_path)
+        rc = main([str(tmp_path), "--sort-by", "reclaimable"])
+        assert rc == EXIT_DUPES_FOUND
+        stats = json.loads(capsys.readouterr().out)["stats"]
+        eq_(stats["total_reclaimable_bytes"], 2400)
+        # Every match here is a full content comparison, so nothing is merely probable.
+        eq_(stats["reclaimable_partial_bytes"], 0)
+        eq_(stats["confirmed_reclaimable_bytes"], 2400)
+        eq_(stats["cumulative"], [{"groups": 3, "reclaimable_bytes": 2400, "fraction": 1.0}])
+
+    def test_zero_byte_duplicates_report_a_zero_fraction(self, tmp_path, capsys):
+        _write_files(tmp_path, {"empty1.bin": b"", "empty2.bin": b""})
+        rc = main([str(tmp_path), "--sort-by", "reclaimable"])
+        assert rc == EXIT_DUPES_FOUND
+        stats = json.loads(capsys.readouterr().out)["stats"]
+        eq_(stats["total_reclaimable_bytes"], 0)
+        for point in stats["cumulative"]:
+            eq_(point["fraction"], 0.0)
+
+    def test_ndjson_carries_the_same_order_and_stats(self, tmp_path, capsys):
+        _three_groups(tmp_path)
+        rc = main([str(tmp_path), "--ndjson", "--sort-by", "reclaimable"])
+        assert rc == EXIT_DUPES_FOUND
+        lines = [json.loads(ln) for ln in capsys.readouterr().out.splitlines() if ln.strip()]
+        groups = [ln for ln in lines if ln["type"] == "group"]
+        stats = lines[-1]
+        eq_([g["reclaimable_bytes"] for g in groups], [1000, 800, 600])
+        eq_(stats["type"], "stats")
+        eq_(stats["total_reclaimable_bytes"], 2400)
+        eq_(stats["cumulative"], [{"groups": 3, "reclaimable_bytes": 2400, "fraction": 1.0}])
 
 
 # ---------------------------------------------------------------------------
@@ -932,6 +1118,19 @@ class TestScannerFlagSemantics:
         monkeypatch.setattr(cli, "_run_scan", _capture)
         main([str(tmp_path), "--trust-cache-ignore-mtime"])
         eq_(captured["ignore_mtime"], True)
+
+    def test_version_flag_prints_the_version(self, capsys):
+        parser = cli._build_parser()
+        with pytest.raises(SystemExit) as exc:
+            parser.parse_args(["--version"])
+        assert exc.value.code == 0
+        assert core.__version__ in capsys.readouterr().out
+
+    def test_version_flag_works_without_a_folder_argument(self):
+        """--version must not require the positional argument."""
+        with pytest.raises(SystemExit) as exc:
+            cli.main(["--version"])
+        assert exc.value.code == 0
 
 
 # ---------------------------------------------------------------------------

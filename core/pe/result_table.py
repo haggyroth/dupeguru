@@ -24,6 +24,7 @@ class ResultTable(ResultTableBase):
         Column("exif_timestamp", coltr("EXIF Timestamp"), visible=False, optional=True),
         Column("mtime", coltr("Modification"), visible=False, optional=True),
         Column("percentage", coltr("Match %"), optional=True),
+        Column("confidence", coltr("Confidence"), visible=False, optional=True),
         Column("dupe_count", coltr("Dupe Count"), visible=False, optional=True),
     ]
     DELTA_COLUMNS = {"size", "dimensions", "mtime"}

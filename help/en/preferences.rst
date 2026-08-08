@@ -30,6 +30,23 @@ Preferences
     If you check this box, duplicate groups are allowed to have files with different extensions. If
     you don't check it, well, they aren't!
 
+**Also find visually similar pictures:**
+    A standard scan compares file contents, so it finds byte-for-byte copies and nothing else --
+    two photographs that are the same picture at different sizes are simply not duplicates to
+    it. Picture mode finds those, but collects only images, so pointing dupeGuru at a folder of
+    documents, videos and photographs means choosing which half of the problem to look at.
+
+    With this on, a Contents scan also compares the images it finds by appearance and merges the
+    results, so one scan covers both.
+
+    It is off by default because it is slow. Comparing contents mostly reads files; comparing
+    appearance decodes every image and compares each against the others, which grows sharply
+    with the number of pictures.
+
+    Matches found this way are a *resemblance*, not proof of identity: a re-encode, a crop or a
+    resize can look identical while the files differ. dupeGuru records which kind each match was
+    and never treats a resemblance as a reason to replace a file with a copy-on-write clone.
+
 **Ignore duplicates hardlinking to the same file:**
     If this option is enabled, dupeGuru will verify duplicates to see if they refer to the same
     `inode`_. If they do, they will not be considered duplicates. (Only for OS X and Linux)

@@ -22,6 +22,7 @@ class ResultTable(ResultTableBase):
         Column("extension", coltr("Kind"), visible=False, optional=True),
         Column("mtime", coltr("Modification"), visible=False, optional=True),
         Column("percentage", coltr("Match %"), optional=True),
+        Column("confidence", coltr("Confidence"), visible=False, optional=True),
         Column("words", coltr("Words Used"), visible=False, optional=True),
         Column("dupe_count", coltr("Dupe Count"), visible=False, optional=True),
     ]
