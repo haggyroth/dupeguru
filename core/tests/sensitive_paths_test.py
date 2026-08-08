@@ -24,16 +24,7 @@ import pytest
 from core import sensitive_paths
 from core.sensitive_paths import describe, reason_for, warnings_for
 from hscommon.plat import ISLINUX, ISOSX, ISWINDOWS
-
-
-def native(path):
-    """A folder string as this platform writes it.
-
-    ``Path("/one")`` prints as ``\\one`` on Windows, so an assertion holding a POSIX-looking
-    literal passes everywhere except the platform half of this module is written for. The same
-    helper exists in the folder-overlap and folder-rollup tests, for the same reason.
-    """
-    return str(Path(path))
+from hscommon.testutil import native
 
 
 on_macos = pytest.mark.skipif(not ISOSX, reason="macOS locations")

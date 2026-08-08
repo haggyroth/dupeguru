@@ -28,12 +28,8 @@ from core.directories import DirectoryState  # noqa: E402
 from core.engine import Group, Match  # noqa: E402
 from core.results import Results  # noqa: E402
 from core.tests.base import NamedObject  # noqa: E402
+from hscommon.testutil import native  # noqa: E402
 from qt.folder_rollup_dialog import FolderRollupDialog, describe_pair  # noqa: E402
-
-
-def native(path):
-    """A folder string as this platform writes it; see the note in the core rollup tests."""
-    return str(Path(path))
 
 
 def file_at(path, size=1000):
