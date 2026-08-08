@@ -9,6 +9,18 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The Windows uninstall entry showed a blank icon.** The installer recorded the icon path as
+  `dupeGuru.exe` while the installed binary is `dupeguru-win64.exe`, so Settings → Installed apps
+  had nothing to display. It was the only path in the installer script missing the architecture
+  suffix.
+
+- **Uninstalling on Windows left an empty `Hardcoded Software` folder** in Program Files. The
+  install directory is nested inside a vendor folder, and only the inner one was removed. The
+  new removal is guarded, so a different Hardcoded Software product installed alongside keeps
+  its folder.
+
 ## [4.16.0] - 2026-08-08
 
 ### Added
