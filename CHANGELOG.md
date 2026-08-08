@@ -9,6 +9,23 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **The command line reports what a deletion removed.** `--delete` now writes a record — to
+  `--output` when given, standard output otherwise — listing each deleted file with its size,
+  the file it duplicated, and where it went in the trash, along with anything that was skipped
+  and why. `--ndjson` emits one object per line ending with a stats record. The trash
+  destination is read back from the operating system rather than guessed, which is what makes
+  putting a file back possible; a permanent deletion records none and reports
+  `restorable: false` rather than an empty string to interpret. Deleting from saved results
+  with `--from-results` records destinations too, where it previously captured none.
+
+### Changed
+
+- **`--delete` now writes to standard output**, where it previously printed nothing. This
+  matches `--plan`, which already emits machine-readable output that `--output` redirects.
+  Exit codes are unchanged.
+
 ### Fixed
 
 - **The Windows uninstall entry showed a blank icon.** The installer recorded the icon path as
