@@ -1,3 +1,6 @@
+=== 4.14.1 (2026-08-08)
+* Fix a reference folder given on the command line being ignored unless it was also listed as a folder to scan
+
 === 4.14.0 (2026-08-08)
 * Find visually similar images during a standard scan, so one scan covers both
 * Show what is actually known about each duplicate group, and mark in bulk by that
