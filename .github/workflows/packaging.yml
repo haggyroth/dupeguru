@@ -11,6 +11,9 @@
 #   - It CANNOT check the GUI. The symptom described in #10 -- extra windows -- needs a
 #     desktop session and a person. Nor does it run the NSIS installer/uninstaller, which is
 #     what #27's setup.nsi item concerns. Those remain manual.
+#   - It CANNOT say anything about a *downloaded* copy of what it builds. A GitHub artifact is
+#     zipped, which drops symlinks and executable bits, so a binary that runs here can be
+#     unrunnable once fetched. See the note on the freeze job below.
 
 name: Packaging
 
@@ -97,11 +100,19 @@ jobs:
                        "have detected a broken process pool")
           print("frozen content scan OK: parallel hashing ran, no re-execution markers")
           PY
-      - name: Upload frozen build
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
-        with:
-          name: frozen-cli-${{ matrix.os }}
-          path: dist-freeze/**
+      # Deliberately not uploaded. This build was published as a `frozen-cli-*` artifact until
+      # 4.14.0, and every download of it was broken: GitHub artifacts are zipped, zip does not
+      # carry symlinks, and the bundle contains a Python.framework, which cannot resolve without
+      # them. A downloaded copy segfaulted during dyld's initializer pass, before any dupeGuru
+      # code ran -- while this smoke test passed, because it runs the binary in place. Both were
+      # true at once, which made the artifact look verified when it had never been runnable.
+      #
+      # The `applications` job below hits the same hazard and solves it by wrapping the .app in
+      # a .dmg; the same treatment was never applied here.
+      #
+      # Nothing consumed this artifact, so it is simply not produced. The value of this job is
+      # the smoke test above, which needs no upload to do its work. If a downloadable frozen CLI
+      # is ever wanted, tar the directory first -- do not add a plain upload back.
 
   applications:
     # The real deliverables: an NSIS installer on Windows, a disk image on macOS. Separate
