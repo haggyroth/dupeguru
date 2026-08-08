@@ -714,7 +714,9 @@ def _build_parser() -> argparse.ArgumentParser:
         dest="ref_folders",
         help=(
             "Mark FOLDER as a Reference folder: its files are scanned but never "
-            "considered for deletion. May be repeated."
+            "considered for deletion. FOLDER may be one of the scanned folders, a "
+            "subfolder of one, or somewhere else entirely -- it is scanned either "
+            "way. May be repeated."
         ),
     )
     parser.add_argument(
@@ -1270,8 +1272,33 @@ def main(argv=None) -> int:
             print(f"error: cannot add path: {folder}", file=sys.stderr)
             app.close()
             return EXIT_BAD_ARGS
-        if folder in ref_folders:
-            app.directories.set_state(folder, DirectoryState.REFERENCE)
+
+    # Reference folders, applied after every scan folder is in place.
+    #
+    # Done in its own pass rather than inside the loop above, which is what issue #162 was: a
+    # --ref folder that was not *also* given positionally never reached set_state, so the
+    # protection silently did not apply and its files were marked and deleted like any other
+    # duplicate. Existence was still validated, so a typo errored cleanly -- which made the
+    # silent case worse, because the flag looked like it had been checked.
+    #
+    # A folder outside the scan is added rather than refused: --ref promises "its files are
+    # scanned but never considered for deletion", so `--ref /originals` alongside `/copies`
+    # should do the obvious thing.
+    #
+    # Sorted only because ref_folders is a set and an unordered walk gives add_path a different
+    # order each run. Nested --ref folders reach the same result either way -- set_state returns
+    # early when the state already matches, and get_state walks parents -- so this is for a
+    # stable directory list, not for correctness.
+    for folder in sorted(ref_folders):
+        try:
+            app.directories.add_path(folder)
+        except AlreadyThereError:
+            pass  # already covered by a scanned folder; only the state needs setting
+        except InvalidPathError:
+            print(f"error: cannot add reference path: {folder}", file=sys.stderr)
+            app.close()
+            return EXIT_BAD_ARGS
+        app.directories.set_state(folder, DirectoryState.REFERENCE)
 
     # Said before the scan rather than before the deletion, so it is on screen while the user
     # decides what to do with the results. A warning and not a gate: a scan removes nothing, and
