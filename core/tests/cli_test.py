@@ -934,14 +934,14 @@ class TestScannerFlagSemantics:
         main([str(tmp_path), "--trust-cache-ignore-mtime"])
         eq_(captured["ignore_mtime"], True)
 
-    def test_version_flag_prints_the_version(capsys):
+    def test_version_flag_prints_the_version(self, capsys):
         parser = cli._build_parser()
         with pytest.raises(SystemExit) as exc:
             parser.parse_args(["--version"])
         assert exc.value.code == 0
         assert core.__version__ in capsys.readouterr().out
 
-    def test_version_flag_works_without_a_folder_argument():
+    def test_version_flag_works_without_a_folder_argument(self):
         """--version must not require the positional argument."""
         with pytest.raises(SystemExit) as exc:
             cli.main(["--version"])

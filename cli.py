@@ -54,8 +54,7 @@ import sys
 from pathlib import Path
 from typing import NamedTuple
 
-from core import fs, se, __version__
-from core import fs, se, file_list_cache
+from core import fs, se, file_list_cache, __version__
 from core.app import AppMode, DeleteStatus, DupeGuru, check_deletable
 from core.directories import AlreadyThereError, DirectoryState, InvalidPathError
 from core.scanner import ScanType
