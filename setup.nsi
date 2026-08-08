@@ -271,6 +271,12 @@ Section "Uninstall"
   ; Remove Install Folder if empty
   RMDir "$INSTDIR"
 
+  ; $INSTDIR is ${COMPANYNAME}\${APPNAME}, so removing it leaves the vendor folder behind
+  ; empty. Plain RMDir (not /r) fails harmlessly when it is not empty, which is the same
+  ; protection the /ifempty below gives the vendor registry key: another Hardcoded Software
+  ; product installed alongside keeps its folder.
+  RMDir "$INSTDIR\.."
+
  ReadRegStr $1 HKCR ".dupeguru" ""
   StrCmp $1 "${APPNAME}.File" 0 NotOwn ; only do this if we own it
   ReadRegStr $1 HKCR ".dupeguru" "backup_val"
