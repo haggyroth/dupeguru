@@ -44,6 +44,32 @@ piped somewhere while you still see what is happening::
 Nothing is deleted unless you ask. ``--plan`` reports exactly what a deletion would do —
 which files, how much space, and what would be refused and why — without touching anything.
 
+Reviewing the biggest wins first
+--------------------------------
+
+A scan of a large disk can return thousands of groups, and reviewing them in the order they were
+found means most of your attention goes to files that free almost nothing.
+
+``--sort-by reclaimable`` ranks groups by the space deleting them would actually free::
+
+    dupeguru-scan ~/Pictures --sort-by reclaimable
+
+That is not the same as ranking by file size. Reclaimable space is what the *duplicates* free —
+the reference stays — so six 700 MB duplicates reclaim more than two 4 GB ones. Every group
+carries ``reclaimable_bytes``, and where a group was matched only on a sampled hash, the portion
+that is not fully confirmed is reported separately as ``reclaimable_partial_bytes``.
+
+The statistics always carry a cumulative curve, whichever order you asked for, so you can see how
+much of the benefit sits at the top of the list::
+
+    first  10 groups ->  292895 bytes  (76.8%)
+    first  20 groups ->  359768 bytes  (94.3%)
+    first  25 groups ->  381587 bytes  (100.0%)
+
+Reviewing ten of those twenty-five groups gets three quarters of the space. In the order the
+scanner found them, the same ten groups would have given twenty per cent — which is the whole
+argument for the flag.
+
 What it does not do
 -------------------
 

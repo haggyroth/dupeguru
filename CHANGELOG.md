@@ -9,6 +9,79 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [4.15.0] - 2026-08-08
+
+### Added
+
+- **The command-line scanner now ships with the application**, on macOS and Windows. It had
+  hundreds of tests and documented behaviour but was built by nothing and included in no
+  download, so it existed only for people who checked out the source. On macOS it lives inside
+  the bundle, so dragging dupeGuru to Applications brings it along; on Windows it installs
+  alongside the application and the uninstaller removes it.
+
+  It is frozen without Qt, which takes it from 194 MB to 24 MB. The cost is `--mode picture`,
+  which needs an image decoder: it says so and exits rather than failing obscurely, and a
+  standard scan asked to also match pictures carries on and reports what it found. Both work
+  normally in the application and from a source checkout.
+
+- **`--version`** on the command line, which prints the version and exits without needing a
+  folder argument. Thanks to @OceanRay1.
+
+- **EXIF Timestamp as a re-prioritization criterion** in picture mode, ordering photos by when
+  they were taken rather than when the file was written. Copying, exporting and restoring from
+  backup all reset the modification date, so the copy routinely looks newer than the original;
+  the capture date does not move. Photos with no usable capture date sort last under both
+  Newest and Oldest rather than being treated as the oldest photograph ever taken. Thanks to
+  @dchaudhari7177.
+
+- **`--sort-by reclaimable`** on the command line, ranking groups by the space deleting them
+  would actually free, with a cumulative curve in the statistics so a review can stop once the
+  curve flattens. Reclaimable space is what the duplicates free, not the size of the group, so
+  it is not the same as ranking by file size. Thanks to @dchaudhari7177.
+
+## [4.14.1] - 2026-08-08
+
+### Fixed
+
+- **`--ref` was silently ignored** unless the folder was also passed as one of the folders to
+  scan. Naming a subfolder of the scanned path — the most natural form — did nothing, and files
+  in the folder you asked to protect were marked and deleted like any other duplicate. The
+  folder's existence was still checked, so a typo produced a clean error; only a correct
+  invocation failed, and it failed quietly.
+
+  A `--ref` folder outside the scanned paths is now scanned as a reference rather than ignored.
+  The graphical application was never affected.
+
+## [4.14.0] - 2026-08-08
+
+### Added
+
+- **Visually similar images can now be found during a standard scan.** Pointing dupeGuru at a
+  mixed folder used to mean choosing: Standard found the byte-identical copies while ignoring
+  that two photos were the same picture at different sizes, and Picture found those and
+  collected nothing else. A contents scan can now compare the images it finds by appearance as
+  well. Off by default, since comparing appearance decodes every image.
+
+- **A Confidence column and bulk marking by tier.** Every group looked the same, and a match
+  percentage does not distinguish a full content comparison from a sampled hash or a
+  resemblance — all three can read 100%. Groups are now classified as **Corroborated**
+  (contents compared in full, and something independent agrees), **Content only** (contents
+  compared in full, nothing else), or **Unconfirmed** (contents never compared in full).
+
+  The names describe the evidence rather than promising safety: none of them means "safe to
+  delete". A group is only as understood as its weakest pair. `--plan` reports the same tiers.
+
+- **A warning before scanning a system or application-support location** — `/System`,
+  `C:\Windows`, `~/Library`, the inside of an application bundle. Those places hold many
+  identical files on purpose, and removing them can stop installed software from working. It
+  warns and never refuses, and answering yes is remembered for the session.
+
+### Fixed
+
+- **The results window could fail to open after a scan** if a column was declared in one of the
+  two places it must appear and not the other, with an error that pointed nowhere near the
+  cause.
+
 ## [4.13.0] - 2026-08-07
 
 ### Added
@@ -856,7 +929,10 @@ fork no longer routes anyone or anything upstream, and CI runs for the first tim
 
 See `git log` for changes prior to this changelog.
 
-[Unreleased]: https://github.com/haggyroth/dupeguru/compare/v4.13.0...HEAD
+[Unreleased]: https://github.com/haggyroth/dupeguru/compare/v4.15.0...HEAD
+[4.15.0]: https://github.com/haggyroth/dupeguru/compare/v4.14.1...v4.15.0
+[4.14.1]: https://github.com/haggyroth/dupeguru/compare/v4.14.0...v4.14.1
+[4.14.0]: https://github.com/haggyroth/dupeguru/compare/v4.13.0...v4.14.0
 [4.13.0]: https://github.com/haggyroth/dupeguru/compare/v4.12.0...v4.13.0
 [4.12.0]: https://github.com/haggyroth/dupeguru/compare/v4.11.0...v4.12.0
 [4.11.0]: https://github.com/haggyroth/dupeguru/compare/v4.10.0...v4.11.0

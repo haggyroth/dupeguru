@@ -1,8 +1,12 @@
 # Builds a frozen executable and smoke-tests it. Manual only.
 #
-# Packaging is not part of normal CI: no release has ever shipped a binary, and freezing is
-# slow. But issues #10 and #27 both concern behaviour that *only* exists in a frozen build,
-# so without something like this they can never be checked at all.
+# Packaging is not part of normal CI, because freezing is slow. It is dispatched by hand at
+# release time, against the tag rather than a branch -- an artifact labelled 4.9.0 that does not
+# contain the code tagged 4.9.0 is a mislabelled release, and that happened once.
+#
+# Every release from 4.9.0 onward attaches what this builds, so a packaging bug is live rather
+# than latent. Issues #10 and #27 also concern behaviour that *only* exists in a frozen build,
+# which nothing else can check.
 #
 # What this can and cannot prove:
 #   - It CAN build the app frozen, and run a real content scan through the frozen CLI. That
@@ -116,12 +120,14 @@ jobs:
       # is ever wanted, tar the directory first -- do not add a plain upload back.
 
   applications:
-    # The real deliverables: an NSIS installer on Windows, a disk image on macOS. Separate
-    # from the freeze job above, which only smoke-tests the CLI and is about issue #10.
+    # The real deliverables, and what every release from 4.9.0 onward attaches: an NSIS
+    # installer on Windows, a disk image on macOS. Since 4.15.0 both also carry the
+    # command-line scanner -- see the note on the freeze job about why that is built
+    # separately and without Qt.
     #
-    # Still manual, and still not attached to releases. Publishing a binary changes what the
-    # packaging bugs mean -- they stop being latent the moment somebody downloads one -- so
-    # that is a deliberate step, not a side effect of tagging.
+    # Separate from the freeze job above, which smoke-tests the CLI against issue #10.
+    # Attaching these to a release is still a deliberate step rather than a side effect of
+    # tagging: this workflow only builds and uploads artifacts, and a human publishes them.
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false

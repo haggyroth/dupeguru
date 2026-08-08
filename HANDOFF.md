@@ -1,6 +1,6 @@
 # Handoff
 
-Written 2026-08-03 moving development from Windows 11 to a MacBook Air; refreshed 2026-08-07 after 4.13.0.
+Written 2026-08-03 moving development from Windows 11 to a MacBook Air; refreshed 2026-08-08 after 4.15.0.
 
 ## The one rule
 
@@ -20,10 +20,10 @@ it renders links for *historical* upstream ticket numbers in `help/changelog`. D
 | | |
 |---|---|
 | Branch | `master` (not `main`) |
-| Version | 4.13.0, released, with Windows and macOS binaries attached |
-| Releases | v4.4.0 through v4.13.0. From 4.9.0 they carry binaries |
-| Issues | 37 closed, 7 open. Two are claimed by open contributor PRs |
-| Tests | **1477 passing, 6 skipped** on macOS. Windows/Linux counts differ (see below) |
+| Version | 4.15.0, released, with Windows and macOS binaries attached |
+| Releases | v4.4.0 through v4.15.0. From 4.9.0 they carry binaries; from 4.15.0 those also contain the CLI |
+| Issues | 55 closed, 2 open. No open PRs |
+| Tests | **1667 passing, 20 skipped** on macOS. Windows/Linux counts differ (see below) |
 | Qt bindings | PyQt6 by default, PyQt5 as a fallback with its own CI leg |
 | CI | Linux on 3.10 / 3.12 / 3.14, plus Windows, macOS and a PyQt5 leg; `master` is protected |
 
@@ -304,15 +304,19 @@ downloads the installer.
 
 The binaries are still built and attached **deliberately**, not as a side effect of tagging —
 `.github/workflows/packaging.yml` is `workflow_dispatch` only. The flow used for 4.10.0 through
-4.13.0 was:
+4.15.0 was:
 merge the release PR, tag, dispatch packaging **on the tag**, download the artifacts, verify
 them, then upload to the release. Building from the tag matters: for 4.9.0 the first artifacts
 were built from a branch three commits ahead and had to be rebuilt, because a binary stamped
 4.9.0 containing code 4.9.0 never shipped is a mislabelled release.
 
-Neither release has had the manual pass described below. Nobody has run the NSIS
-installer *or* its uninstaller end to end. That is the largest known gap in the release
-process.
+No release has had the manual pass described below. **Nobody has ever run the NSIS installer
+or its uninstaller end to end**, across eight releases that ship one. That is the largest known
+gap in the release process, and it grew in 4.15.0: the uninstaller gained
+`RMDir /r "$INSTDIR\cli"` for the newly bundled command line, and without it an uninstall
+strands ~24 MB and leaves the install directory behind while still reporting success.
+
+Tracked as issue #157, which collects everything only a person at a Windows machine can check.
 
 The workflow has two jobs:
 
