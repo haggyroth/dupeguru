@@ -26,6 +26,7 @@ from hscommon.trans import tr
 from hscommon import desktop
 
 from core import se, me, pe, clone
+from core.confidence import classify_group
 from core.pe.photo import get_delta_dimensions
 from core.util import cmp_value, fix_surrogate_encoding
 from core import directories, results, export, fs, prioritize
@@ -872,10 +873,15 @@ class DupeGuru(Broadcaster):
         if (dupe is None) or (group is None):
             return empty_data()
         try:
-            return dupe.get_display_info(group, delta)
+            info = dupe.get_display_info(group, delta)
         except Exception as e:
             logging.warning("Exception (type: %s) on GetDisplayInfo for %s: %s", type(e), str(dupe.path), str(e))
             return empty_data()
+        # Added here rather than in each mode's get_display_info: the tier is a property of the
+        # group, computed the same way for files, photos and songs, and three copies of one rule
+        # is three chances for the modes to disagree about what is confirmed.
+        info["confidence"] = classify_group(group).label
+        return info
 
     def invoke_custom_command(self):
         """Calls command in ``CustomCommand`` pref with ``%d`` and ``%r`` placeholders replaced.
@@ -1002,6 +1008,38 @@ class DupeGuru(Broadcaster):
         self.results.mark_all()
         self.notify("marking_changed")
         self._results_changed()
+
+    def mark_confidence(self, tier):
+        """Mark every duplicate in groups sitting at exactly *tier*, leaving the rest alone.
+
+        Additive on purpose: marking the corroborated groups and then the content-only ones
+        should leave both marked, so the user can build up a selection one tier at a time and
+        look at what they have before acting. Replacing the selection would make the second
+        click silently undo the first.
+
+        Only duplicates are marked -- ``mark`` refuses a group's reference and any file in a
+        folder marked Reference, which is what makes the corroborated tier act on the copies
+        rather than on the originals it was corroborated by.
+
+        :param str tier: one of :attr:`core.confidence.Confidence.ORDER`
+        :returns: the number of newly marked files
+        """
+        marked = 0
+        for group in self.results.groups:
+            if classify_group(group).tier != tier:
+                continue
+            for dupe in group.dupes:
+                if self.results.is_markable(dupe) and not self.results.is_marked(dupe):
+                    self.results.mark(dupe)
+                    marked += 1
+        self.notify("marking_changed")
+        return marked
+
+    def confidence_tally(self):
+        """How many groups sit in each confidence tier, keyed by tier."""
+        from core.confidence import tally
+
+        return tally(self.results.groups)
 
     def mark_none(self):
         """Set all dupes in the results as unmarked."""

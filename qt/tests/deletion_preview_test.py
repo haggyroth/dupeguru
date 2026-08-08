@@ -33,6 +33,7 @@ def make_plan(entries=None, **kwargs):
         "blocked_bytes": 0,
         "cross_volume": 0,
         "cloneable": 0,
+        "confidence": {},
         "entries": entries if entries is not None else [],
     }
     fields.update(kwargs)
