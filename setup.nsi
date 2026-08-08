@@ -207,7 +207,7 @@ Skip:
   ; Uninstall Entry
   WriteRegStr SHCTX "${UNINSTALLREG}" "DisplayName" "${APPNAME} ${VERSIONMAJOR}.${VERSIONMINOR}.${VERSIONPATCH}"
   WriteRegStr SHCTX "${UNINSTALLREG}" "DisplayVersion" "${VERSIONMAJOR}.${VERSIONMINOR}.${VERSIONPATCH}"
-  WriteRegStr SHCTX "${UNINSTALLREG}" "DisplayIcon" "$INSTDIR\${APPNAME}.exe"
+  WriteRegStr SHCTX "${UNINSTALLREG}" "DisplayIcon" "$INSTDIR\${APPNAME}-win${BITS}.exe"
   WriteRegDWORD SHCTX "${UNINSTALLREG}" "VersionMajor" ${VERSIONMAJOR}
   WriteRegDWORD SHCTX "${UNINSTALLREG}" "VersionMinor" ${VERSIONMINOR}
   WriteRegDWORD SHCTX "${UNINSTALLREG}" "VersionPatch" ${VERSIONPATCH}
