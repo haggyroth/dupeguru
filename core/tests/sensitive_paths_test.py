@@ -25,6 +25,17 @@ from core import sensitive_paths
 from core.sensitive_paths import describe, reason_for, warnings_for
 from hscommon.plat import ISLINUX, ISOSX, ISWINDOWS
 
+
+def native(path):
+    """A folder string as this platform writes it.
+
+    ``Path("/one")`` prints as ``\\one`` on Windows, so an assertion holding a POSIX-looking
+    literal passes everywhere except the platform half of this module is written for. The same
+    helper exists in the folder-overlap and folder-rollup tests, for the same reason.
+    """
+    return str(Path(path))
+
+
 on_macos = pytest.mark.skipif(not ISOSX, reason="macOS locations")
 on_windows = pytest.mark.skipif(not ISWINDOWS, reason="Windows locations")
 on_linux = pytest.mark.skipif(not ISLINUX, reason="Linux locations")
@@ -160,7 +171,7 @@ class TestTheMessage:
 
     def test_the_message_names_every_folder_and_its_reason(self):
         message = describe([(Path("/one"), "reason one"), (Path("/two"), "reason two")])
-        for fragment in ("/one", "reason one", "/two", "reason two"):
+        for fragment in (native("/one"), "reason one", native("/two"), "reason two"):
             assert fragment in message
 
     def test_the_message_says_what_could_go_wrong(self):
