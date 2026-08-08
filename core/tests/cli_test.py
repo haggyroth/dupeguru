@@ -582,6 +582,125 @@ class TestDelete:
 
 
 # ---------------------------------------------------------------------------
+# A deletion has to report what it deleted (issue #171)
+# ---------------------------------------------------------------------------
+
+
+def _fake_trash(monkeypatch, destination="/trash/$R000000.txt"):
+    """Make trashing report a fixed destination without touching the real trash."""
+    import core.app as core_app
+
+    def _trash(path):
+        Path(path).unlink()
+        return destination
+
+    monkeypatch.setattr(core_app, "trash_file", _trash)
+
+
+class TestDeletionRecord:
+    """--output and --ndjson used to be accepted and then ignored by the delete path.
+
+    It returned before reaching the emission block, so `--delete --yes --output FILE`
+    deleted the files, wrote no file, printed nothing, and exited 1 like a success. The
+    record is the only account of what happened, so its absence was silent data loss of
+    the log rather than of the files.
+    """
+
+    def test_delete_emits_a_record_on_stdout(self, tmp_path, capsys, monkeypatch):
+        _fake_trash(monkeypatch)
+        _write_files(tmp_path, {"a.txt": b"same", "b.txt": b"same"})
+        rc = main([str(tmp_path), "--delete", "--yes"])
+        assert rc == EXIT_DUPES_FOUND
+        payload = json.loads(capsys.readouterr().out)
+        eq_(1, payload["stats"]["deleted"])
+        eq_(1, len(payload["deleted"]))
+        entry = payload["deleted"][0]
+        assert entry["path"].endswith(".txt")
+        # The reference is what makes the record readable later: "this duplicated that".
+        assert entry["reference"].endswith(".txt")
+        assert entry["reference"] != entry["path"]
+
+    def test_the_record_carries_the_trash_destination(self, tmp_path, capsys, monkeypatch):
+        """The point of the whole feature: core.trash captures where the file went, and
+        before this the CLI had no way to report it."""
+        _fake_trash(monkeypatch, destination="/trash/$RABC123.txt")
+        _write_files(tmp_path, {"a.txt": b"same", "b.txt": b"same"})
+        main([str(tmp_path), "--delete", "--yes"])
+        payload = json.loads(capsys.readouterr().out)
+        eq_("/trash/$RABC123.txt", payload["deleted"][0]["destination"])
+        assert payload["deleted"][0]["restorable"] is True
+        eq_(1, payload["stats"]["destinations_recorded"])
+
+    def test_output_file_receives_the_record(self, tmp_path, capsys, monkeypatch):
+        _fake_trash(monkeypatch)
+        src = tmp_path / "src"
+        src.mkdir()
+        _write_files(src, {"a.txt": b"same", "b.txt": b"same"})
+        target = tmp_path / "record.json"
+        main([str(src), "--delete", "--yes", "--output", str(target)])
+        assert target.exists(), "--output was accepted and then ignored"
+        eq_(1, json.loads(target.read_text(encoding="utf-8"))["stats"]["deleted"])
+        eq_("", capsys.readouterr().out)
+
+    def test_ndjson_emits_one_line_per_file_then_stats(self, tmp_path, capsys, monkeypatch):
+        _fake_trash(monkeypatch)
+        _write_files(tmp_path, {"a.txt": b"same", "b.txt": b"same"})
+        main([str(tmp_path), "--delete", "--yes", "--ndjson"])
+        lines = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.strip()]
+        eq_(2, len(lines))
+        eq_("deleted", lines[0]["type"])
+        eq_("stats", lines[-1]["type"])
+
+    def test_a_permanent_deletion_is_recorded_as_unrestorable(self, tmp_path, capsys):
+        """--direct-delete bypasses the trash, so there is no destination to record and
+        nothing to restore. Saying so explicitly beats an empty string the reader has to
+        interpret."""
+        _write_files(tmp_path, {"a.txt": b"same", "b.txt": b"same"})
+        main([str(tmp_path), "--direct-delete", "--yes", "--ndjson"])
+        lines = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.strip()]
+        deleted = [line for line in lines if line["type"] == "deleted"]
+        eq_("", deleted[0]["destination"])
+        assert deleted[0]["permanent"] is True
+        assert deleted[0]["restorable"] is False
+        eq_(0, lines[-1]["restorable"])
+
+    def test_an_unwritable_output_falls_back_to_stdout(self, tmp_path, capsys, monkeypatch):
+        """The files are gone by the time the record is written. Dropping it because the
+        path was bad would leave the user with no account of the deletion at all."""
+        _fake_trash(monkeypatch)
+        _write_files(tmp_path, {"a.txt": b"same", "b.txt": b"same"})
+        unwritable = tmp_path / "no-such-dir" / "record.json"
+        rc = main([str(tmp_path), "--delete", "--yes", "--output", str(unwritable)])
+        eq_(EXIT_DUPES_FOUND, rc)
+        captured = capsys.readouterr()
+        assert "error writing deletion record" in captured.err
+        eq_(1, json.loads(captured.out)["stats"]["deleted"])
+
+    def test_deleting_does_not_discard_previously_logged_runs(self, tmp_path, capsys, monkeypatch, isolated_appdata):
+        """The CLI never calls app.load(), so its deletion log starts empty -- and the save()
+        inside DeletionLog.record writes memory over the whole file. Without a read-back
+        first, one command-line deletion silently wiped every run the GUI had recorded,
+        destroying the destinations a restore depends on."""
+        from core.deletion_log import DeletionLog, DeletionRecord, default_log_path
+
+        _fake_trash(monkeypatch)
+        log_path = default_log_path(str(isolated_appdata))
+        seeded = DeletionLog(log_path)
+        older = seeded.start_run(permanent=False)
+        seeded.record(older, DeletionRecord(original_path="/gone/before.txt", size=1, destination="/trash/x"))
+
+        _write_files(tmp_path, {"a.txt": b"same", "b.txt": b"same"})
+        main([str(tmp_path), "--delete", "--yes"])
+        capsys.readouterr()
+
+        reloaded = DeletionLog(log_path)
+        reloaded.load()
+        paths = [record.original_path for run in reloaded for record in run.records]
+        assert "/gone/before.txt" in paths, "the earlier run was wiped by the new one"
+        eq_(2, len(reloaded.runs))
+
+
+# ---------------------------------------------------------------------------
 # --dry-run must prevent deletion (issue #7)
 # ---------------------------------------------------------------------------
 

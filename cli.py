@@ -35,6 +35,12 @@ Progress (stderr):
 Deletion:
     --delete         Send all duplicate files (non-reference) to the system trash after scanning.
                      Requires --yes to confirm, or the flag is a no-op.
+                     A completed deletion writes a record of what it removed, to --output when
+                     given and to stdout otherwise, in place of the normal results: one entry
+                     per file with its size, the file it duplicated, and where it went in the
+                     trash, plus any files that were skipped. With --ndjson the entries are one
+                     per line followed by a stats record. Permanent deletions record no
+                     destination and report restorable=false.
     --yes            Skip the interactive deletion confirmation prompt.
     --direct-delete  Permanently delete instead of sending to trash (use with care).
     --dry-run        Never delete. With --delete, reports what would be removed and exits
@@ -534,6 +540,73 @@ def _serialise_plan(plan: DeletionPlan) -> dict:
     }
 
 
+def _deletion_entry(path, size, destination, permanent, reference="", digest="") -> dict:
+    """One deleted file, in the shape both deletion paths report.
+
+    ``restorable`` is derived rather than stored so it cannot disagree with the fields it
+    summarises; it mirrors ``DeletionRecord.restorable``.
+    """
+    return {
+        "path": str(path),
+        "size": int(size),
+        "digest": digest,
+        "reference": reference,
+        "destination": destination,
+        "permanent": bool(permanent),
+        "restorable": bool(destination) and not permanent,
+    }
+
+
+def _serialise_deletion(files: list[dict], skipped: list[tuple], permanent: bool) -> dict:
+    """Machine-readable record of a completed deletion, mirroring the plan serialisation.
+
+    ``destinations_recorded`` is reported separately from the file count because a
+    destination can legitimately be missing -- the platform could not report one -- and the
+    difference is exactly what says whether these deletions can be undone. Reading it off
+    the summary beats scanning every entry for an empty string.
+    """
+    return {
+        "deleted": files,
+        "skipped": [{"path": str(path), "reason": str(reason)} for path, reason in skipped],
+        "stats": {
+            "deleted": len(files),
+            "reclaimed_bytes": sum(entry["size"] for entry in files),
+            "skipped": len(skipped),
+            "permanent": permanent,
+            "destinations_recorded": sum(1 for entry in files if entry["destination"]),
+            "restorable": sum(1 for entry in files if entry["restorable"]),
+        },
+    }
+
+
+def _deletion_text(payload: dict, ndjson: bool) -> str:
+    if not ndjson:
+        return json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
+    lines = [json.dumps({"type": "deleted", **entry}, ensure_ascii=False) for entry in payload["deleted"]]
+    lines += [json.dumps({"type": "skipped", **entry}, ensure_ascii=False) for entry in payload["skipped"]]
+    lines.append(json.dumps({"type": "stats", **payload["stats"]}, ensure_ascii=False))
+    return "\n".join(lines) + "\n"
+
+
+def _emit_deletion(payload: dict, output: str | None, ndjson: bool) -> None:
+    """Write the deletion record to --output, or to stdout when there is none.
+
+    On a write failure the record goes to stdout instead of being lost. The files are
+    already deleted by this point, so the record is the only remaining account of what
+    happened -- dropping it because a path was unwritable would leave the user worse off
+    than not asking for it at all.
+    """
+    text = _deletion_text(payload, ndjson)
+    if output:
+        try:
+            Path(output).write_text(text, encoding="utf-8")
+            return
+        except OSError as exc:
+            print(f"error writing deletion record to {output}: {exc}", file=sys.stderr)
+            print("the record follows on stdout so it is not lost:", file=sys.stderr)
+    sys.stdout.write(text)
+
+
 # label and closing line, keyed by whether --plan (rather than --dry-run) asked for this.
 _PLAN_LABELS = {
     False: ("DRY RUN", "  re-run without --dry-run to execute."),
@@ -566,16 +639,39 @@ def _report_deletion_plan(
     print(footer, file=sys.stderr)
 
 
-def _delete_dupes(app: DupeGuru, direct_delete: bool, verbose: bool) -> list[tuple]:
-    """Mark all dupes in results then delete them. Returns list of (path, error) problems."""
+def _delete_dupes(app: DupeGuru, direct_delete: bool, verbose: bool):
+    """Mark all dupes in results then delete them.
+
+    Returns ``(problems, run)``, where problems is a list of ``(dupe, error)``.
+
+    The run is what carries each file's trash destination. ``_do_delete_dupe`` only records
+    anything when it is given a run, so passing None here -- as this used to -- threw away
+    the destination that ``core.trash`` went to the trouble of capturing, and left the CLI
+    with nothing to report and nothing for a later restore to use.
+    """
     app.results.mark_all()
 
-    problems = []
+    # Essential, not tidiness: the CLI never calls app.load(), so this log starts empty, and
+    # the save() inside DeletionLog.record writes whatever is in memory over the whole file.
+    # Without this read-back a single command-line deletion would wipe every previously
+    # recorded run, including the GUI's, and take their restore destinations with it.
+    app.deletion_log.load()
+    run = app.deletion_log.start_run(permanent=direct_delete)
 
     def _op(dupe):
-        app._do_delete_dupe(dupe, link_deleted=False, use_hardlinks=False, direct_deletion=direct_delete)
+        app._do_delete_dupe(
+            dupe,
+            link_deleted=False,
+            use_hardlinks=False,
+            direct_deletion=direct_delete,
+            run=run,
+        )
 
-    app.results.perform_on_marked(_op, remove_from_results=True)
+    try:
+        app.results.perform_on_marked(_op, remove_from_results=True)
+    finally:
+        # A run in which every file failed should not leave an empty entry in the log.
+        app.deletion_log.discard_if_empty(run)
     problems = list(app.results.problems)
 
     if verbose:
@@ -584,7 +680,7 @@ def _delete_dupes(app: DupeGuru, direct_delete: bool, verbose: bool) -> list[tup
             file=sys.stderr,
         )
 
-    return problems
+    return problems, run
 
 
 # --- Load saved results (--from-results) ------------------------------------
@@ -671,16 +767,17 @@ def _saved_partial_counts(groups: list[dict]) -> tuple[int, bool]:
 
 def _delete_from_saved_results(
     groups: list[dict], direct_delete: bool, verbose: bool
-) -> tuple[int, list[tuple[str, str]]]:
+) -> tuple[list[dict], list[tuple[str, str]]]:
     """Delete dupe files listed in saved results after re-validating size/mtime.
 
-    Returns (deleted_count, [(path, reason), ...]) where the second element lists
+    Returns ``(deleted_entries, [(path, reason), ...])`` where the second element lists
     files that were skipped due to validation failure or I/O error.
     """
-    deleted = 0
+    deleted = []
     problems = []
 
     for group in groups:
+        reference = str(group.get("reference", {}).get("path", ""))
         for dupe in group.get("duplicates", []):
             if dupe.get("is_ref_folder"):
                 continue
@@ -692,6 +789,7 @@ def _delete_from_saved_results(
                 problems.append((dupe["path"], _DELETE_STATUS_REASON[status]))
                 continue
             try:
+                destination = ""
                 if direct_delete:
                     if p.is_dir():
                         import shutil
@@ -700,10 +798,13 @@ def _delete_from_saved_results(
                     else:
                         p.unlink()
                 else:
-                    from send2trash import send2trash
+                    # core.trash rather than send2trash directly: same trashing and the same
+                    # OSError contract, but it also reports where the file landed, which is
+                    # what makes the emitted record usable for a restore.
+                    from core.trash import trash_file
 
-                    send2trash(str(p))
-                deleted += 1
+                    destination = trash_file(str(p))
+                deleted.append(_deletion_entry(p, dupe["size"], destination, direct_delete, reference=reference))
                 if verbose:
                     print(f"  deleted: {p}", file=sys.stderr)
             except OSError as e:
@@ -741,7 +842,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "--output",
         "-o",
         metavar="FILE",
-        help="Write JSON results to FILE instead of stdout.",
+        help=(
+            "Write JSON results to FILE instead of stdout. With --delete, FILE receives the "
+            "record of what was deleted."
+        ),
     )
     parser.add_argument(
         "--dry-run",
@@ -971,7 +1075,8 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "Emit newline-delimited JSON instead of a single JSON object. "
-            "Each group is one line; the final line is the stats record."
+            "Each group is one line; the final line is the stats record. "
+            "With --delete, one line per deleted or skipped file, then the stats record."
         ),
     )
 
@@ -1213,19 +1318,25 @@ def main(argv=None) -> int:
 
         deleted, problems = _delete_from_saved_results(groups, args.direct_delete, args.verbose)
 
+        _emit_deletion(
+            _serialise_deletion(deleted, problems, permanent=args.direct_delete),
+            args.output,
+            args.ndjson,
+        )
+
         if problems:
             for path, reason in problems:
                 print(f"  skipped {path}: {reason}", file=sys.stderr)
             print(
-                f"Deleted {deleted} file(s); {len(problems)} skipped. See above for details.",
+                f"Deleted {len(deleted)} file(s); {len(problems)} skipped. See above for details.",
                 file=sys.stderr,
             )
             return EXIT_SCAN_ERROR
 
         if args.verbose:
-            print(f"Deleted {deleted} file(s).", file=sys.stderr)
+            print(f"Deleted {len(deleted)} file(s).", file=sys.stderr)
 
-        return EXIT_DUPES_FOUND if deleted > 0 else EXIT_OK
+        return EXIT_DUPES_FOUND if len(deleted) > 0 else EXIT_OK
 
     # --------------------------------------------------------------------
     # Normal scan path
@@ -1482,7 +1593,29 @@ def main(argv=None) -> int:
             app.close()
             return EXIT_BAD_ARGS
 
-        problems = _delete_dupes(app, direct_delete=args.direct_delete, verbose=args.verbose)
+        problems, run = _delete_dupes(app, direct_delete=args.direct_delete, verbose=args.verbose)
+
+        # Emitted before the problem check below: a partially failed deletion is when the
+        # record of what did go matters most.
+        _emit_deletion(
+            _serialise_deletion(
+                [
+                    _deletion_entry(
+                        record.original_path,
+                        record.size,
+                        record.destination,
+                        record.permanent,
+                        reference=record.reference_path,
+                        digest=record.digest,
+                    )
+                    for record in run.records
+                ],
+                [(dupe.path, reason) for dupe, reason in problems],
+                permanent=args.direct_delete,
+            ),
+            args.output,
+            args.ndjson,
+        )
 
         if problems:
             for dupe, reason in problems:
