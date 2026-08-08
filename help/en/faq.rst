@@ -162,6 +162,25 @@ If all you need to find is exact duplicates, just use the standard mode of dupeG
 Contents scan method. If your photos have EXIF tags, you can also try the "EXIF" scan method which
 is much faster.
 
+My scan seems stuck. How can I tell?
+------------------------------------
+
+Underneath the progress message, dupeGuru shows how long the scan has been running and how fast
+it is getting through files. If that rate is above zero, the scan is working, however slow it
+looks.
+
+Slow is normal in one particular case: reading file information from an external or network
+drive for the first time. The per-file cost there can be a thousand times higher than on a local
+disk that has been read recently, so collecting a few hundred thousand files can take tens of
+minutes at a few hundred files per second. Nothing is wrong; there is simply that much to do. A
+second scan of the same drive is dramatically faster, and faster again if you enable remembering
+folder listings between scans.
+
+Once the pace has held steady for a while, dupeGuru also shows an estimate of the time remaining.
+It stays quiet until then, and goes quiet again if the pace changes, because an estimate made
+from a fast opening stretch would be badly wrong for everything after it -- and a confident wrong
+answer is worse than none.
+
 Where are user files located?
 -----------------------------
 

@@ -1,3 +1,35 @@
+=== 4.15.0 (2026-08-08)
+* Include the command-line scanner in the application download, on macOS and Windows
+* Add a --version flag to the command line
+
+=== 4.14.1 (2026-08-08)
+* Fix a reference folder given on the command line being ignored unless it was also listed as a folder to scan
+
+=== 4.14.0 (2026-08-08)
+* Find visually similar images during a standard scan, so one scan covers both
+* Show what is actually known about each duplicate group, and mark in bulk by that
+* Warn before scanning a folder the operating system or an application keeps its files in
+* Guard against the results window failing to open when a column is declared in only one place
+
+=== 4.13.0 (2026-08-07)
+* Collapse duplicate groups into the folder pair that explains them, and mark a pair in one go
+* Report how much of each scanned folder also exists elsewhere
+* Fix a crash on Windows when applying preferences after a scan
+* Stop re-applying the interface style on every preferences change
+
+=== 4.12.0 (2026-08-07)
+* Record every deletion and offer to put the files back, on macOS, Linux and Windows
+* Refuse a restore that would overwrite a newer file, and say why
+* Add test coverage for the parts of the interface that decide which files are kept or deleted
+
+=== 4.11.0 (2026-08-07)
+* Replace duplicates with copy-on-write clones, reclaiming the space without losing either file
+* Preview a deletion before running it, showing what would be removed, what would be skipped and why
+* Show elapsed time and speed while scanning, and an estimate of the time left once one can be trusted
+* Save a scan configuration under a name and load it back, folders and settings together
+* Say whether folders are being read or remembered while collecting them
+* Fix the application failing to start on Windows
+
 === 4.10.0 (2026-08-05)
 * Optionally remember folder listings and picture comparisons between scans, so rescanning an unchanged drive is near-instant
 * Fix duplicate folders being impossible to delete

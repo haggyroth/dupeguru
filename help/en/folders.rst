@@ -69,6 +69,55 @@ folder if you want to be sure that you won't delete any file from it.
 When you set the state of a directory, all subfolders of this folder automatically inherit this
 state unless you explicitly set a subfolder's state.
 
+System and application locations
+--------------------------------
+
+If a folder you have selected is somewhere the operating system or an installed application
+keeps its own files -- ``/System``, ``/Applications`` and ``~/Library`` on macOS, ``C:\Windows``
+and ``Program Files`` on Windows, ``/usr`` and ``/etc`` on Linux, or the inside of an
+application bundle -- dupeGuru says so before it starts scanning, and asks whether to continue.
+
+These places hold many identical files on purpose: shared libraries, bundled resources, cached
+copies. Removing them or replacing them with links can stop installed software from working,
+often long after the fact and with nothing obviously connecting the two.
+
+It is a warning and not a refusal. Clearing out a duplicate-ridden application-support folder is
+a perfectly reasonable thing to do, and only you can say whether it is what you meant. Answer
+yes and the scan proceeds as normal; dupeGuru will not ask about that folder again until you
+restart it, so re-scanning while you adjust your filters does not mean answering the same
+question over and over.
+
+The list of locations is deliberately short, covering only places where deleting duplicates is
+known to break things. Your own folders -- Documents, Pictures, external drives -- never trigger
+it.
+
+On the command line the same locations produce a warning on stderr rather than a prompt. A scan
+deletes nothing on its own, and ``--delete`` has its own confirmation.
+
+Scan Profiles
+-------------
+
+If you scan the same folders repeatedly, **File --> Save Scan Profile...** remembers the whole
+setup under a name you choose: the folders, their **Normal**/**Reference**/**Excluded** states,
+the application mode, the scan type, and the scanning options from your preferences. **File -->
+Scan Profiles...** lists what you have saved and loads one back.
+
+Loading a profile replaces the current folder selection rather than adding to it, so what you
+see afterwards is exactly what the profile describes and nothing else.
+
+Saving under a name you have already used replaces that profile, so refining a setup and saving
+it again does not leave you with several near-identical entries.
+
+Only settings that affect what a scan *finds* are stored. Appearance, language and window layout
+are not, so loading a profile will not restyle the application. Neither is the copy/move
+destination setting, which applies to what you do with results rather than to finding them.
+
+If a profile refers to folders that no longer exist -- an external drive that is not plugged in,
+say -- the list marks it as having missing folders before you load it, and hovering the entry
+shows which ones. Loading it anyway scans the folders that are present and tells you which were
+skipped. It matters that you are told: a scan covering four folders instead of five simply finds
+fewer duplicates, and a short list of duplicates looks the same as a clean one.
+
 Scan
 ----
 

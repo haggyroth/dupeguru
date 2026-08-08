@@ -32,6 +32,7 @@ class ResultTable(ResultTableBase):
         Column("track", coltr("Track Number"), visible=False, optional=True),
         Column("comment", coltr("Comment"), visible=False, optional=True),
         Column("percentage", coltr("Match %"), optional=True),
+        Column("confidence", coltr("Confidence"), visible=False, optional=True),
         Column("words", coltr("Words Used"), visible=False, optional=True),
         Column("dupe_count", coltr("Dupe Count"), visible=False, optional=True),
     ]

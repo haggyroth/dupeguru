@@ -1260,6 +1260,7 @@ class TestDeleteMarkedGuards:
             dgapp.deletion_options._link_deleted = True
             dgapp.deletion_options.use_hardlinks = True
             dgapp.deletion_options.direct = True
+            dgapp.deletion_options.use_clones = True
             return True
 
         dgapp.deletion_options.show = choose_everything
@@ -1268,7 +1269,7 @@ class TestDeleteMarkedGuards:
 
         assert started, "no job was started"
         _, kwargs = started[0]
-        assert kwargs["args"] == [True, True, True]
+        assert kwargs["args"] == [True, True, True, True]
 
 
 class TestCopyOrMoveMarkedGuards:
@@ -1661,3 +1662,117 @@ class TestStartScanning:
         dgapp.start_scanning()
 
         assert dgapp.results.groups == []
+
+
+class TestCloneInsteadOfDelete:
+    """Replacing a duplicate with a clone of its reference (issue #129).
+
+    The gate is the feature. Cloning is only harmless when the two files are already
+    identical: it replaces the duplicate's contents with the reference's. For a contents scan
+    that is a no-op on the bytes and a win on the space. For a picture match it would
+    substitute a different image -- a resized copy, a re-encode -- and report it as
+    deduplication.
+    """
+
+    @staticmethod
+    def _pair(tmp_path, same=True):
+        """A dupe and a ref, with digests set the way a scan would leave them.
+
+        Skips where the filesystem cannot clone. Platform support is not filesystem support:
+        the Linux CI runners are ext4, which has no FICLONE, so a test that assumed cloning
+        works failed there while passing on APFS.
+        """
+        from core import clone as clone_module
+
+        ref_path = tmp_path / "ref.bin"
+        dupe_path = tmp_path / "dupe.bin"
+        ref_path.write_bytes(b"A" * 4096)
+        dupe_path.write_bytes(b"A" * 4096 if same else b"B" * 4096)
+        if not clone_module.can_clone(ref_path, tmp_path):
+            pytest.skip("this filesystem cannot clone")
+        ref, dupe = fs.File(ref_path), fs.File(dupe_path)
+        for f in (ref, dupe):
+            f._read_info("size")
+            f._read_info("mtime")
+        ref.digest = b"same-digest"
+        dupe.digest = b"same-digest" if same else b"other-digest"
+        return dupe, ref
+
+    def test_identical_files_may_be_cloned(self, tmpdir):
+        tmp_path = Path(str(tmpdir))
+        dupe, ref = self._pair(tmp_path)
+        clone_path = tmp_path / "made.bin"
+        app.DupeGuru._make_replacement_clone(dupe, ref, clone_path)
+        assert clone_path.read_bytes() == b"A" * 4096
+
+    def test_differing_files_are_refused(self, tmpdir):
+        """The case that would silently substitute one image for another."""
+        tmp_path = Path(str(tmpdir))
+        dupe, ref = self._pair(tmp_path, same=False)
+        clone_path = tmp_path / "made.bin"
+        with pytest.raises(OSError) as exc:
+            app.DupeGuru._make_replacement_clone(dupe, ref, clone_path)
+        assert "not byte-for-byte identical" in str(exc.value)
+        assert not clone_path.exists(), "a clone was created despite the refusal"
+        assert dupe.path.read_bytes() == b"B" * 4096, "the duplicate was altered"
+
+    def test_a_missing_digest_is_refused(self, tmpdir):
+        """Picture matches carry no full digest, and an absent digest proves nothing.
+
+        Sampled hashing is refused for the same reason: three matching chunks are not a
+        guarantee about the rest of the file.
+        """
+        tmp_path = Path(str(tmpdir))
+        dupe, ref = self._pair(tmp_path)
+        dupe.digest = b""
+        with pytest.raises(OSError) as exc:
+            app.DupeGuru._make_replacement_clone(dupe, ref, tmp_path / "made.bin")
+        assert "not byte-for-byte identical" in str(exc.value)
+
+    def test_unsupported_filesystem_is_refused_not_worked_around(self, tmpdir, monkeypatch):
+        """Both available fallbacks are wrong, so there must not be one.
+
+        Copying would double the space this exists to reclaim; deleting would destroy the file
+        the user was told would survive.
+        """
+        from core import clone as clone_module
+
+        tmp_path = Path(str(tmpdir))
+        dupe, ref = self._pair(tmp_path)
+
+        def unsupported(source, dest):
+            raise clone_module.CloneNotSupportedError(errno.ENOTSUP, "nope", str(source))
+
+        monkeypatch.setattr(clone_module, "clone_file", unsupported)
+        clone_path = tmp_path / "made.bin"
+        with pytest.raises(OSError) as exc:
+            app.DupeGuru._make_replacement_clone(dupe, ref, clone_path)
+        assert "cannot make copy-on-write clones" in str(exc.value)
+        assert not clone_path.exists()
+        assert dupe.path.exists(), "the duplicate was removed despite the clone failing"
+
+    def test_the_duplicate_survives_when_cloning_fails(self, tmpdir, monkeypatch):
+        """End to end: a failed clone must leave the file on disk.
+
+        The replacement is built before anything is deleted, exactly as the link path does,
+        so a failure propagates as a recorded problem with the file still there.
+        """
+        from core import clone as clone_module
+
+        tmp_path = Path(str(tmpdir))
+        # Identical files, so the identity gate passes and the *clone itself* is what fails.
+        # Using differing files here would test the gate again and never reach this path.
+        dupe, ref = self._pair(tmp_path)
+
+        def unsupported(source, dest):
+            raise clone_module.CloneNotSupportedError(errno.ENOTSUP, "nope", str(source))
+
+        monkeypatch.setattr(clone_module, "clone_file", unsupported)
+
+        dgapp = TestApp().app
+        dgapp.results.get_group_of_duplicate = lambda d: type("G", (), {"ref": ref})()
+
+        with pytest.raises(OSError):
+            dgapp._do_delete_dupe(dupe, True, False, True, use_clones=True)
+        assert dupe.path.exists(), "the duplicate was deleted even though cloning failed"
+        assert dupe.path.read_bytes() == b"A" * 4096, "the duplicate was altered"

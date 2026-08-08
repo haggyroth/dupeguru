@@ -6,6 +6,7 @@
 
 from qtpy.QtCore import QRect, Qt
 from qtpy.QtWidgets import (
+    QInputDialog,
     QListView,
     QWidget,
     QFileDialog,
@@ -29,6 +30,8 @@ from core.app import AppMode
 from qt import resources
 from qt.radio_box import RadioBox
 from qt.recent import Recent
+from qt.deletion_log_dialog import DeletionLogDialog
+from qt.scan_profile_dialog import ScanProfileDialog
 from qt.util import move_to_screen_center, create_actions
 
 from qt import platform
@@ -93,6 +96,9 @@ class DirectoriesDialog(QMainWindow):
             ("actionAddFolder", "", "", tr("Add Folder..."), self.addFolderTriggered),
             ("actionLoadDirectories", "", "", tr("Load Directories..."), self.loadDirectoriesTriggered),
             ("actionSaveDirectories", "", "", tr("Save Directories..."), self.saveDirectoriesTriggered),
+            ("actionSaveScanProfile", "", "", tr("Save Scan Profile..."), self.saveScanProfileTriggered),
+            ("actionScanProfiles", "", "", tr("Scan Profiles..."), self.scanProfilesTriggered),
+            ("actionDeletionHistory", "", "", tr("Deletion History..."), self.deletionHistoryTriggered),
         ]
         create_actions(ACTIONS, self)
         if self.app.use_tabs:
@@ -130,6 +136,11 @@ class DirectoriesDialog(QMainWindow):
         self.menuFile.addSeparator()
         self.menuFile.addAction(self.actionLoadDirectories)
         self.menuFile.addAction(self.actionSaveDirectories)
+        self.menuFile.addSeparator()
+        self.menuFile.addAction(self.actionSaveScanProfile)
+        self.menuFile.addAction(self.actionScanProfiles)
+        self.menuFile.addSeparator()
+        self.menuFile.addAction(self.actionDeletionHistory)
         self.menuFile.addSeparator()
         self.menuFile.addAction(self.app.actionQuit)
 
@@ -336,6 +347,18 @@ class DirectoriesDialog(QMainWindow):
         self.app.model.app_mode = mode
         self._updateScanTypeList()
 
+    def refreshAppMode(self):
+        """Show the mode the model is now in, and rebuild the scan types that go with it.
+
+        Needed when something other than the radio box changes the mode -- loading a scan
+        profile does. Without this the buttons keep pointing at the old mode while the scan
+        runs in the new one.
+        """
+        mode_indexes = {AppMode.STANDARD: 0, AppMode.MUSIC: 1, AppMode.PICTURE: 2}
+        self.appModeRadioBox.selected_index = mode_indexes.get(self.app.model.app_mode, 0)
+        # Also calls app._update_options(), which is what actually rebuilds the option dict.
+        self._updateScanTypeList()
+
     def appWillSavePrefs(self):
         self.app.prefs.directoriesWindowRect = self.geometry()
 
@@ -369,6 +392,29 @@ class DirectoriesDialog(QMainWindow):
             if not destination.endswith(".dupegurudirs"):
                 destination = f"{destination}.dupegurudirs"
             self.app.model.save_directories_as(destination)
+
+    def saveScanProfileTriggered(self):
+        """Name the current setup and remember it."""
+        if not len(self.app.model.directories):
+            self.app.show_message(tr("Add at least one folder before saving a scan profile."))
+            return
+        existing = self.app.model.scan_profiles.names
+        name, accepted = QInputDialog.getText(self, tr("Save Scan Profile"), tr("Name for this scan configuration:"))
+        name = name.strip()
+        if not accepted or not name:
+            return
+        if name in existing:
+            title = tr("Replace Profile?")
+            msg = tr("A scan profile named '{}' already exists. Replace it?").format(name)
+            if not self.app.confirm(title, msg):
+                return
+        self.app.saveScanProfile(name)
+
+    def scanProfilesTriggered(self):
+        ScanProfileDialog(self, self.app).exec()
+
+    def deletionHistoryTriggered(self):
+        DeletionLogDialog(self, self.app).exec()
 
     def scanButtonClicked(self):
         if self.app.model.results.is_modified:

@@ -197,7 +197,31 @@ def reduce_common_words(word_dict, threshold):
 # http://stackoverflow.com/questions/1606436/adding-docstrings-to-namedtuples-in-python
 
 
-class Match(namedtuple("Match", "first second percentage partial")):
+class MatchKind:
+    """How a pair was found to match, which is not the same as how strongly.
+
+    A percentage answers "how alike", and 100% means two different things depending on who
+    said it: identical bytes, or block signatures that agree exactly. The second is a
+    resemblance, not an identity -- a re-encode, a crop or a resize can score 100% while the
+    files differ -- so it is not on its own a reason to delete anything.
+
+    Recorded per match rather than per scan because a single result set can now contain both.
+    """
+
+    EXACT = "exact"  # identical content, established by comparing it
+    RESEMBLANCE = "resemblance"  # images that look alike; not a claim about the bytes
+    METADATA = "metadata"  # names, tags or EXIF agreed; the content was never compared
+
+    #: Kinds that justify deleting one side without looking at it. Only one does.
+    CERTAIN = frozenset({EXACT})
+
+    #: The default when a caller does not say. Deliberately the weakest claim: a match wrongly
+    #: labelled EXACT invites deleting a file nobody compared, while one wrongly labelled
+    #: METADATA only invites a second look. Understating is the safe direction to be wrong in.
+    DEFAULT = METADATA
+
+
+class Match(namedtuple("Match", "first second percentage partial kind")):
     """Represents a match between two :class:`~core.fs.File`.
 
     Regarless of the matching method, when two files are determined to match, a Match pair is created,
@@ -225,8 +249,8 @@ class Match(namedtuple("Match", "first second percentage partial")):
 
     __slots__ = ()
 
-    def __new__(cls, first, second, percentage, partial=False):
-        return super().__new__(cls, first, second, percentage, partial)
+    def __new__(cls, first, second, percentage, partial=False, kind=MatchKind.METADATA):
+        return super().__new__(cls, first, second, percentage, partial, kind)
 
 
 def get_match(first, second, flags=()):
@@ -373,17 +397,17 @@ def getmatches_by_contents(files, bigsize=0, j=job.nulljob):
                     continue  # Don't spend time comparing two ref pics together.
                 if first.size == 0 and second.size == 0:
                     # skip hashing for zero length files
-                    result.append(Match(first, second, 100))
+                    result.append(Match(first, second, 100, kind=MatchKind.EXACT))
                     continue
                 # if digests are the same (and not None) then files match
                 if first.digest_partial is not None and first.digest_partial == second.digest_partial:
                     if bigsize > 0 and first.size > bigsize:
                         if first.digest_samples is not None and first.digest_samples == second.digest_samples:
                             # Matched by sampled digest only — probable duplicate, not confirmed.
-                            result.append(Match(first, second, 100, partial=True))
+                            result.append(Match(first, second, 100, partial=True, kind=MatchKind.EXACT))
                     else:
                         if first.digest is not None and first.digest == second.digest:
-                            result.append(Match(first, second, 100))
+                            result.append(Match(first, second, 100, kind=MatchKind.EXACT))
             group_count += 1
             j.add_progress(desc=PROGRESS_MESSAGE % (len(result), group_count))
     except MemoryError:

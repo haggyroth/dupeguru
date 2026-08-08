@@ -39,6 +39,15 @@ class Markable:
             pass
 
     # ---Public
+    def is_markable(self, o):
+        """Whether *o* could be marked at all.
+
+        Public because callers that report on what a deletion would do need the same answer
+        the marking itself uses. Counting anything else means offering a number that does not
+        match what happens.
+        """
+        return self._is_markable(o)
+
     def is_marked(self, o):
         if not self._is_markable(o):
             return False

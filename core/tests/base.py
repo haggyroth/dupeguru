@@ -169,6 +169,7 @@ class TestApp(TestAppBase):
         link_gui(self.app.progress_window)
         link_gui(self.app.progress_window.jobdesc_textfield)
         link_gui(self.app.progress_window.progressdesc_textfield)
+        link_gui(self.app.progress_window.timedesc_textfield)
 
     @property
     def rtable(self):

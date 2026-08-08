@@ -56,6 +56,11 @@ class DeletionOptions(GUIObject):
         #: Delete dupes directly and don't send to trash.
         #: *bool*. *get/set*
         self.direct = False
+        #: Replace each dupe with a copy-on-write clone of its reference instead of removing
+        #: it. Both files survive as independent files and share storage. Only possible for
+        #: byte-identical duplicates on a filesystem that supports cloning; see core.clone.
+        #: *bool*. *get/set*
+        self.use_clones = False
 
     def show(self, mark_count):
         """Prompt the user with a modal dialog offering our deletion options.
