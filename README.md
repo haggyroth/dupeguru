@@ -117,6 +117,23 @@ This fork ships a headless CLI for scripted and automated scans. It is installed
 
 There is no `scan` subcommand — folders are positional arguments.
 
+**It also ships with the packaged application**, as of 4.15.0. On macOS it lives inside the
+bundle, so dragging dupeGuru to Applications brings it along; on Windows it is installed
+alongside the application:
+
+    /Applications/dupeGuru.app/Contents/Resources/cli/dupeguru-scan/dupeguru-scan
+    C:\Program Files\dupeGuru\cli\dupeguru-scan\dupeguru-scan.exe
+
+The packaged build excludes Qt, which takes it from 194 MB to 24 MB. The cost is `--mode
+picture`, which needs an image decoder: it reports that and exits rather than failing obscurely,
+and a standard scan asked to also match pictures carries on without them. Both work normally from
+a source checkout with a Qt binding installed.
+
+`--version` prints the version and exits, without needing a folder argument:
+
+    $ dupeguru-scan --version
+    dupeguru-scan 4.15.0
+
 `python -m dupeguru` also works, but only from the directory *containing* the checkout, since
 that is where `dupeguru` is importable as a package:
 
@@ -256,6 +273,9 @@ writes a per-file plan as JSON to stdout (or `--output`) in place of the normal 
       would send to trash 3,881 file(s) in 1,284 group(s), reclaiming 41.2 GB
       3,860 matched on full content
       21 matched on a partial (sampled) hash only and would be refused without --allow-partial-matches
+      1,190 group(s) corroborated: identical contents, and something independent agrees
+      73 group(s) content only: identical contents, and nothing else corroborates
+      21 group(s) unconfirmed: the contents were not compared in full
       4 would be skipped: file changed since last scan
       512.00 MB would not be reclaimed because of those skips
       2 are on a different volume from their reference (hardlink replacement would fail)
@@ -271,6 +291,39 @@ Every candidate carries a verdict:
 
 `match_confidence` is `"full"` or `"partial"` — see [partial matches](#partial-sampled-matches).
 `blocked_reason` appears only when `would_delete` is false.
+
+Each group also carries a `confidence` tier and the reason for it, matching the **Confidence**
+column in the application, so a scripted cleanup can act on exactly the set you reviewed in the
+window:
+
+```json
+{"confidence": "corroborated", "confidence_reason": "every copy has the same filename", ...}
+```
+
+`corroborated` means the contents were compared in full *and* something independent agrees — a
+copy in a `--ref` folder, or one filename across the whole group. `content` means the contents
+matched and nothing else corroborates. `unconfirmed` means the contents were never compared in
+full, which covers sampled-hash matches and visually similar images. The names describe the
+evidence, not a level of safety: none of them means "safe to delete".
+
+### Ordering by reclaimable space
+
+A large scan returns groups in the order they were found, which spreads your attention evenly over
+groups that free wildly different amounts. `--sort-by reclaimable` puts the biggest wins first:
+
+    $ dupeguru-scan /data --sort-by reclaimable
+
+Reclaimable space is what the *duplicates* free — the reference stays — so it is not the same as
+ranking by file size. Every group carries `reclaimable_bytes`, with the not-fully-confirmed
+portion split out as `reclaimable_partial_bytes`, and the stats carry a cumulative curve
+whichever order you asked for:
+
+    first  10 groups ->  292895 bytes  (76.8%)
+    first  20 groups ->  359768 bytes  (94.3%)
+    first  25 groups ->  381587 bytes  (100.0%)
+
+Ten of those twenty-five groups give three quarters of the space; in scanner order the same ten
+gave twenty per cent.
 
 The plan is not an estimate. Each file is re-validated with the same predicate the deletion
 itself uses, so a file that changed since the scan is reported as skipped rather than counted

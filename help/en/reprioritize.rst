@@ -23,3 +23,29 @@ criterion is used and so on and so on. For example, if your arguments are "Size 
 the biggest file, and if two or more files have the same size, the one that has a filename that
 doesn't end with a number will be used. When all criteria result in ties, the order in which dupes
 previously were in the group will be used.
+
+Available criteria
+------------------
+
+Which categories are offered depends on the application mode. Kind, Folder, Filename, Size and
+Modification are available everywhere. Music mode adds Duration, Bitrate and Samplerate. Picture
+mode adds Dimensions and EXIF Timestamp.
+
+EXIF Timestamp
+^^^^^^^^^^^^^^
+
+Picture mode only, and worth understanding before you use it: this orders photos by when they were
+**taken**, not when the file was last written.
+
+That distinction matters because copying, exporting, syncing and restoring from a backup all reset
+a file's modification date. The copy routinely looks newer than the original, so "Modification
+(Oldest)" keeps the wrong file. The capture date recorded by the camera does not move, so it
+survives all of those.
+
+The argument is **Newest** or **Oldest** rather than Highest or Lowest, since it is a date.
+
+Photos with no usable capture date -- screenshots, scans, exports that dropped their EXIF, and
+cameras whose clock was never set -- sort **last** under both Newest and Oldest. They are never
+treated as the oldest photo ever taken, which is what would happen if a missing date were read as
+zero. If a group contains nothing but photos without capture dates, this criterion cannot separate
+them and the next criterion in your list decides.
