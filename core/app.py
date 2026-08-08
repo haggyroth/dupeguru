@@ -26,6 +26,7 @@ from hscommon.trans import tr
 from hscommon import desktop
 
 from core import se, me, pe, clone
+from core import sensitive_paths
 from core.confidence import classify_group
 from core.pe.photo import get_delta_dimensions
 from core.util import cmp_value, fix_surrogate_encoding
@@ -290,6 +291,10 @@ class DupeGuru(Broadcaster):
             "rehash_ignore_mtime": False,
         }
         self.selected_dupes = []
+        #: Sensitive folders the user has already agreed to scan, so re-scanning while tuning
+        #: filters asks once rather than every time. A prompt that fires often enough to be
+        #: dismissed reflexively also trains people to dismiss the two that guard data loss.
+        self._accepted_sensitive_paths = set()
         self.details_panel = DetailsPanel(self)
         self.directory_tree = DirectoryTree(self)
         self.problem_dialog = ProblemDialog(self)
@@ -1201,6 +1206,31 @@ class DupeGuru(Broadcaster):
         except OSError as e:
             self.view.show_message(tr("Couldn't write to file: {}").format(str(e)))
 
+    def _confirm_sensitive_locations(self):
+        """Ask before scanning somewhere the operating system or an application keeps its files.
+
+        A warning, not a refusal: cleaning a duplicate-ridden application-support directory is a
+        real thing to want to do, and dupeGuru is not in a position to say the user is wrong
+        about their own machine. Returns False only when the user answers no.
+
+        Folders already agreed to are not raised again for the rest of the session. Re-scanning
+        the same folder while adjusting filters is normal, and a prompt on every pass is how a
+        warning becomes something people click through without reading -- which would also blunt
+        the multi-drive and partial-hash prompts standing beside it.
+        """
+        warnings = [
+            (path, reason)
+            for path, reason in sensitive_paths.warnings_for(self.directories)
+            if path not in self._accepted_sensitive_paths
+        ]
+        if not warnings:
+            return True
+        msg = sensitive_paths.describe(warnings) + tr("\n\nContinue with the scan?")
+        if not self.view.ask_yes_no(msg):
+            return False
+        self._accepted_sensitive_paths.update(path for path, _ in warnings)
+        return True
+
     def start_scanning(self, profile_scan=False):
         """Starts an async job to scan for duplicates.
 
@@ -1227,6 +1257,8 @@ class DupeGuru(Broadcaster):
             )
             if not self.view.ask_yes_no(msg):
                 return
+        if not self._confirm_sensitive_locations():
+            return
         # Send relevant options down to the scanner instance
         for k, v in self.options.items():
             if hasattr(scanner, k):

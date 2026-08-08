@@ -59,6 +59,7 @@ from pathlib import Path
 
 from core import fs, se, file_list_cache
 from core.app import AppMode, DeleteStatus, DupeGuru, check_deletable
+from core import sensitive_paths
 from core.confidence import Confidence, classify_group
 from core.deletion_plan import DELETE_STATUS_REASON as _DELETE_STATUS_REASON
 from core.deletion_plan import DeletionPlan, build_plan, device_of as _device_of, plan_entry as _plan_entry
@@ -1271,6 +1272,15 @@ def main(argv=None) -> int:
             return EXIT_BAD_ARGS
         if folder in ref_folders:
             app.directories.set_state(folder, DirectoryState.REFERENCE)
+
+    # Said before the scan rather than before the deletion, so it is on screen while the user
+    # decides what to do with the results. A warning and not a gate: a scan removes nothing, and
+    # --delete already has its own confirmation. Refusing here would also break scripted
+    # cleanups of application-support directories, which are a legitimate thing to automate.
+    location_warnings = sensitive_paths.warnings_for(folders)
+    if location_warnings:
+        for line in sensitive_paths.describe(location_warnings).splitlines():
+            print(f"warning: {line}" if line else "warning:", file=sys.stderr)
 
     if args.verbose:
         _reverse_scan_type = {v: k for k, v in _SCAN_TYPE_MAP.items()}
