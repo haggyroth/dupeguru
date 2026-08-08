@@ -44,6 +44,45 @@ piped somewhere while you still see what is happening::
 Nothing is deleted unless you ask. ``--plan`` reports exactly what a deletion would do —
 which files, how much space, and what would be refused and why — without touching anything.
 
+Keeping a record of what was deleted
+------------------------------------
+
+A deletion reports what it removed, so an unattended run leaves an account of itself rather
+than just an exit code. The record replaces the usual results, and goes to ``--output`` when
+you give one::
+
+    dupeguru-scan ~/Pictures --delete --yes --output deleted.json
+
+Every entry carries the file, its size, the file it duplicated, and — when the platform can
+report it — where it went in the trash::
+
+    {
+      "deleted": [
+        {
+          "path": "/Users/me/Pictures/holiday copy.jpg",
+          "size": 2411984,
+          "reference": "/Users/me/Pictures/holiday.jpg",
+          "destination": "/Users/me/.Trash/holiday copy.jpg",
+          "permanent": false,
+          "restorable": true
+        }
+      ],
+      "skipped": [],
+      "stats": {"deleted": 1, "reclaimed_bytes": 2411984, "restorable": 1, ...}
+    }
+
+``destination`` is where the file actually landed, read back from the operating system rather
+than guessed, which is what makes putting it back possible. ``restorable`` says whether that
+is worth attempting: a permanent deletion with ``--direct-delete`` records no destination and
+reports ``false``, as does a trashed file on a system that cannot say where it put it.
+
+Files that could not be deleted — changed since the scan, already gone, permission denied —
+appear under ``skipped`` with the reason, so a partly failed run still says exactly what did
+and did not happen.
+
+With ``--ndjson`` the same information arrives one JSON object per line, ending with the stats
+record.
+
 Reviewing the biggest wins first
 --------------------------------
 
