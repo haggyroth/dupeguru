@@ -1,3 +1,9 @@
+=== 4.14.0 (2026-08-08)
+* Find visually similar images during a standard scan, so one scan covers both
+* Show what is actually known about each duplicate group, and mark in bulk by that
+* Warn before scanning a folder the operating system or an application keeps its files in
+* Guard against the results window failing to open when a column is declared in only one place
+
 === 4.13.0 (2026-08-07)
 * Collapse duplicate groups into the folder pair that explains them, and mark a pair in one go
 * Report how much of each scanned folder also exists elsewhere
