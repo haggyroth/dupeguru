@@ -818,6 +818,28 @@ class TestHelpEncoding:
         offenders = sorted({c for c in source if ord(c) > 127})
         assert not offenders, f"non-ASCII in cli.py: {offenders!r}"
 
+    def test_version_flag_prints_the_version(self, capsys):
+        """`--version` exited 2 as an unrecognized argument.
+
+        It matters most for the frozen builds attached to releases, where there is
+        no core/__init__.py to read the version out of.
+        """
+        from core import __version__
+
+        with pytest.raises(SystemExit) as exc_info:
+            cli._build_parser().parse_args(["--version"])
+        eq_(exc_info.value.code, 0)
+        eq_(capsys.readouterr().out.strip(), f"dupeguru-scan {__version__}")
+
+    def test_version_flag_needs_no_folder(self):
+        """action="version" must short-circuit before the positional is validated."""
+        with pytest.raises(SystemExit) as exc_info:
+            main(["--version"])
+        eq_(exc_info.value.code, 0)
+
+    def test_version_flag_is_listed_in_help(self):
+        assert "--version" in cli._build_parser().format_help()
+
     def test_prog_name_matches_the_installed_command(self):
         """It read "dupeguru scan", implying a subcommand that does not exist."""
         eq_(cli._build_parser().prog, "dupeguru-scan")
