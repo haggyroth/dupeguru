@@ -28,6 +28,7 @@ from qt.util import move_to_screen_center, horizontal_wrap, create_actions
 from qt.search_edit import SearchEdit
 
 from core.app import AppMode
+from core.confidence import Confidence
 from qt.results_model import ResultsView
 from qt.stats_label import StatsLabel
 from qt.prioritize_dialog import PrioritizeDialog
@@ -179,6 +180,20 @@ class ResultWindow(QMainWindow):
             ),
             ("actionMarkAll", "Ctrl+A", "", tr("Mark All"), self.markAllTriggered),
             (
+                "actionMarkCorroborated",
+                "",
+                "",
+                tr("Mark Corroborated Groups"),
+                self.markCorroboratedTriggered,
+            ),
+            (
+                "actionMarkContentOnly",
+                "",
+                "",
+                tr("Mark Content-Only Groups"),
+                self.markContentOnlyTriggered,
+            ),
+            (
                 "actionMarkNone",
                 "Ctrl+Shift+A",
                 "",
@@ -287,6 +302,13 @@ class ResultWindow(QMainWindow):
         self.menuMark.addAction(self.actionMarkNone)
         self.menuMark.addAction(self.actionInvertMarking)
         self.menuMark.addAction(self.actionMarkSelected)
+        self.menuMark.addSeparator()
+        # Added as plain actions on the existing menu rather than as a submenu built on
+        # aboutToShow. In tabbed mode menuMark belongs to the main window, so connecting one of
+        # its signals to a method of this window would hold this window's wrapper past the tab's
+        # own lifetime -- the crash covered by qt/tests/preferences_dialog_roundtrip_test.py.
+        self.menuMark.addAction(self.actionMarkCorroborated)
+        self.menuMark.addAction(self.actionMarkContentOnly)
         self.menuMark.addSeparator()
         self.menuMark.addAction(self.actionMarkByRule)
 
@@ -459,6 +481,25 @@ class ResultWindow(QMainWindow):
 
     def markAllTriggered(self):
         self.app.model.mark_all()
+
+    def markCorroboratedTriggered(self):
+        self._markConfidence(Confidence.CORROBORATED)
+
+    def markContentOnlyTriggered(self):
+        self._markConfidence(Confidence.CONTENT)
+
+    def _markConfidence(self, tier):
+        """Mark the groups at *tier*, and say so only when there were none.
+
+        Marking is visible in the table and in the stats label, so a dialog confirming it would
+        be noise on every use. Marking *nothing* is the case that needs words: the menu item was
+        clicked, the results did not change, and without an explanation that reads as a bug
+        rather than as "you have no groups of that kind".
+        """
+        if self.app.model.mark_confidence(tier) == 0:
+            self.app.show_message(
+                tr("No groups are {}: {}.").format(Confidence.LABELS[tier].lower(), Confidence.EXPLANATIONS[tier])
+            )
 
     def markInvertTriggered(self):
         self.app.model.mark_invert()

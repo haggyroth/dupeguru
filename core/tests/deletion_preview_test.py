@@ -124,6 +124,7 @@ class TestSummaryWording:
             "blocked_bytes": 0,
             "cross_volume": 0,
             "cloneable": 0,
+            "confidence": {},
             "entries": [],
         }
         fields.update(kwargs)

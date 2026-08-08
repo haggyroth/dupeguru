@@ -37,7 +37,8 @@ Deletion:
                      without removing it. Takes precedence over --delete.
     --plan           Report what a deletion would do and exit. Needs no --delete. Emits a
                      per-file JSON plan on stdout in place of the normal results, with a
-                     would_delete verdict and match_confidence for every candidate.
+                     would_delete verdict and match_confidence for every candidate, and a
+                     confidence tier per group matching the GUI's Confidence column.
     --allow-partial-matches
                      Permit deleting files matched only on a partial (sampled) hash.
                      Without it, --delete refuses when any such match is marked. This
@@ -58,6 +59,7 @@ from pathlib import Path
 
 from core import fs, se, file_list_cache
 from core.app import AppMode, DeleteStatus, DupeGuru, check_deletable
+from core.confidence import Confidence, classify_group
 from core.deletion_plan import DELETE_STATUS_REASON as _DELETE_STATUS_REASON
 from core.deletion_plan import DeletionPlan, build_plan, device_of as _device_of, plan_entry as _plan_entry
 from core.deletion_plan import summarize_plan
@@ -278,7 +280,17 @@ def _group_to_dict(group) -> dict:
                 "partial_match": bool(getattr(match, "partial", False)) if match else False,
             }
         )
-    return {"reference": ref_entry, "duplicates": dupes_out}
+    # Recorded here rather than re-derived when the file is read back. Classifying needs the
+    # match kind and the reference-folder state of every member, and a results file carries
+    # neither -- a saved resemblance would be indistinguishable from a saved content match, which
+    # is precisely the confusion the tiers exist to end.
+    group_confidence = classify_group(group)
+    return {
+        "reference": ref_entry,
+        "confidence": group_confidence.tier,
+        "confidence_reason": group_confidence.reason,
+        "duplicates": dupes_out,
+    }
 
 
 def _serialise_results(app: DupeGuru) -> dict:
@@ -360,6 +372,7 @@ def _plan_from_saved_results(groups: list[dict]) -> DeletionPlan:
     """
     files = total_bytes = partial = full_content = blocked_bytes = cross_volume = 0
     blocked: dict = {}
+    confidence = {tier: 0 for tier in Confidence.ORDER}
     entries = []
     group_count = 0
 
@@ -401,7 +414,21 @@ def _plan_from_saved_results(groups: list[dict]) -> DeletionPlan:
         if group_entries:
             if group_has_deletion:
                 group_count += 1
-            entries.append({"reference": {"path": ref_path}, "duplicates": group_entries})
+            # Results written before this field existed cannot be classified after the fact --
+            # the kind and reference-folder state are gone. Unconfirmed is the honest reading:
+            # it says "not established here", which is exactly true of an older file.
+            tier = group.get("confidence", Confidence.UNCONFIRMED)
+            if tier not in confidence:
+                tier = Confidence.UNCONFIRMED
+            confidence[tier] += 1
+            entries.append(
+                {
+                    "reference": {"path": ref_path},
+                    "confidence": tier,
+                    "confidence_reason": group.get("confidence_reason", Confidence.EXPLANATIONS[tier]),
+                    "duplicates": group_entries,
+                }
+            )
 
     return DeletionPlan(
         groups=group_count,
@@ -416,6 +443,7 @@ def _plan_from_saved_results(groups: list[dict]) -> DeletionPlan:
         # means "unknown", not "none possible" -- reporting it as a count would overstate what
         # a saved-results plan can tell you.
         cloneable=0,
+        confidence=confidence,
         entries=entries,
     )
 
@@ -433,6 +461,7 @@ def _serialise_plan(plan: DeletionPlan) -> dict:
             "blocked": {status: count for status, count in sorted(plan.blocked.items())},
             "blocked_bytes": plan.blocked_bytes,
             "cross_volume": plan.cross_volume,
+            "confidence": dict(plan.confidence),
         },
     }
 

@@ -43,7 +43,11 @@ class DupeRow(Row):
             dupe_info = self.data
             if self._group.ref is None:
                 return False
-            ref_info = self._group.ref.get_display_info(group=self._group, delta=False)
+            # Through the app, like self.data, rather than straight at the file. The app adds
+            # the columns that belong to the group rather than to one file, so asking the file
+            # directly returns a dict missing keys the dupe's has -- and the comparison below
+            # walks the dupe's keys.
+            ref_info = self._app.get_display_info(self._group.ref, self._group, False)
             for key, value in dupe_info.items():
                 if (key not in self._delta_columns) and (ref_info[key].lower() != value.lower()):
                     self._delta_columns.add(key)

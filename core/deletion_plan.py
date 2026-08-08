@@ -19,6 +19,7 @@ from typing import NamedTuple
 
 from core.app import DeleteStatus, DupeGuru, check_deletable
 from core.clone import can_clone, cloning_is_possible
+from core.confidence import Confidence, classify_group
 from hscommon.util import format_size
 
 
@@ -44,6 +45,7 @@ class DeletionPlan(NamedTuple):
     blocked_bytes: int  # bytes those refused files would have freed
     cross_volume: int  # would-delete files on a different volume from their group's ref
     cloneable: int  # of the would-delete files, how many could be replaced by a clone instead
+    confidence: dict  # Confidence tier -> count of planned groups sitting in it
     entries: list  # per-group plan, for machine-readable output
 
 
@@ -107,6 +109,7 @@ def build_plan(app: DupeGuru, clone_probe=None) -> DeletionPlan:
     files = total_bytes = partial = full_content = blocked_bytes = cross_volume = 0
     cloneable = 0
     blocked: dict = {}
+    confidence = {tier: 0 for tier in Confidence.ORDER}
     entries = []
     group_count = 0
 
@@ -149,9 +152,15 @@ def build_plan(app: DupeGuru, clone_probe=None) -> DeletionPlan:
         if group_entries:
             if group_has_deletion:
                 group_count += 1
+            # Classified even when every candidate is blocked: the entry is still reported, and a
+            # group whose confidence went unstated reads as though it had none.
+            group_confidence = classify_group(group)
+            confidence[group_confidence.tier] += 1
             entries.append(
                 {
                     "reference": {"path": str(group.ref.path), "size": group.ref.size},
+                    "confidence": group_confidence.tier,
+                    "confidence_reason": group_confidence.reason,
                     "duplicates": group_entries,
                 }
             )
@@ -166,6 +175,7 @@ def build_plan(app: DupeGuru, clone_probe=None) -> DeletionPlan:
         blocked_bytes=blocked_bytes,
         cross_volume=cross_volume,
         cloneable=cloneable,
+        confidence=confidence,
         entries=entries,
     )
 
@@ -189,6 +199,12 @@ def summarize_plan(plan: DeletionPlan, direct_delete: bool = False, partial_hint
         lines.append(f"{plan.full_content} matched on full content")
     if plan.partial:
         lines.append(f"{plan.partial} matched on a partial (sampled) hash only{partial_hint}")
+    # Group-level, unlike the file counts above: how much is known about each group as a whole.
+    # Only tiers with groups in them are listed -- a run of zeroes says nothing worth a line.
+    for tier in reversed(Confidence.ORDER):
+        count = plan.confidence.get(tier, 0)
+        if count:
+            lines.append(f"{count} group(s) {Confidence.LABELS[tier].lower()}: {Confidence.EXPLANATIONS[tier]}")
     for status, count in sorted(plan.blocked.items()):
         lines.append(f"{count} would be skipped: {DELETE_STATUS_REASON[status]}")
     if plan.blocked_bytes:

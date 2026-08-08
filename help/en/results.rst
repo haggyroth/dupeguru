@@ -28,6 +28,43 @@ In Standard mode the Details panel also shows a **preview** of the selected file
 
 If you have more false duplicates than true duplicates (If your filter hardness is very low), the best way to proceed would be to review duplicates, mark true duplicates and then click on **Actions-->Send Marked to Recycle bin**. If you have more true duplicates than false duplicates, you can instead mark all files that are false duplicates, and use **Actions-->Remove Marked from Results**.
 
+Confidence
+----------
+
+Not every group is understood to the same degree, and the match percentage does not tell you
+which is which -- two files can both sit at 100% while one pair was compared byte for byte and
+the other was only sampled. The **Confidence** column (off by default; turn it on from the
+**Columns** menu) says what was actually established about each group:
+
+**Corroborated**
+    The contents were compared in full, *and* something independent agrees: one copy is in a
+    folder you marked as Reference, or every copy in the group has the same filename.
+
+**Content only**
+    The contents were compared in full, and that is all that is known. The files really are
+    interchangeable, but nothing suggests either copy is the unwanted one -- two documents
+    deliberately kept in two projects look exactly like this.
+
+**Unconfirmed**
+    The contents were never compared in full. Large files matched on a sampled hash land here,
+    as do visually similar pictures, and matches made on names or tags. These may well be
+    duplicates; dupeGuru has simply not proven it.
+
+A group is only as understood as its weakest pair, so a group holding one exact match and one
+resemblance is Unconfirmed as a whole.
+
+Note what the names deliberately do not say. None of them means *safe to delete* -- that is a
+judgement about your files that only you can make. Corroborated is the strongest thing dupeGuru
+can claim on its own, not a promise that nothing will be missed.
+
+**Mark-->Mark Corroborated Groups** and **Mark-->Mark Content-Only Groups** mark every duplicate
+in the groups at that level, so the review effort can go where it is actually needed. They add
+to what is already marked rather than replacing it, so you can apply both and look at the result
+before acting. Reference files and files in Reference folders are never marked by either.
+
+On the command line, ``--plan`` reports the same tiers, per group and as a total, so a scripted
+cleanup can act on exactly the set you reviewed in the window.
+
 Marking and Selecting
 ---------------------
 
