@@ -47,10 +47,11 @@ jobs:
       - name: Build python modules
         run: python build.py --modules
       - name: Freeze the CLI
-        run: >
-          pyinstaller --noconfirm --console --name dupeguru-scan
-          --distpath dist-freeze --workpath build-freeze --specpath build-freeze
-          cli.py
+        # Through package.py's build_cli rather than a pyinstaller line of its own, so this
+        # tests the configuration that actually ships -- Qt excluded and all. Two invocations
+        # would drift, and the drift would be silent: this job would keep passing while
+        # exercising a build nobody installs.
+        run: python -c "import sys; from package import build_cli; sys.exit(0 if build_cli('dist-freeze', 'build-freeze') else 1)"
       - name: Smoke-test the frozen binary
         shell: bash
         run: |
@@ -176,6 +177,45 @@ jobs:
           echo "built $artifact ($size bytes)"
           # A few hundred bytes would mean a stub, not an application.
           if [ "$size" -lt 5000000 ]; then echo "::error::$artifact is implausibly small"; exit 1; fi
+      - name: Verify the shipped command line runs
+        # Not "is the file there" -- that is the check that let a frozen CLI ship broken for two
+        # releases (#159). This runs the binary from where a user will actually find it, after
+        # package.py has put it there, and makes it do a real scan.
+        #
+        # macOS runs it from inside the built bundle. Windows runs it from the dist tree NSIS
+        # copies; unpacking the installer to check would need a silent install, which is its own
+        # untested thing, so this stops one step short and is honest about that.
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cli="dist/dupeguru-win64/cli/dupeguru-scan/dupeguru-scan.exe"
+          else
+            cli="dist/dupeguru.app/Contents/Resources/cli/dupeguru-scan/dupeguru-scan"
+          fi
+          if [ ! -f "$cli" ]; then echo "::error::the command line was not packaged at $cli"; exit 1; fi
+          "$cli" --help > /dev/null
+          mkdir -p cli-fixture
+          printf 'duplicate' > cli-fixture/one.txt
+          printf 'duplicate' > cli-fixture/two.txt
+          # Exit 1 is EXIT_DUPES_FOUND, the expected success here.
+          set +e
+          "$cli" cli-fixture --plan > cli-plan.json 2> cli-plan.err
+          rc=$?
+          set -e
+          if [ "$rc" -ne 1 ]; then echo "::error::expected exit 1 (duplicates found), got $rc"; cat cli-plan.err; exit 1; fi
+          python - <<'PY'
+          import json, sys
+          stats = json.load(open("cli-plan.json"))["stats"]
+          print("shipped CLI plan stats:", stats)
+          if stats["would_delete"] != 1:
+              sys.exit(f"::error::expected 1 planned deletion, got {stats['would_delete']}")
+          # Present only when the build carries this release's core, so it also catches a CLI
+          # frozen against a stale checkout.
+          if "confidence" not in stats:
+              sys.exit("::error::the shipped CLI predates confidence reporting")
+          print("shipped command line OK")
+          PY
       - name: Upload installer (Windows)
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0

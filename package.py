@@ -241,6 +241,11 @@ def package_windows():
     )
     # remove version info file
     os.remove("win_version_info.txt")
+    # Into the tree NSIS copies wholesale -- setup.nsi does `File /r ...\dupeguru-win{bits}\*`
+    # -- so the installer picks this up without knowing anything about it. Installs to
+    # $INSTDIR\cli\dupeguru-scan\; the uninstaller removes $INSTDIR\cli.
+    if not build_cli(op.join("dist", f"dupeguru-win{bits}", "cli"), "build/cli"):
+        return 1
     # Call NSIS. Every step below reports failure rather than returning None: PyInstaller has
     # already filled dist/ by this point, so a failed installer step leaves a tree that looks
     # like a successful build minus the one artifact anyone would ship.
@@ -277,6 +282,47 @@ def package_windows():
 
 
 APP_BUNDLE = op.join("dist", "dupeguru.app")
+
+
+#: Everything the command line does not need. Qt is here because it is the whole reason the
+#: frozen CLI used to weigh 194 MB: PyQt6 alone accounted for 117 MB of that, pulled in for
+#: QImage and dragging QtWidgets, QtPdf and QtNetwork behind it.
+#:
+#: The cost of leaving it out is `--mode picture`, which needs a decoder. That path already
+#: fails cleanly -- cli.py's _wire_photo_class raises SystemExit with an install hint when no
+#: binding imports -- and a combined picture scan degrades to content matching with a warning.
+#: So the trade is a documented, self-explaining limitation against an 8x smaller download.
+CLI_EXCLUDES = ["PyQt5", "PyQt6", "PySide2", "PySide6", "qtpy", "tkinter"]
+
+
+def build_cli(distpath, workpath):
+    """Freeze the command line into *distpath*, returning True on success.
+
+    Built separately from the application rather than as a second entry point sharing its
+    runtime. Sharing would save the duplicated Python, but the two want opposite things: the
+    app needs Qt and the command line is far better off without it.
+    """
+    import PyInstaller.__main__
+
+    PyInstaller.__main__.run(
+        [
+            "--name=dupeguru-scan",
+            "--console",
+            "--noconfirm",
+            "--clean",
+            f"--distpath={distpath}",
+            f"--workpath={workpath}",
+            f"--specpath={workpath}",
+            *[f"--exclude-module={module}" for module in CLI_EXCLUDES],
+            "cli.py",
+        ]
+    )
+    built = op.join(distpath, "dupeguru-scan")
+    if not op.exists(built):
+        print(f"PyInstaller reported success but {built} does not exist.")
+        return False
+    print(f"Built {built}")
+    return True
 
 
 def stamp_macos_bundle_version(app_path, version):
@@ -324,6 +370,11 @@ def package_macos():
         print(f"PyInstaller reported success but {APP_BUNDLE} does not exist.")
         return 1
     stamp_macos_bundle_version(APP_BUNDLE, get_module_version("core"))
+    # Inside the bundle rather than beside it in the disk image. Dragging the application to
+    # /Applications then brings the command line with it, there is no second thing to copy and
+    # forget, and deleting the app takes it away again. It also leaves build_dmg untouched.
+    if not build_cli(op.join(APP_BUNDLE, "Contents", "Resources", "cli"), "build/cli"):
+        return 1
     print(f"Built {APP_BUNDLE}")
     return 0
 
