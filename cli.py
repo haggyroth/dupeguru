@@ -57,7 +57,7 @@ import logging
 import sys
 from pathlib import Path
 
-from core import fs, se, file_list_cache
+from core import fs, se, file_list_cache, __version__
 from core.app import AppMode, DeleteStatus, DupeGuru, check_deletable
 from core import sensitive_paths
 from core.confidence import Confidence, classify_group
@@ -657,6 +657,12 @@ def _build_parser() -> argparse.ArgumentParser:
             "3=scan error."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
+        help="Print the version and exit.",
     )
     parser.add_argument(
         "folders",
