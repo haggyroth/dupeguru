@@ -270,13 +270,17 @@ class TestThresholds:
         # otherwise perfect backup suppresses the row entirely.
         assert 0.5 < MIN_SHARE < 1.0
 
-    def test_the_threshold_is_documented_as_provisional(self):
-        # The issue asks for this to come from a real corpus rather than a guess. It has not
-        # been derived yet, and the constant says so; this fails if the note is dropped without
-        # the work being done.
+    def test_the_threshold_cites_the_corpus_it_was_measured_against(self):
+        # This used to assert the opposite -- that the constant still admitted to being a
+        # guess -- so that the admission could not be quietly deleted without the measuring
+        # being done. The measuring has now been done (issue #157), so the guard flips to
+        # protecting the evidence instead: a bare 0.7 with no provenance is how a measured
+        # value decays back into a guess that nobody can re-check.
         import core.folder_rollup as rollup_module
 
-        assert "Provisional" in rollup_module.__doc__ or "Provisional" in _module_source(rollup_module)
+        source = _module_source(rollup_module)
+        assert "corpus" in source.lower(), "the provenance of MIN_SHARE must stay with it"
+        assert "#157" in source, "cite the issue holding the measurement"
 
 
 def _module_source(module):
