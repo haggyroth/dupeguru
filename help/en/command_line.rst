@@ -83,6 +83,50 @@ and did not happen.
 With ``--ndjson`` the same information arrives one JSON object per line, ending with the stats
 record.
 
+Leaving things out of the scan
+------------------------------
+
+``--exclude`` takes the same kind of rule as the GUI's
+:doc:`Exclusion Filters <exclusion_filters>` — a Python regular expression, matched against a
+file or folder name, or against the full path when the pattern contains a path separator. It
+may be repeated::
+
+    dupeguru-scan ~/projects --exclude "^node_modules$" --exclude ".*\.pyc"
+
+The same two traps apply here as in the GUI, and they are worth re-reading if a rule appears to
+do nothing: **rules are anchored** — they must match the whole name or the whole path, so use
+``.*`` for a fragment — and **on Windows every path separator must be doubled**, because a
+backslash is a regular-expression escape::
+
+    dupeguru-scan C:\Users\me --exclude ".*\\AppData\\.*"
+
+Reading rules from a file
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``--exclude-from`` reads them one per line, which is easier to keep under version control than a
+long command. Blank lines and lines starting with ``#`` are ignored::
+
+    # exclusions.txt
+    ^node_modules$
+    ^\.git$
+    .*\.pyc
+
+::
+
+    dupeguru-scan ~/projects --exclude-from exclusions.txt
+
+Keeping the built-in exclusions
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Passing any exclusion of your own **replaces** the built-in fallback that skips folders whose
+name begins with a dot. ``--exclude-defaults`` puts the full default set back — OS metadata
+(``Thumbs.db``, ``desktop.ini``, ``.DS_Store``), trash and recycle folders, and dot-prefixed
+names — alongside yours::
+
+    dupeguru-scan ~/projects --exclude "^node_modules$" --exclude-defaults
+
+It can also be used on its own, to apply the defaults and nothing else.
+
 Reviewing the biggest wins first
 --------------------------------
 

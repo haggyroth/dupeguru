@@ -28,6 +28,7 @@ Contents:
     contribute
     quick_start
     folders
+    exclusion_filters
     preferences
     scan
     results
