@@ -20,10 +20,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from scripts.stale_modules import stale_report
-
 
 def pytest_configure(config):
+    # Imported here rather than at module level: the sys.path entry above has to be in
+    # place first, and a module-level import after it is an E402.
+    from scripts.stale_modules import stale_report
+
     config.stash_stale_modules_report = stale_report()
     if config.stash_stale_modules_report:
         # Printed rather than warned: warnings are collected and shown at the end, and this
@@ -34,7 +36,5 @@ def pytest_configure(config):
 def pytest_terminal_summary(terminalreporter):
     report = getattr(terminalreporter.config, "stash_stale_modules_report", None)
     if report:
-        terminalreporter.section(
-            "stale compiled extensions", sep="!", red=True, bold=True
-        )
+        terminalreporter.section("stale compiled extensions", sep="!", red=True, bold=True)
         terminalreporter.line(report)

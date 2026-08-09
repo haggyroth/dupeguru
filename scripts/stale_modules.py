@@ -39,9 +39,7 @@ def extension_sources(setup_py: Path) -> dict[str, list[Path]]:
     tree = ast.parse(setup_py.read_text(encoding="utf-8"))
     extensions: dict[str, list[Path]] = {}
     for node in ast.walk(tree):
-        if not (
-            isinstance(node, ast.Call) and getattr(node.func, "id", None) == "Extension"
-        ):
+        if not (isinstance(node, ast.Call) and getattr(node.func, "id", None) == "Extension"):
             continue
         # Extension(name, sources, ...) -- both are positional in setup.py.
         if len(node.args) < 2:
@@ -73,19 +71,11 @@ def _literal_path_list(node: ast.expr) -> list[Path]:
 
 def _path_parts(node: ast.expr) -> list[str]:
     # str(Path("core", "pe", "modules", "block.c"))
-    if (
-        isinstance(node, ast.Call)
-        and getattr(node.func, "id", None) == "str"
-        and node.args
-    ):
+    if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "str" and node.args:
         node = node.args[0]
     if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "Path":
         parts = [_literal_str(a) for a in node.args]
-        return (
-            [p for p in parts if p is not None]
-            if all(p is not None for p in parts)
-            else []
-        )
+        return [p for p in parts if p is not None] if all(p is not None for p in parts) else []
     literal = _literal_str(node)
     return [literal] if literal is not None else []
 
@@ -101,13 +91,9 @@ def built_extension(module_name: str, repo_root: Path) -> Path | None:
     directory = repo_root.joinpath(*package)
     if not directory.is_dir():
         return None
-    candidates = sorted(directory.glob(f"{stem}.*.pyd")) + sorted(
-        directory.glob(f"{stem}.*.so")
-    )
+    candidates = sorted(directory.glob(f"{stem}.*.pyd")) + sorted(directory.glob(f"{stem}.*.so"))
     # An unsuffixed artifact is possible on some toolchains.
-    candidates += sorted(directory.glob(f"{stem}.pyd")) + sorted(
-        directory.glob(f"{stem}.so")
-    )
+    candidates += sorted(directory.glob(f"{stem}.pyd")) + sorted(directory.glob(f"{stem}.so"))
     return candidates[0] if candidates else None
 
 
@@ -130,9 +116,7 @@ def stale_extensions(repo_root: Path | None = None) -> list[tuple[Path, Path]]:
             continue
         built_at = artifact.stat().st_mtime
         newer = [
-            repo_root / s
-            for s in sources
-            if (repo_root / s).is_file() and (repo_root / s).stat().st_mtime > built_at
+            repo_root / s for s in sources if (repo_root / s).is_file() and (repo_root / s).stat().st_mtime > built_at
         ]
         if newer:
             # Report the most recently touched source; it is the one that explains the crash.
@@ -151,7 +135,5 @@ def stale_report(repo_root: Path | None = None) -> str | None:
         lines.append(f"  {artifact.relative_to(root)}  <  {source.relative_to(root)}")
     lines.append("")
     lines.append("Rebuild them with:  python build.py --modules")
-    lines.append(
-        "Until then a picture-matching test may crash the interpreter rather than fail."
-    )
+    lines.append("Until then a picture-matching test may crash the interpreter rather than fail.")
     return "\n".join(lines)

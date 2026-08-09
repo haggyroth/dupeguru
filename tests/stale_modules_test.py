@@ -85,9 +85,7 @@ def test_the_real_setup_py_is_still_parseable():
     """
     sources = extension_sources(REPO_ROOT / "setup.py")
 
-    assert sources, (
-        "no extensions parsed out of setup.py -- the check is covering nothing"
-    )
+    assert sources, "no extensions parsed out of setup.py -- the check is covering nothing"
     assert "core.pe._block" in sources
     assert all(srcs for srcs in sources.values()), "an extension parsed with no sources"
 
