@@ -251,6 +251,22 @@ class Results(Markable):
                 dupes.append(file)
                 if file_elem.get("marked") == "y":
                     marked.add(file)
+            if group_elem.get("uniform") == "y" and len(dupes) >= 2:
+                # Written by a version that records an identical group's uniformity rather than
+                # its pairs. Rebuilding it here is what keeps the content-match values -- the
+                # do_match fallback below computes a *name* match, which would silently turn a
+                # 100% content duplicate into whatever its filenames happen to score, and lose
+                # the partial flag with it.
+                try:
+                    percentage = int(group_elem.get("percentage", 100))
+                except ValueError:
+                    percentage = 100
+                kind = group_elem.get("kind", engine.MatchKind.METADATA)
+                if kind not in (engine.MatchKind.EXACT, engine.MatchKind.RESEMBLANCE, engine.MatchKind.METADATA):
+                    # Written by something newer, or edited. Understating is the safe direction:
+                    # an unrecognised kind must not be read as a stronger claim than it is.
+                    kind = engine.MatchKind.METADATA
+                group = engine.Group.from_identical(dupes, percentage, group_elem.get("partial") == "y", kind)
             for match_elem in group_elem.iter("match"):
                 try:
                     attrs = match_elem.attrib
@@ -380,7 +396,22 @@ class Results(Markable):
                     gen.startDocument()
                     gen.startElement("results", {})
                     for g in self.groups:
-                        gen.startElement("group", {})
+                        # A group of identical files carries the same match between every pair,
+                        # so recording the pairs writes k(k-1)/2 elements to say what the
+                        # members and three values already say. On a cluster of 23,857 files
+                        # that is 284 million elements and roughly 17 GB (issue #193).
+                        if g.is_uniform:
+                            gen.startElement(
+                                "group",
+                                {
+                                    "uniform": "y",
+                                    "percentage": str(int(g.matches.percentage)),
+                                    "partial": "y" if g.matches.partial else "n",
+                                    "kind": str(g.matches.kind),
+                                },
+                            )
+                        else:
+                            gen.startElement("group", {})
                         dupe2index = {}
                         for index, d in enumerate(g):
                             dupe2index[d] = index
@@ -401,17 +432,18 @@ class Results(Markable):
                                 },
                             )
                             gen.endElement("file")
-                        for match in g.matches:
-                            gen.startElement(
-                                "match",
-                                {
-                                    "first": str(dupe2index[match.first]),
-                                    "second": str(dupe2index[match.second]),
-                                    "percentage": str(int(match.percentage)),
-                                    "partial": "y" if match.partial else "n",
-                                },
-                            )
-                            gen.endElement("match")
+                        if not g.is_uniform:
+                            for match in g.matches:
+                                gen.startElement(
+                                    "match",
+                                    {
+                                        "first": str(dupe2index[match.first]),
+                                        "second": str(dupe2index[match.second]),
+                                        "percentage": str(int(match.percentage)),
+                                        "partial": "y" if match.partial else "n",
+                                    },
+                                )
+                                gen.endElement("match")
                         gen.endElement("group")
                     gen.endElement("results")
                     gen.endDocument()
