@@ -462,7 +462,10 @@ class DupeGuru(Broadcaster):
                 # restore possible at all. See core.trash.
                 record.destination = trash_file(str_path)
                 if run is not None:
-                    self.deletion_log.save()
+                    # An amendment, not a re-save. The record was written before the deletion,
+                    # when the destination could not be known; rewriting the whole log to fill
+                    # it in is what made deleting n files cost O(n^2).
+                    self.deletion_log.record_destination(run, record)
         except Exception:
             if link_tmp is not None:
                 try:
