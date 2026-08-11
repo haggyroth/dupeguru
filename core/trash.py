@@ -45,9 +45,14 @@ def trash_file(path) -> str:
     str_path = str(path)
     if sys.platform == "darwin":
         destination = _trash_macos(str_path)
-        if destination:
+        if destination is not None:
+            # Trashed. The destination is "" when its location could not be read, but the file
+            # is gone either way and must not be handed to send2trash -- that path no longer
+            # exists, so the retry would raise and report a failure for a completed deletion.
+            # `is not None` rather than a truth test is what draws that distinction.
             return destination
-        # Fell through to the generic path below, which trashes without reporting.
+        # Not trashed, and nothing was moved: fall through to the generic path below, which
+        # trashes without reporting where.
     if sys.platform.startswith("linux"):
         send2trash(str_path)
         return _find_xdg_destination(str_path)
@@ -71,8 +76,25 @@ def can_report_destination() -> bool:
 # --- macOS
 
 
-def _trash_macos(str_path: str) -> str:
-    """Trash via CoreServices, capturing the out-parameter send2trash discards."""
+def _trash_macos(str_path: str):
+    """Trash via CoreServices, capturing the out-parameter send2trash discards.
+
+    Three outcomes, and the caller has to be able to tell them apart:
+
+    * a **path** -- trashed, and this is where it went;
+    * ``""`` -- trashed, but where it went could not be read. No restore for this file;
+    * ``None`` -- *not* trashed. The caller falls back to ``send2trash``.
+
+    The distinction between the last two is the whole point. They used to share ``""``, so a
+    failure that happened *after* ``FSMoveObjectToTrashSync`` had already moved the file sent
+    ``trash_file`` on to ``send2trash`` with a path that no longer existed -- which raised, and
+    reported a failed deletion for a file that was gone. The deletion record is written after
+    this returns, so there was no log entry either: the user was told the file survived, it had
+    not, and there was nothing to restore from (issue #201).
+
+    So this function is split at the move. Everything before it can fail harmlessly; nothing
+    after it may raise or report failure.
+    """
     try:
         from ctypes import POINTER, Structure, byref, c_char, c_char_p, c_uint32, cdll, create_string_buffer
         from ctypes.util import find_library
@@ -99,7 +121,30 @@ def _trash_macos(str_path: str) -> str:
         # a file the user never selected. Matches what send2trash does.
         check(make_ref(str_path.encode("utf-8"), 0x01, byref(source), None))
         target = FSRef()
-        check(move_to_trash(byref(source), byref(target), 0))
+    except OSError:
+        # A genuine failure to locate the file. Let it propagate: the caller treats this as the
+        # file not having been deleted, which is true -- nothing has moved yet.
+        raise
+    except Exception:
+        # Anything else -- a missing symbol, a ctypes problem on some future macOS -- means we
+        # could not use this path, not that the file is undeletable. Nothing has moved, so the
+        # caller is free to fall back to send2trash.
+        logging.warning("Could not trash via CoreServices; falling back to send2trash", exc_info=True)
+        return None
+
+    # --- Nothing above this line has moved anything. Everything below assumes it has.
+
+    try:
+        status = move_to_trash(byref(source), byref(target), 0)
+    except Exception as e:
+        # Whether the file moved is unknowable here, and handing it to send2trash on the chance
+        # that it did not could delete a second file. Reported rather than retried.
+        raise OSError(f"Could not tell whether '{str_path}' was moved to the trash: {e}") from e
+    check(status)  # a non-zero status means it was not moved; the OSError is correct
+
+    # The file is now in the trash. From here nothing may raise and nothing may report failure:
+    # the worst honest outcome is "trashed, but I cannot say where", which is "".
+    try:
         # A writable buffer, not a bytes object. FSRefMakePath writes the path into whatever it
         # is handed, and ctypes will pass the interior pointer of a bytes just as readily -- so
         # the obvious `bytes(1024)` appears to work while mutating an immutable object, which
@@ -107,16 +152,16 @@ def _trash_macos(str_path: str) -> str:
         # .value already stops at the first NUL.
         buf = create_string_buffer(1024)
         check(ref_to_path(byref(target), buf, len(buf)))
+        # Strict, and deliberately not errors="surrogateescape". Surrogates round-trip through
+        # the filesystem correctly, so that looks like the better answer, but the destination is
+        # stored in the deletion log as XML -- where ElementTree writes a lone surrogate as a
+        # character reference that is not valid XML, and the next load() fails to parse the file
+        # and silently drops *every* run in it. One undecodable path would take the whole undo
+        # history with it. Losing the destination for one file is the smaller loss, and "" is
+        # already what the rest of this module means by "no restore for this one".
         return buf.value.decode("utf-8")
-    except OSError:
-        # A genuine failure to trash. Let it propagate: the caller treats this as the file not
-        # having been deleted, which is true.
-        raise
     except Exception:
-        # Anything else -- a missing symbol, a ctypes problem on some future macOS -- means we
-        # could not use this path, not that the file is undeletable. Fall back to send2trash
-        # and lose only the destination.
-        logging.warning("Could not trash via CoreServices; falling back to send2trash", exc_info=True)
+        logging.warning("Trashed '%s' but could not read where it went", str_path, exc_info=True)
         return ""
 
 

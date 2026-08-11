@@ -125,6 +125,166 @@ class TestWindowsCapture:
         assert deleted == [r"C:\photos\a.txt"], "the file must still be recycled"
 
 
+class _FakeFunc:
+    """A stand-in for a ctypes function pointer, with settable restype/argtypes."""
+
+    def __init__(self, behaviour=0):
+        self.behaviour = behaviour
+        self.restype = None
+        self.argtypes = None
+
+    def __call__(self, *args):
+        return self.behaviour(*args) if callable(self.behaviour) else self.behaviour
+
+
+class _FakeLib:
+    """A stand-in for a loaded dylib; every symbol resolves to a _FakeFunc returning 0."""
+
+    def __init__(self, **behaviours):
+        self.__dict__["_behaviours"] = behaviours
+        self.__dict__["_cache"] = {}
+
+    def __getattr__(self, name):
+        cache = self.__dict__["_cache"]
+        if name not in cache:
+            cache[name] = _FakeFunc(self.__dict__["_behaviours"].get(name, 0))
+        return cache[name]
+
+
+def install_fake_coreservices(monkeypatch, **behaviours):
+    """Make _trash_macos talk to a fake CoreServices.
+
+    The ctypes imports happen inside the function on every call, so patching the modules is
+    enough. This lets the *real* split-at-the-move logic be driven on any platform, and without
+    trashing files whose destination the test has just arranged to be unreadable -- which it
+    would then be unable to clean up.
+    """
+    import ctypes
+    import ctypes.util
+
+    core_services = _FakeLib(**behaviours)
+    foundation = _FakeLib(GetMacOSStatusCommentString=lambda status: b"simulated CoreServices error")
+
+    monkeypatch.setattr(ctypes.util, "find_library", lambda name: name)
+    monkeypatch.setattr(
+        ctypes.cdll,
+        "LoadLibrary",
+        lambda name: foundation if name == "Foundation" else core_services,
+    )
+    return core_services
+
+
+class TestTheMoveIsTheDividingLine:
+    """Nothing after FSMoveObjectToTrashSync may raise or report failure (issue #201).
+
+    The bug: a failure *after* the move returned "", which `trash_file` could not tell from
+    "this path did not run" -- so it fell through to send2trash with a path that no longer
+    existed. That raised, and the application reported a failed deletion for a file that was
+    already in the trash. The deletion record is written after `trash_file` returns, so there
+    was no log entry either: the file was gone, the user was told it survived, and there was
+    nothing to restore from.
+
+    So the three outcomes have to be distinguishable, and these pin each one.
+    """
+
+    def test_a_failure_before_the_move_says_nothing_was_trashed(self, monkeypatch):
+        """A missing symbol or a ctypes problem, i.e. the case this path was always allowed to
+        decline. None, not "": nothing moved, so the caller must fall back to send2trash."""
+        import ctypes
+        import ctypes.util
+
+        def cannot_load(name):
+            raise RuntimeError("no CoreServices on this system")
+
+        monkeypatch.setattr(ctypes.util, "find_library", lambda name: name)
+        monkeypatch.setattr(ctypes.cdll, "LoadLibrary", cannot_load)
+        monkeypatch.setattr(trash.logging, "warning", lambda *a, **k: None)
+        assert trash._trash_macos("/some/file") is None
+
+    def test_a_bad_status_before_the_move_propagates(self, monkeypatch):
+        # The file could not even be located. Raising is correct: it was not deleted.
+        install_fake_coreservices(monkeypatch, FSPathMakeRefWithOptions=-43)
+        with pytest.raises(OSError):
+            trash._trash_macos("/some/file")
+
+    def test_a_bad_status_from_the_move_propagates(self, monkeypatch):
+        # The move itself refused, so the file is still there and the caller must hear about it.
+        install_fake_coreservices(monkeypatch, FSMoveObjectToTrashSync=-120)
+        with pytest.raises(OSError):
+            trash._trash_macos("/some/file")
+
+    def test_an_unreadable_destination_still_says_the_file_was_trashed(self, monkeypatch):
+        """The bug, at its source. The move succeeded; reading the location did not."""
+        install_fake_coreservices(monkeypatch, FSMoveObjectToTrashSync=0, FSRefMakePath=-1)
+        monkeypatch.setattr(trash.logging, "warning", lambda *a, **k: None)
+        assert trash._trash_macos("/some/file") == "", "a post-move failure must not read as 'not trashed'"
+
+    def test_a_destination_that_is_not_utf8_is_dropped_rather_than_escaped(self, monkeypatch):
+        """Deliberately lossy, and the reason is worth keeping.
+
+        errors="surrogateescape" looks like the better answer -- surrogates round-trip through
+        the filesystem, so the restore would still work. But the destination is stored in the
+        deletion log as XML, and ElementTree writes a lone surrogate as a character reference
+        that is not valid XML: the next load() fails to parse the file and silently drops
+        *every* run in it. One undecodable path would take the whole undo history with it.
+        """
+
+        def write_invalid_utf8(ref, buf, size):
+            buf.value = b"/Users/x/.Trash/caf\xe9.txt"
+            return 0
+
+        install_fake_coreservices(monkeypatch, FSMoveObjectToTrashSync=0, FSRefMakePath=write_invalid_utf8)
+        monkeypatch.setattr(trash.logging, "warning", lambda *a, **k: None)
+        result = trash._trash_macos("/some/file")
+        assert result == ""
+        assert "\udce9" not in result, "a surrogate would corrupt the deletion log on save"
+
+    def test_an_unknowable_move_is_reported_rather_than_retried(self, monkeypatch):
+        """If we cannot tell whether the file moved, retrying could delete a second one."""
+
+        def explode(*args):
+            raise RuntimeError("ctypes went wrong mid-move")
+
+        install_fake_coreservices(monkeypatch, FSMoveObjectToTrashSync=explode)
+        with pytest.raises(OSError) as caught:
+            trash._trash_macos("/some/file")
+        assert "could not tell" in str(caught.value).lower()
+
+    def test_a_readable_destination_comes_back_intact(self, monkeypatch):
+        def write_path(ref, buf, size):
+            buf.value = b"/Users/x/.Trash/a.txt"
+            return 0
+
+        install_fake_coreservices(monkeypatch, FSMoveObjectToTrashSync=0, FSRefMakePath=write_path)
+        assert trash._trash_macos("/some/file") == "/Users/x/.Trash/a.txt"
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="trash_file dispatches to CoreServices on macOS only")
+class TestTrashFileHonoursTheDistinction:
+    """The consequence of the above, one level up: `""` must not trigger a second deletion."""
+
+    def test_a_trashed_file_with_no_destination_is_not_handed_to_send2trash(self, monkeypatch):
+        # The exact sequence behind #201. send2trash on an already-trashed path raises, and the
+        # application reports a failure for a deletion that happened.
+        monkeypatch.setattr(trash, "_trash_macos", lambda p: "")
+        called = []
+        monkeypatch.setattr(trash, "send2trash", called.append)
+        assert trash.trash_file("/some/file") == ""
+        assert called == [], "the file was already trashed; deleting it again was attempted"
+
+    def test_a_file_that_was_not_trashed_does_fall_back(self, monkeypatch):
+        monkeypatch.setattr(trash, "_trash_macos", lambda p: None)
+        called = []
+        monkeypatch.setattr(trash, "send2trash", called.append)
+        assert trash.trash_file("/some/file") == ""
+        assert called == ["/some/file"], "nothing was trashed, so the fallback must run"
+
+    def test_a_destination_is_passed_through(self, monkeypatch):
+        monkeypatch.setattr(trash, "_trash_macos", lambda p: "/Users/x/.Trash/a.txt")
+        monkeypatch.setattr(trash, "send2trash", lambda p: pytest.fail("should not be reached"))
+        assert trash.trash_file("/some/file") == "/Users/x/.Trash/a.txt"
+
+
 @pytest.mark.skipif(sys.platform != "darwin", reason="CoreServices trashing is macOS-only")
 class TestMacOSCapture:
     """The real thing, on the one platform that can run it.
