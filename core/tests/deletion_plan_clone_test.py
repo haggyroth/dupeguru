@@ -30,9 +30,30 @@ import pytest
 
 import cli
 from core.app import AppMode, DupeGuru
-from core.clone import cloning_is_possible
+from core.clone import can_clone
 from core.deletion_plan import build_plan, default_clone_probe, summarize_plan
 from core.scanner import ScanType
+
+
+@pytest.fixture
+def cloning_filesystem(tmp_path):
+    """Skip unless *this* filesystem can actually make clones.
+
+    Not ``cloning_is_possible()``, which answers a different question: whether the *platform*
+    has a mechanism at all. Linux always does, and CI runs on ext4, which cannot reflink -- so
+    gating on it ran the real-probe tests where the probe correctly refuses everything, and
+    they failed on every Linux leg.
+
+    ``core/tests/clone_test.py`` already says this in as many words -- "platform support is not
+    filesystem support ... probing is the only honest answer" -- which is what the probe below
+    does, and what ``default_clone_probe`` itself does.
+    """
+    source = tmp_path / "clone-support-probe.bin"
+    source.write_bytes(b"A" * 4096)
+    supported = can_clone(source, tmp_path)
+    source.unlink()
+    if not supported:
+        pytest.skip("this filesystem cannot make copy-on-write clones")
 
 
 @pytest.fixture
@@ -147,20 +168,20 @@ class TestWhatTheUserIsTold:
             assert "trash" not in outcome
 
 
-@pytest.mark.skipif(not cloning_is_possible(), reason="this filesystem cannot make clones")
 class TestTheRealProbe:
     """default_clone_probe against a filesystem that genuinely clones.
 
     Everything above uses a stand-in, which proves the wiring but not that the shipped probe
-    ever says yes. On APFS it should.
+    ever says yes. These run on APFS and Btrfs and skip on ext4, HFS+ and exFAT -- see the
+    ``cloning_filesystem`` fixture for why that has to be probed rather than assumed.
     """
 
-    def test_identical_files_are_reported_as_clonable(self, planned):
+    def test_identical_files_are_reported_as_clonable(self, planned, cloning_filesystem):
         app = planned()
         plan = build_plan(app, clone_probe=default_clone_probe)
         assert plan.cloneable == plan.files > 0, "the real probe never accepted anything"
 
-    def test_a_file_with_no_digest_is_refused(self, planned):
+    def test_a_file_with_no_digest_is_refused(self, planned, cloning_filesystem):
         # A missing digest is not proof of anything, and cloning replaces one file's contents
         # with another's.
         app = planned()
@@ -169,7 +190,7 @@ class TestTheRealProbe:
         plan = build_plan(app, clone_probe=default_clone_probe)
         assert plan.cloneable == 0
 
-    def test_differing_digests_are_refused(self, planned):
+    def test_differing_digests_are_refused(self, planned, cloning_filesystem):
         app = planned()
         for dupe in app.results.groups[0].dupes:
             dupe.digest = b"a-different-digest"
@@ -178,7 +199,9 @@ class TestTheRealProbe:
 
     def test_it_leaves_no_probe_files_behind(self, planned, tmp_path):
         # can_clone works by actually cloning, so a plan must not litter the user's folders.
+        # Runs everywhere: a filesystem that refuses to clone must not leave litter either,
+        # which is what #202 was about.
         app = planned()
         build_plan(app, clone_probe=default_clone_probe)
-        strays = [p.name for p in (tmp_path / "files").iterdir() if "probe" in p.name]
+        strays = [p.name for p in (tmp_path / "files").iterdir() if "probe" in p.name or "dupeguru-" in p.name]
         assert strays == [], strays
