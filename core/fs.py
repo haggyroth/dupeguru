@@ -24,12 +24,23 @@ from pathlib import Path
 from hscommon.util import nonone, get_file_ext
 
 hasher: Callable
-# HASH_ALGORITHM identifies which function produced a cached digest. Both algorithms emit
+# HASH_ALGORITHM identifies which function produced a cached digest. Every algorithm here emits
 # 16 bytes, so a digest computed by one is indistinguishable from the other by inspection.
 # Without recording this, a change in xxhash availability between runs would leave the cache
 # serving digests from the other algorithm, and byte-identical files would stop matching.
 # Note xxhash.xxh128 is an alias for xxh3_128, which is what core/hash_cache.py calls, so
 # both caches name the same algorithm here.
+#
+# The fallback was md5 until 4.19.0. dupeGuru treats equal digests as "these files are the
+# same" and then offers to delete one of them, and md5 collisions are *constructible* -- pairs
+# of different files sharing a digest exist in the wild. On the xxhash path a collision is a
+# ~10^-27 probability argument; on md5 it was not a probability argument at all. blake2b is
+# collision-resistant, is in the standard library, and emits 16 bytes natively at digest_size=16
+# so nothing downstream changes. It is also faster than md5, though not by much: measured over
+# 64 MB, 0.68 GiB/s against md5's 0.43 -- both far below xxh3's 8.92.
+#
+# This path should not normally run: xxhash is pinned in requirements.txt and setup.cfg and is
+# present in the frozen builds. It exists for a source checkout whose install did not complete.
 try:
     import xxhash
 
@@ -37,9 +48,12 @@ try:
     HASH_ALGORITHM = "xxh3_128"
 except ImportError:
     import hashlib
+    from functools import partial
 
-    hasher = hashlib.md5
-    HASH_ALGORITHM = "md5"
+    # partial rather than a lambda: callers use it both as hasher() and hasher(data), and
+    # digest_size has to be fixed for either.
+    hasher = partial(hashlib.blake2b, digest_size=16)
+    HASH_ALGORITHM = "blake2b_128"
 
 __all__ = [
     "File",
@@ -107,7 +121,10 @@ class OperationError(FSError):
 
 class FilesDB:
     schema_version = 1
-    schema_version_description = "Changed from md5 to xxhash if available."
+    # The table shape has not changed, so the version stays 1. Which algorithm produced a
+    # digest is recorded separately, in the hash_algorithm meta row, and a change there
+    # discards the cached digests on its own -- see _check_upgrade below.
+    schema_version_description = "Digests are xxh3_128, or blake2b_128 when xxhash is absent."
 
     create_table_query = """CREATE TABLE IF NOT EXISTS files (path TEXT PRIMARY KEY, size INTEGER, mtime_ns INTEGER,
         entry_dt DATETIME, digest BLOB, digest_partial BLOB, digest_samples BLOB)"""

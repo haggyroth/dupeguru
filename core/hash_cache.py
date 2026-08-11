@@ -33,10 +33,13 @@ try:
 except ImportError:
     import hashlib
 
-    HASH_ALGORITHM = "md5"
+    # See the note in core/fs.py: md5 collisions are constructible, and this cache backs a tool
+    # that deletes files whose digests match. Kept identical to the fallback there so the two
+    # caches never disagree about what a digest means.
+    HASH_ALGORITHM = "blake2b_128"
 
     def _make_hasher():
-        return hashlib.md5()
+        return hashlib.blake2b(digest_size=16)
 
 
 _CHUNK = 1024 * 1024  # 1 MiB read chunks
