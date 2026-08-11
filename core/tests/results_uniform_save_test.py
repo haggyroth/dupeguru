@@ -21,6 +21,7 @@ spend most of their attention on what comes back rather than on what goes out.
 """
 
 import io
+from pathlib import PurePosixPath as PurePath
 from xml.etree import ElementTree as ET
 
 import pytest
@@ -58,7 +59,11 @@ def save(app):
 
 def reload(app, xml):
     results = Results(app)
-    results.load_from_xml(io.BytesIO(xml), lambda path: NamedObject(path.split("/")[-1], size=100))
+    # PurePosixPath, not Path: the saved paths are whatever the *writing* platform produced, and
+    # a Windows Path would leave "basepath/f0" unsplit -- the reloaded name would then be the
+    # whole path, and a second save would write "basepath/basepath/f0". Only the last component
+    # is wanted, and the separator in the file is always the one NamedObject wrote.
+    results.load_from_xml(io.BytesIO(xml), lambda path: NamedObject(PurePath(path.replace("\\", "/")).name, size=100))
     return results
 
 
