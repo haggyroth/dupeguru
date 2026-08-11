@@ -24,6 +24,7 @@ from qtpy.QtWidgets import (
 )
 
 from core.deletion_plan import summarize_plan
+from hscommon import plat
 from hscommon.trans import trget
 from hscommon.util import format_size
 
@@ -92,6 +93,15 @@ def _row(path: str, size, outcome: str) -> QTreeWidgetItem:
     return item
 
 
+def _sent_outcome() -> str:
+    """What happened to one trashed file, named for the platform (#215).
+
+    In the "ui" domain like the rest of this dialog, so it sits in ui.po with its siblings
+    rather than in the core catalogue.
+    """
+    return tr("sent to the Recycle Bin") if plat.ISWINDOWS else tr("sent to trash")
+
+
 def _outcome(dupe: dict, direct_delete: bool) -> str:
     """What would happen to one candidate, in the same terms the summary uses."""
     if not dupe.get("would_delete"):
@@ -99,7 +109,7 @@ def _outcome(dupe: dict, direct_delete: bool) -> str:
         return tr("skipped: {}").format(dupe.get("blocked_reason", tr("would be refused")))
     if dupe.get("cloneable"):
         return tr("replaced by a clone of the reference")
-    action = tr("deleted permanently") if direct_delete else tr("sent to trash")
+    action = tr("deleted permanently") if direct_delete else _sent_outcome()
     if dupe.get("match_confidence") == "partial":
         return tr("{} (partial hash match only)").format(action)
     return action

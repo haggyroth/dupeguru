@@ -18,7 +18,7 @@ import pytest
 pytest.importorskip("qtpy.QtWidgets", reason="no Qt bindings installed")
 
 from core.deletion_plan import DeletionPlan  # noqa: E402
-from qt.deletion_preview import DeletionPreview, _outcome  # noqa: E402
+from qt.deletion_preview import DeletionPreview, _outcome, _sent_outcome  # noqa: E402
 
 
 def make_plan(entries=None, **kwargs):
@@ -56,7 +56,7 @@ class TestOutcomeWording:
         # The whole reason the preview takes direct_delete: "sent to trash" is recoverable
         # and "deleted permanently" is not, and the user is deciding between them.
         dupe = {"would_delete": True, "match_confidence": "full"}
-        assert _outcome(dupe, direct_delete=False) == "sent to trash"
+        assert _outcome(dupe, direct_delete=False) == _sent_outcome()
         assert _outcome(dupe, direct_delete=True) == "deleted permanently"
 
     def test_partial_matches_are_flagged_as_such(self):
@@ -96,7 +96,7 @@ class TestDialog:
         assert group.text(0) == "/a/ref.txt"
         assert group.childCount() == 1
         assert group.child(0).text(0) == "/a/dupe.txt"
-        assert group.child(0).text(2) == "sent to trash"
+        assert group.child(0).text(2) == _sent_outcome()
 
     def test_blocked_candidates_are_shown_not_hidden(self, qapp):
         # The failure the issue describes is learning about skips only from the problem

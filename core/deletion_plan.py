@@ -21,6 +21,7 @@ from core.app import DeleteStatus, DupeGuru, check_deletable
 from core.clone import can_clone, cloning_is_possible
 from core.confidence import Confidence, classify_group
 from core.engine import MatchKind
+from core.trash import deletion_verb
 from hscommon.util import format_size
 
 
@@ -300,7 +301,7 @@ def summarize_plan(plan: DeletionPlan, direct_delete: bool = False, partial_hint
     *partial_hint* is appended to the partial-match line by front ends that can say something
     specific about how to allow them.
     """
-    verb = "permanently delete" if direct_delete else "send to trash"
+    verb = deletion_verb(direct_delete)
     lines = [
         f"would {verb} {plan.files} file(s) in {plan.groups} group(s), "
         f"reclaiming {format_size(plan.total_bytes, 2)}"

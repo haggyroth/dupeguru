@@ -36,6 +36,75 @@ from urllib.parse import unquote
 
 from send2trash import send2trash
 
+from hscommon import plat
+from hscommon.trans import tr
+
+
+# --- What to call the place files go
+#
+# Windows calls it the Recycle Bin; macOS and Linux call it the Trash. Neither term was chosen
+# at runtime, so one screen always showed the wrong one: on Windows the menu said "Send Marked
+# to Recycle Bin..." and the dialog it opened said "You are sending 3 file(s) to the Trash."
+# (issue #215).
+#
+# Each message is a whole sentence per platform rather than a sentence with the name slotted
+# into it. Slotting is the obvious way and it breaks translation: in many languages the article
+# and the case of the noun depend on the phrase around it, and a translator looking at "to the
+# {}." cannot see what will land there. Two complete strings cost one extra entry each in the
+# .po files and stay translatable into languages that inflect.
+#
+# They live together here, rather than as an `if` at each call site, so that adding another
+# message is an obvious edit in one file and so the whole set can be tested at once.
+# `plat.ISWINDOWS` is read through the module rather than imported by value, so tests can drive
+# both platforms on either.
+#
+# Only the messages in the **core** translation domain live here. The bare `tr()` above resolves
+# against core.po, while the Qt layer uses `trget("ui")` and resolves against ui.po -- so the
+# menu entry and the preview's per-file outcome keep their platform branches in qt/, next to
+# their siblings. Moving them here would silently orphan their translations: "Send Marked to
+# Recycle Bin..." is already translated into 22 languages in ui.po, and looking it up under the
+# core domain would find nothing and fall back to English.
+
+
+def trash_name() -> str:
+    """The destination's name on this platform, for a caller building its own sentence.
+
+    Prefer one of the complete messages below. This exists for the few places that genuinely
+    need the bare noun, and every use of it is a place a translator cannot see the context.
+    """
+    return tr("Recycle Bin") if plat.ISWINDOWS else tr("Trash")
+
+
+def sending_files_message(count: int) -> str:
+    """The confirmation shown before a deletion."""
+    if plat.ISWINDOWS:
+        return tr("You are sending {} file(s) to the Recycle Bin.").format(count)
+    return tr("You are sending {} file(s) to the Trash.").format(count)
+
+
+def sending_job_title() -> str:
+    """The progress window's title while files are being removed."""
+    return tr("Sending to Recycle Bin") if plat.ISWINDOWS else tr("Sending to Trash")
+
+
+def all_sent_message() -> str:
+    """Reported when a deletion finished with no problems."""
+    if plat.ISWINDOWS:
+        return tr("All marked files were successfully sent to the Recycle Bin.")
+    return tr("All marked files were successfully sent to Trash.")
+
+
+def deletion_verb(direct_delete: bool) -> str:
+    """ "permanently delete" or the platform's word for trashing, for a plan summary.
+
+    Deliberately not translated, matching the rest of ``summarize_plan``, which is plain text
+    shared with the command line. That whole function is untranslated today; making it
+    translatable is a larger change than this one and is not what #215 is about.
+    """
+    if direct_delete:
+        return "permanently delete"
+    return "send to the Recycle Bin" if plat.ISWINDOWS else "send to trash"
+
 
 def trash_file(path) -> str:
     """Send *path* to the trash. Returns where it landed, or ``""`` if that is unknown.

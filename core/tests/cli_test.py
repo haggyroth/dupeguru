@@ -725,7 +725,10 @@ class TestDryRun:
         rc = main([str(tmp_path), "--delete", "--yes", "--dry-run"])
         assert rc == EXIT_DUPES_FOUND
         assert len(list(tmp_path.iterdir())) == 2
-        assert "would send to trash" in capsys.readouterr().err
+        # The verb names the Recycle Bin on Windows, so it is asked for rather than spelled out.
+        from core.trash import deletion_verb
+
+        assert f"would {deletion_verb(False)}" in capsys.readouterr().err
 
     def test_dry_run_does_not_require_yes(self, tmp_path):
         """A dry run is safe, so it should not be gated behind the --yes confirmation."""

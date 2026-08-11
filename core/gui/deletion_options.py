@@ -7,8 +7,8 @@
 
 import os
 
+from core.trash import sending_files_message
 from hscommon.gui.base import GUIObject
-from hscommon.trans import tr
 
 
 class DeletionOptionsView:
@@ -73,8 +73,9 @@ class DeletionOptions(GUIObject):
         self.view.set_hardlink_option_enabled(False)
         self.use_hardlinks = False
         self.direct = False
-        msg = tr("You are sending {} file(s) to the Trash.").format(mark_count)
-        self.view.update_msg(msg)
+        # Named for the platform: this dialog is opened from a menu entry that says "Recycle
+        # Bin" on Windows, and the two used to disagree on screen (#215).
+        self.view.update_msg(sending_files_message(mark_count))
         return self.view.show()
 
     def supports_links(self):
