@@ -1712,22 +1712,23 @@ class TestCloneInsteadOfDelete:
         clone_path = tmp_path / "made.bin"
         with pytest.raises(OSError) as exc:
             app.DupeGuru._make_replacement_clone(dupe, ref, clone_path)
-        assert "not byte-for-byte identical" in str(exc.value)
+        assert "content digest differs" in str(exc.value)
         assert not clone_path.exists(), "a clone was created despite the refusal"
         assert dupe.path.read_bytes() == b"B" * 4096, "the duplicate was altered"
 
     def test_a_missing_digest_is_refused(self, tmpdir):
         """Picture matches carry no full digest, and an absent digest proves nothing.
 
-        Sampled hashing is refused for the same reason: three matching chunks are not a
-        guarantee about the rest of the file.
+        An unreadable file leaves ``digest`` as ``None`` and lands here too. Sampling does
+        not: ``digest_samples`` is a separate attribute, and reading ``.digest`` computes the
+        full digest rather than returning a sampled one.
         """
         tmp_path = Path(str(tmpdir))
         dupe, ref = self._pair(tmp_path)
         dupe.digest = b""
         with pytest.raises(OSError) as exc:
             app.DupeGuru._make_replacement_clone(dupe, ref, tmp_path / "made.bin")
-        assert "not byte-for-byte identical" in str(exc.value)
+        assert "content digest differs" in str(exc.value)
 
     def test_unsupported_filesystem_is_refused_not_worked_around(self, tmpdir, monkeypatch):
         """Both available fallbacks are wrong, so there must not be one.

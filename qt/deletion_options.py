@@ -59,8 +59,9 @@ class DeletionOptions(QDialog):
         text = tr(
             "Instead of removing a duplicate, replace it with a clone of the reference. Both "
             "files remain, both stay editable, and the disk space is reclaimed because they "
-            "share it until one of them changes. Only possible for byte-for-byte identical "
-            "files on a filesystem that supports it; anything else is skipped and reported."
+            "share it until one of them changes. Only possible for files whose content "
+            "digests agree, on a filesystem that supports it; anything else is skipped and "
+            "reported."
         )
         self.cloneMessageLabel = QLabel(text)
         self.cloneMessageLabel.setWordWrap(True)

@@ -134,8 +134,8 @@ def _aggregate_size(path):
     return total
 
 
-def _is_byte_identical(dupe, ref):
-    """Whether *dupe* and *ref* are provably the same bytes.
+def _digests_match(dupe, ref):
+    """Whether *dupe* and *ref* have equal full digests.
 
     Cloning replaces a duplicate with a clone of its reference, which is only harmless when
     the two are already identical. That holds for a contents scan, where a match *means*
@@ -144,9 +144,16 @@ def _is_byte_identical(dupe, ref):
     re-encode, a different crop. Replacing one of those would substitute a different image
     and call it deduplication.
 
-    So this compares full digests rather than trusting the match. A digest that is missing or
-    only partial is not proof, and is treated as a refusal: sampled hashing compares three
-    chunks, and three matching chunks are not a guarantee of the rest.
+    So this compares full digests rather than trusting the match. Note what that is and is
+    not: a digest is a claim about content, not the content itself. Equal digests are what
+    cloning requires, and they are as strong a guarantee as this module offers, but they are
+    not a byte comparison -- so neither the name nor the caller's message says they are.
+
+    A missing digest is not proof and is treated as a refusal: an unreadable file leaves
+    ``digest`` as ``None``, and picture matches carry no full digest at all. The digest read
+    here is always the full one -- ``digest_partial`` and ``digest_samples`` are separate
+    attributes, and touching ``.digest`` on a file scanned with sampling makes
+    ``File._read_info`` compute the full digest on the spot.
     """
     dupe_digest = getattr(dupe, "digest", b"")
     ref_digest = getattr(ref, "digest", b"")
@@ -499,15 +506,15 @@ class DupeGuru(Broadcaster):
     def _make_replacement_clone(dupe, ref, clone_path):
         """Create a copy-on-write clone of *ref* at *clone_path*.
 
-        Refuses unless the two files are provably identical, and refuses when the filesystem
+        Refuses unless the two files' full digests agree, and refuses when the filesystem
         cannot clone rather than falling back. Both fallbacks available here are wrong: a copy
         would double the space this exists to reclaim, and a delete would destroy the file the
         user was told would survive.
         """
-        if not _is_byte_identical(dupe, ref):
+        if not _digests_match(dupe, ref):
             raise OSError(
                 tr(
-                    "'{}' was skipped: it is not byte-for-byte identical to its reference, so "
+                    "'{}' was skipped: its content digest differs from its reference's, so "
                     "replacing it with a clone would change its contents. Cloning is only "
                     "possible for exact duplicates."
                 ).format(str(dupe.path))
