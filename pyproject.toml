@@ -13,6 +13,38 @@ profile = "black"
 skip_gitignore = true
 
 [tool.pytest.ini_options]
+# Without this a bare `pytest` walks the whole tree and aborts during collection, because
+# mutmut generates a full copy of core/, qt/ and hscommon/ under mutants/ (see also_copy
+# below). Two copies of core.tests.conftest is an ImportPathMismatchError, which reads like a
+# broken checkout rather than "you gave me no arguments". mutants/ is gitignored, so this only
+# ever bites someone who has run the mutation script -- locally, which is the only place it runs.
+#
+# These are the same four directories the Makefile, tox.ini and the CI workflow all pass by
+# hand. Naming them once means a bare `pytest` does what every other entry point does, and
+# those explicit lists become a convenience rather than the thing holding the suite together.
+testpaths = ["core", "hscommon", "qt", "tests"]
+# testpaths is enough on its own for a bare `pytest`, but norecursedirs also covers `pytest .`
+# and an explicit path that contains the copy.
+#
+# Setting this *replaces* pytest's defaults rather than adding to them, so they are repeated
+# verbatim and the three we care about are appended. Note `.*`, which is doing more work than
+# it looks like: it excludes every dot-directory, so enumerating .tox and .git by hand would
+# quietly stop excluding .venv, .pytest_cache and the rest.
+norecursedirs = [
+    "*.egg",
+    ".*",
+    "_darcs",
+    "build",
+    "CVS",
+    "dist",
+    "node_modules",
+    "venv",
+    "{arch}",
+    # Ours: mutmut's generated copy, the Makefile's virtualenv, and the packaging output.
+    "mutants",
+    "env*",
+    "pkg",
+]
 # ResourceWarning is escalated where it can be. Note the limit, because it is easy to assume
 # more protection than this gives: sqlite3 and file objects emit ResourceWarning from their
 # finalisers, and an exception raised there is swallowed by the interpreter, so a leaked
