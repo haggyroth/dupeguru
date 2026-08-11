@@ -32,8 +32,8 @@ Confidence
 ----------
 
 Not every group is understood to the same degree, and the match percentage does not tell you
-which is which -- two files can both sit at 100% while one pair was compared byte for byte and
-the other was only sampled. The **Confidence** column (off by default; turn it on from the
+which is which -- two files can both sit at 100% while one pair had its contents compared in
+full and the other was only sampled. The **Confidence** column (off by default; turn it on from the
 **Columns** menu) says what was actually established about each group:
 
 **Corroborated**
@@ -343,10 +343,10 @@ any of them.
     elsewhere, and the option is disabled rather than falling back to something destructive.
 
     Two limits are worth knowing. Cloning cannot cross filesystems, so a duplicate on another
-    drive is skipped. And it is only offered for files that are *byte-for-byte identical* --
-    a picture-mode match that merely looks the same is not identical, and replacing it would
-    substitute a different image. Anything that cannot be cloned safely is skipped and listed
-    afterwards rather than deleted.
+    drive is skipped. And it is only offered where the two files' *content digests agree* --
+    a picture-mode match that merely looks the same carries no such agreement, and replacing
+    it would substitute a different image. Anything that cannot be cloned safely is skipped
+    and listed afterwards rather than deleted.
 
     One oddity: after cloning, ``du`` and Finder still report the full size for both files,
     because each one genuinely references those blocks. The free space on the volume is what
