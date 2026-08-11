@@ -9,6 +9,72 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [4.19.0] - 2026-08-11
+
+### Added
+
+- **Byte-for-byte verification before deleting**, off by default. Everything upstream reasons
+  about digests, and a digest is a claim about content rather than the content itself. This
+  closes that gap by reading both files and comparing them at the moment of deletion: a file
+  whose bytes differ from the one being kept is refused and reported rather than removed.
+  Available as `--verify` on the command line and as a preference in the shared Advanced
+  section.
+
+  It applies only where byte identity was actually claimed. A picture match says two images
+  *look* alike — a resize scores 100% while the files genuinely differ — so byte-comparing
+  those would refuse every deletion in picture mode and turn a safety option into a trap.
+
+  Verification runs at deletion time rather than scan time, and each group member is compared
+  against its reference, so a group of *k* costs *k−1* comparisons rather than *k(k−1)/2*.
+
+### Fixed
+
+- **The hashing fallback was md5.** dupeGuru decides two files are identical when their
+  digests match and then offers to delete one, which makes the hash a safety boundary rather
+  than a performance detail. On the xxhash path a collision is a probability argument not worth
+  engineering against; md5 collisions are *constructible*, and published colliding pairs are
+  128 bytes each — so they share a size, land in the same bucket, and get compared. The
+  fallback is now blake2b-128, which keeps the 16-byte width the cache schema assumes. A cache
+  written by the old algorithm is discarded rather than reused.
+
+  The fallback only runs where xxhash cannot be imported, which is a source checkout whose
+  install did not complete — exactly the situation where nobody reads the console.
+
+- **Saving results for a very large group of identical files took quadratic space.** The XML
+  format records one `<match>` element per pair, so a group of *k* identical files wrote
+  *k(k−1)/2* elements to express what the members and three values already express — about
+  17 GB for a 23,857-file cluster. Such a group now records its uniformity and its members.
+  The subtle part is reading it back: omitting the matches without saying why made the loader
+  fall back to name matching, which would have lost the partial-match flag along with it.
+
+- **A failed copy-on-write clone on Linux left an empty file behind.** `FICLONE` needs the
+  destination to exist before it can clone into it, so the destination is created and only then
+  does the filesystem reveal it cannot do the work. On ext4, on XFS without reflink, or across
+  two filesystems it never can — leaving one zero-byte `.dupeguru-link` file beside every
+  duplicate the user tried to clone. Thanks to @dchaudhari7177.
+
+- **The macOS trash path was read into an immutable buffer.** `FSRefMakePath` writes the
+  trashed file's location into the buffer it is handed, and it was handed a `bytes` object —
+  which produced the correct answer while mutating something CPython does not promise can be
+  mutated. No behaviour change; it now uses a real writable buffer.
+
+### Changed
+
+- **Cloning now says it compares content digests, because that is what it does.** The refusal
+  message, the option's description and the manual all claimed a byte-for-byte comparison,
+  while the check compares full digests. Equal digests are what cloning requires and are as
+  strong a guarantee as that path offers — but they are not a byte comparison, and the new
+  verification option above is where that distinction now lives. Partly thanks to
+  @dchaudhari7177.
+
+### Development
+
+- **A bare `pytest` now runs the suite.** With no `testpaths` set it walked the whole tree and
+  aborted during collection, because mutmut leaves a copy of `core/`, `qt/` and `hscommon/`
+  under `mutants/` and two copies of the same conftest cannot both be imported. The four places
+  that name the test directories are now checked against each other, so adding a fifth cannot
+  silently skip tests in whichever runner was missed.
+
 ## [4.18.0] - 2026-08-11
 
 ### Fixed
@@ -1029,7 +1095,8 @@ fork no longer routes anyone or anything upstream, and CI runs for the first tim
 
 See `git log` for changes prior to this changelog.
 
-[Unreleased]: https://github.com/haggyroth/dupeguru/compare/v4.18.0...HEAD
+[Unreleased]: https://github.com/haggyroth/dupeguru/compare/v4.19.0...HEAD
+[4.19.0]: https://github.com/haggyroth/dupeguru/compare/v4.18.0...v4.19.0
 [4.18.0]: https://github.com/haggyroth/dupeguru/compare/v4.17.0...v4.18.0
 [4.17.0]: https://github.com/haggyroth/dupeguru/compare/v4.16.0...v4.17.0
 [4.16.0]: https://github.com/haggyroth/dupeguru/compare/v4.15.0...v4.16.0

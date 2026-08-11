@@ -1,3 +1,10 @@
+=== 4.19.0 (2026-08-11)
+* Optionally compare two files byte for byte before deleting one of them, for certainty over speed
+* Stop using md5 as the hashing fallback when xxhash is unavailable, since md5 collisions can be constructed
+* Save results for very large groups of identical files quickly, instead of recording every pair
+* Fix a failed copy-on-write clone on Linux leaving an empty file behind
+* Say that cloning requires matching content digests, rather than claiming a byte-for-byte comparison
+
 === 4.18.0 (2026-08-11)
 * Scan folders containing very large numbers of identical files without running out of memory
 * Say clearly when a scan could not be completed, instead of presenting partial results as complete
