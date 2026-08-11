@@ -9,6 +9,39 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [4.20.0] - 2026-08-11
+
+### Fixed
+
+- **Deleting many files was quadratic, because the deletion log was rewritten in full for every
+  one of them.** 4,000 files spent 34.9 s on log maintenance alone — about 28 minutes for a
+  23,857-file cluster, and roughly twice that through the trash, which saved a second time per
+  file. So the scan and save work of the last two releases did not reach the user: that folder
+  could be scanned and its results saved in linear time, and then took an hour to delete from.
+
+  Records are now appended, one per line, and a trashed file's destination is appended as an
+  amendment rather than paid for with a rewrite. The same 4,000 records now take 0.26 s, and a
+  real deletion of 1,600 duplicates went from 7.49 s to 0.23 s — flat at 0.15 ms per file where
+  it had been climbing.
+
+- **Any damage to the deletion log discarded the entire history, silently.** It was read as one
+  XML document, and a failure to parse left an empty log — so a crash mid-write, one invalid
+  byte, or a single stray `&` anywhere in the file cost every recorded run. Measured on a log of
+  3 runs and 12 records, all three of those recovered nothing at all.
+
+  That inverted the reason records were written one at a time. The per-file write was chosen so
+  a crash would cost a single entry; because each one truncated and rebuilt the whole file, it
+  risked all of them, once per deleted file. Damage now costs the damaged lines and nothing
+  else: the same truncation recovers 3 runs and 9 records.
+
+  Existing logs are read and carried forward, so upgrading keeps the undo history.
+
+- **A file could be sent to the trash on macOS and then reported as not deleted.** A failure
+  after the file had already moved was indistinguishable from one before it, so the deletion
+  was retried against a path that no longer existed — which raised, and reported a failure for
+  a deletion that had happened. No record was written either, leaving the file gone, the user
+  told it survived, and nothing to restore from.
+
 ## [4.19.0] - 2026-08-11
 
 ### Added
@@ -1095,7 +1128,8 @@ fork no longer routes anyone or anything upstream, and CI runs for the first tim
 
 See `git log` for changes prior to this changelog.
 
-[Unreleased]: https://github.com/haggyroth/dupeguru/compare/v4.19.0...HEAD
+[Unreleased]: https://github.com/haggyroth/dupeguru/compare/v4.20.0...HEAD
+[4.20.0]: https://github.com/haggyroth/dupeguru/compare/v4.19.0...v4.20.0
 [4.19.0]: https://github.com/haggyroth/dupeguru/compare/v4.18.0...v4.19.0
 [4.18.0]: https://github.com/haggyroth/dupeguru/compare/v4.17.0...v4.18.0
 [4.17.0]: https://github.com/haggyroth/dupeguru/compare/v4.16.0...v4.17.0
