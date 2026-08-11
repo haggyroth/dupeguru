@@ -16,6 +16,7 @@ the same tree is *not* reported stale once the build is newer.
 """
 
 import os
+import sysconfig
 
 import pytest
 
@@ -63,7 +64,7 @@ def _touch(path, when):
     os.utime(path, (when, when))
 
 
-OLD, NEW = 1_000_000, 2_000_000
+OLD, MID, NEW = 1_000_000, 1_500_000, 2_000_000
 
 
 def test_sources_are_read_from_setup_py(fake_repo):
@@ -100,6 +101,50 @@ def test_a_build_is_found_whatever_the_platform_suffix(fake_repo, suffix):
     artifact.write_bytes(b"")
 
     assert built_extension("core.pe._block", fake_repo) == artifact
+
+
+def test_this_interpreters_build_wins_when_several_are_present(fake_repo):
+    """Artifacts from several Pythons accumulate; only one of them is ever imported.
+
+    Picking by sorted glob returns whichever sorts first, so a leftover build from an older
+    Python would be examined while the current one is the build actually in use -- reporting a
+    rebuild as needed when it is not. Which is the failure that matters here: this warning is
+    only useful if it is believed.
+    """
+    directory = fake_repo / "core" / "pe"
+    mine = directory / f"_block{sysconfig.get_config_var('EXT_SUFFIX')}"
+    mine.write_bytes(b"")
+    # Sorts before any real suffix, so a glob-first implementation picks it.
+    leftover = directory / "_block.cp000-old.so"
+    leftover.write_bytes(b"")
+
+    assert built_extension("core.pe._block", fake_repo) == mine
+
+
+def test_a_foreign_build_is_still_found_when_this_interpreter_has_none(fake_repo):
+    """The fallback. A build for another Python is still a build, and still stale."""
+    artifact = fake_repo / "core" / "pe" / "_block.cp000-old.so"
+    artifact.write_bytes(b"")
+
+    assert built_extension("core.pe._block", fake_repo) == artifact
+
+
+def test_a_stale_leftover_does_not_condemn_a_current_build(fake_repo):
+    """The user-visible symptom, end to end: no warning when the loaded build is current."""
+    directory = fake_repo / "core" / "pe"
+    mine = directory / f"_block{sysconfig.get_config_var('EXT_SUFFIX')}"
+    mine.write_bytes(b"")
+    leftover = directory / "_block.cp000-old.so"
+    leftover.write_bytes(b"")
+    # The sources sit *between* the two builds, which is the only arrangement that separates
+    # the implementations: the leftover is genuinely stale, the loaded build is genuinely
+    # current, and which one gets examined decides whether a warning appears.
+    _touch(leftover, OLD)
+    _touch(fake_repo / "core/pe/modules/block.c", MID)
+    _touch(fake_repo / "core/pe/modules/common.c", MID)
+    _touch(mine, NEW)
+
+    assert stale_extensions(fake_repo) == []
 
 
 def test_a_build_older_than_its_source_is_reported(fake_repo):
