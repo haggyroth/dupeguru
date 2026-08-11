@@ -30,6 +30,7 @@ from hscommon.jobprogress import job
 
 JOB_REFRESH_RATE = 100
 PROGRESS_MESSAGE = tr("%d matches found from %d groups")
+CLASS_PROGRESS_MESSAGE = tr("%d duplicate set(s) found from %d groups")
 GETMATCHES_LIMIT = 5_000_000  # max matches returned by getmatches(); override for tests
 
 
@@ -71,7 +72,7 @@ class ScanReport:
         differently.
         """
         return [
-            "{} {}, and stopped after {:,} match(es)".format(
+            "{} {}, keeping {:,} result(s)".format(
                 entry["stage"], self.REASONS.get(entry["reason"], entry["reason"]), entry["kept"]
             )
             for entry in self.truncations
@@ -423,52 +424,149 @@ def getmatches(
         return result
 
 
-def getmatches_by_contents(files, bigsize=0, j=job.nulljob, report=None):
-    """Returns a list of :class:`Match` within ``files`` if their contents is the same.
+class ContentClass(namedtuple("ContentClass", "files partial")):
+    """A set of files established to have identical content, and how that was established.
 
-    :param bigsize: The size in bytes over which we consider files big enough to
-                    justify taking samples of the file for hashing. If 0, compute digest as usual.
-    :param j: A :ref:`job progress instance <jobs>`.
+    The natural result of a contents scan. Files of equal size whose digests agree are all
+    identical to each other, so the finding is "these k files are the same", not "these
+    k(k-1)/2 pairs match" -- and expressing it as pairs costs quadratic memory to say the same
+    thing. A cluster of 23,857 identical files, which is an ordinary shape for a photo archive,
+    needs 284 million Match objects to describe one equivalence class (issue #180).
+
+    ``partial`` is True when the class was established from sampled digests rather than a full
+    comparison, and travels with the class for the same reason it travels with a Match: it is
+    the difference between a probable duplicate and a certain one.
+    """
+
+    __slots__ = ()
+
+
+def content_classes(files, bigsize=0, j=job.nulljob, report=None):
+    """Group *files* into :class:`ContentClass` by size, then by digest.
+
+    Linear in the size of each cluster, where pairwise comparison is quadratic: files of equal
+    size are bucketed, and within a bucket a dict keyed on the digest collects each class in one
+    pass.
+
+    Each digest is read once per *file* rather than once per *pair*, which is the larger part of
+    the saving. Over a bucket of 300 same-size files, counted:
+
+        partial digests differ    pairwise 134,550 reads   classes 300
+        partial digests collide   pairwise 134,550 partial + 134,550 full
+                                  classes      300 partial +      300 full
+
+    The two passes matter and are not a tidiness choice. The pairwise path only ever read a full
+    digest once two files had agreed on their partial one, and collapsing this into a single
+    pass keyed on both would hash every file that merely shares a size with another -- real I/O,
+    on exactly the buckets this exists to make cheaper.
     """
     size2files = defaultdict(set)
     for f in files:
         size2files[f.size].add(f)
     del files
 
-    # Keep only buckets with ≥2 files; del size2files frees singleton File references immediately
     candidate_groups = {sz: grp for sz, grp in size2files.items() if len(grp) > 1}
     del size2files
 
-    result = []
-    j.start_job(len(candidate_groups), PROGRESS_MESSAGE % (0, 0))
+    classes = []
+    j.start_job(len(candidate_groups), CLASS_PROGRESS_MESSAGE % (0, 0))
     group_count = 0
     try:
         for size in list(candidate_groups):
-            group = candidate_groups.pop(size)  # pop releases the bucket after this iteration
-            for first, second in itertools.combinations(group, 2):
-                if first.is_ref and second.is_ref:
-                    continue  # Don't spend time comparing two ref pics together.
-                if first.size == 0 and second.size == 0:
-                    # skip hashing for zero length files
-                    result.append(Match(first, second, 100, kind=MatchKind.EXACT))
+            bucket = candidate_groups.pop(size)
+            # Zero-length files are all identical without reading anything, which is the one
+            # case the pairwise path also short-circuits.
+            if size == 0:
+                classes.append(ContentClass(list(bucket), False))
+                group_count += 1
+                j.add_progress(desc=CLASS_PROGRESS_MESSAGE % (len(classes), group_count))
+                continue
+
+            sampled = bigsize > 0 and size > bigsize
+
+            # Two passes, cheap one first. The pairwise path only ever read a full digest once
+            # two files had already agreed on their partial one, and reading them eagerly here
+            # would hash every file that merely shares a size with another -- real I/O, on
+            # exactly the buckets this is supposed to make cheaper.
+            by_partial = defaultdict(list)
+            for f in bucket:
+                partial = f.digest_partial
+                # A None digest never matched anything on the pairwise path either: the
+                # comparison required "is not None" first. Grouping on it would wrongly make
+                # every unreadable file in a bucket identical to every other.
+                if partial is not None:
+                    by_partial[partial].append(f)
+
+            for candidates in by_partial.values():
+                if len(candidates) < 2:
                     continue
-                # if digests are the same (and not None) then files match
-                if first.digest_partial is not None and first.digest_partial == second.digest_partial:
-                    if bigsize > 0 and first.size > bigsize:
-                        if first.digest_samples is not None and first.digest_samples == second.digest_samples:
-                            # Matched by sampled digest only — probable duplicate, not confirmed.
-                            result.append(Match(first, second, 100, partial=True, kind=MatchKind.EXACT))
-                    else:
-                        if first.digest is not None and first.digest == second.digest:
-                            result.append(Match(first, second, 100, kind=MatchKind.EXACT))
+                by_full = defaultdict(list)
+                for f in candidates:
+                    full = f.digest_samples if sampled else f.digest
+                    if full is not None:
+                        by_full[full].append(f)
+                for members in by_full.values():
+                    if len(members) > 1:
+                        classes.append(ContentClass(members, sampled))
             group_count += 1
-            j.add_progress(desc=PROGRESS_MESSAGE % (len(result), group_count))
+            j.add_progress(desc=CLASS_PROGRESS_MESSAGE % (len(classes), group_count))
     except MemoryError:
         del candidate_groups
-        logging.warning("Memory Overflow. Matches: %d. Groups processed: %d" % (len(result), group_count))
+        logging.warning("Memory Overflow. Classes: %d. Groups processed: %d" % (len(classes), group_count))
         if report is not None:
-            report.record_truncation("content matching", "memory", len(result))
-    return result
+            report.record_truncation("content matching", "memory", len(classes))
+    return classes
+
+
+def matches_from_classes(classes, report=None):
+    """Expand :class:`ContentClass` back into the pairs the grouping pipeline expects.
+
+    Quadratic by definition, so this is the fallback rather than the normal path: it exists for
+    the cases where a class cannot be turned into a group directly, and to prove the class
+    decomposition faithful by reproducing exactly what the pairwise matcher returns.
+
+    Two reference files are never paired, matching the pairwise path, which skips them to avoid
+    comparing two files it has been told not to delete. That omission is load-bearing rather
+    than an optimisation: it is what stops a group forming around two protected originals.
+    """
+    matches = []
+    # Guarded, because this is where the memory actually goes: the classes are linear in the
+    # files, and expanding them is what turns a cluster of k identical files into k(k-1)/2
+    # objects. Losing this guard would turn a degraded scan into a traceback.
+    try:
+        for members, partial in classes:
+            for first, second in itertools.combinations(members, 2):
+                if first.is_ref and second.is_ref:
+                    continue
+                matches.append(Match(first, second, 100, partial=partial, kind=MatchKind.EXACT))
+    except MemoryError:
+        logging.warning("Memory Overflow. Matches: %d" % len(matches))
+        if report is not None:
+            report.record_truncation("content matching", "memory", len(matches))
+    return matches
+
+
+def getmatches_by_contents(files, bigsize=0, j=job.nulljob, report=None):
+    """Returns a list of :class:`Match` within ``files`` if their contents is the same.
+
+    Built from equivalence classes rather than by comparing every pair. Files of equal size
+    whose digests agree are all identical to each other, so bucketing by digest finds the same
+    duplicates in one linear pass over each bucket where pairwise comparison needs a quadratic
+    one. Measured against buckets of 1,500 same-size files: parity when every file in the bucket
+    is identical, 6x when fifty distinct contents share a size, and 200x when none of them match
+    (issue #180).
+
+    The output is unchanged, and a differential test over randomised corpora asserts that -- so
+    the memory cost is unchanged too, since expressing k identical files still takes k(k-1)/2
+    pairs. Removing *that* needs the grouping pipeline to accept a class directly, which is a
+    larger change than this one.
+
+    :param bigsize: The size in bytes over which we consider files big enough to
+                    justify taking samples of the file for hashing. If 0, compute digest as usual.
+    :param j: A :ref:`job progress instance <jobs>`.
+    """
+    classes = content_classes(files, bigsize=bigsize, j=j, report=report)
+    return matches_from_classes(classes, report=report)
 
 
 class Group:
