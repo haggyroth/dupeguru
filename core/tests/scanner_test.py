@@ -13,6 +13,7 @@ from pathlib import Path
 from hscommon.testutil import eq_
 
 from core import fs
+from core import engine
 from core.engine import getwords, Match
 from core.ignore import IgnoreList
 from core.scanner import Scanner, ScanType, remove_dupe_paths, _apply_digest
@@ -584,11 +585,20 @@ def test_dont_group_files_that_dont_exist(tmpdir):
         fp.write("foo")
     file1, file2 = fs.get_files(p)
 
+    # Both routes are stubbed: a contents scan builds groups from equivalence classes, so
+    # stubbing only _getmatches would leave the deletion never happening and the test passing
+    # for the wrong reason.
     def getmatches(*args, **kw):
         file2.path.unlink()
         return [Match(file1, file2, 100)]
 
+    def getclasses(files, j):
+        classes = engine.content_classes(files)
+        file2.path.unlink()
+        return classes
+
     s._getmatches = getmatches
+    s._getclasses = getclasses
 
     assert not s.get_dupe_groups([file1, file2])
 

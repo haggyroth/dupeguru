@@ -21,6 +21,30 @@ from cli import EXIT_DUPES_FOUND, main
 from core import engine
 
 
+def exhaust_content_matching(monkeypatch):
+    """Make a contents scan give up, on the path it actually takes.
+
+    Raised from inside ``content_classes``'s per-bucket loop, which is where a real exhaustion
+    would surface now that a plain contents scan builds equivalence classes. Patching
+    ``itertools.combinations`` -- what these tests did before -- no longer reaches that path at
+    all, because building classes never enumerates pairs.
+
+    The first ``defaultdict`` is the size bucketing, which must succeed for there to be a bucket
+    to fail on; every one after it is the per-bucket digest grouping.
+    """
+    from collections import defaultdict as real_defaultdict
+
+    calls = {"n": 0}
+
+    def exploding(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] > 1:
+            raise MemoryError
+        return real_defaultdict(*args, **kwargs)
+
+    monkeypatch.setattr(engine, "defaultdict", exploding)
+
+
 @pytest.fixture
 def duplicates(tmp_path):
     (tmp_path / "a.txt").write_bytes(b"same")
@@ -31,11 +55,7 @@ def duplicates(tmp_path):
 @pytest.fixture
 def truncate_matching(monkeypatch):
     """Make content matching give up, without exhausting real memory."""
-
-    def explode(*args, **kwargs):
-        raise MemoryError
-
-    monkeypatch.setattr(engine.itertools, "combinations", explode)
+    exhaust_content_matching(monkeypatch)
 
 
 class TestTheJsonSaysSo:

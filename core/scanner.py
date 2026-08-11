@@ -4,6 +4,7 @@
 # which should be included with this package. The terms are also available at
 # http://www.gnu.org/licenses/gpl-3.0.html
 
+import itertools
 import logging
 import os
 import re
@@ -235,6 +236,83 @@ class Scanner:
         self.verified_partial_count = total - discarded
         return [m for m in verified if m is not None]
 
+    def _split_class(self, members, ignore_list):
+        """A content class reduced to the sub-groups that survive the scan's filters.
+
+        Returns ``(groups, fallback)``. Members that still form a complete set of identical
+        files come back as lists ready for :meth:`Group.from_identical`; anything a filter has
+        punched a hole in comes back as *fallback*, to be expanded into pairs and grouped the
+        old way.
+
+        The distinction is not an optimisation detail, it is correctness. A group built from a
+        class asserts that every member matches every other, and two of these filters can make
+        that false:
+
+        - **The ignore list** removes individual pairs, so the remainder need not be a clique at
+          all. Working out the maximal cliques of what is left is exactly what ``get_groups``
+          already does, so those classes go back to it.
+        - **Two reference files** are never matched to each other -- the matcher skips the pair
+          to avoid pairing two files the user protected -- so a class holding more than one is
+          likewise not a clique.
+
+        The other two filters split cleanly and keep the guarantee: dropping files that no longer
+        exist leaves the rest identical to each other, and splitting by extension leaves each
+        part identical within itself.
+        """
+        if self.include_exists_check:
+            members = [f for f in members if f.exists()]
+        if not self.mix_file_kind:
+            by_ext = defaultdict(list)
+            for f in members:
+                by_ext[get_file_ext(f.name)].append(f)
+            parts = list(by_ext.values())
+        else:
+            parts = [members]
+
+        groups, fallback = [], []
+        for part in parts:
+            if len(part) < 2:
+                continue
+            refs = sum(1 for f in part if f.is_ref)
+            ignored = ignore_list and any(
+                ignore_list.are_ignored(str(a.path), str(b.path)) for a, b in itertools.combinations(part, 2)
+            )
+            if refs > 1 or ignored:
+                fallback.append(part)
+            else:
+                groups.append(part)
+        return groups, fallback
+
+    def _prepare_content_candidates(self, files, j):
+        """Everything a contents scan does before comparing anything.
+
+        Shared by the pairwise and equivalence-class routes so they cannot diverge. Skipping it
+        was not a subtle mistake: it silently dropped the size thresholds, the job budget split,
+        and the parallel hash pre-population, so a second scan stopped using the hash cache.
+
+        Returns the filtered files and the sub-job to report progress against.
+        """
+        j = j.start_subjob([2, 8])
+        if self.size_threshold:
+            files = [f for f in files if f.size >= self.size_threshold]
+        if self.large_size_threshold:
+            files = [f for f in files if f.size <= self.large_size_threshold]
+        if hashcachedb.conn is not None:
+            # Size-first pre-filter: only hash files that share a size with a partner.
+            size_groups: dict = defaultdict(list)
+            for f in files:
+                size_groups[f.size].append(f)
+            candidates = [f for grp in size_groups.values() if len(grp) > 1 for f in grp]
+            if candidates:
+                j.start_job(len(candidates), tr("Checking hash cache"))
+                self._hash_files_parallel(candidates, j, bigsize=self.big_file_size_threshold)
+        return files, j
+
+    def _getclasses(self, files, j):
+        """Equivalence classes for a contents scan, after the same preparation as _getmatches."""
+        files, j = self._prepare_content_candidates(files, j)
+        return engine.content_classes(files, bigsize=self.big_file_size_threshold, j=j, report=self.scan_report)
+
     def _getmatches(self, files, j):
         if (
             self.size_threshold
@@ -262,7 +340,7 @@ class Scanner:
                     self._hash_files_parallel(candidates, j, bigsize=self.big_file_size_threshold)
             return engine.getmatches_by_contents(
                 files, bigsize=self.big_file_size_threshold, j=j, report=self.scan_report
-            )
+            )  # noqa: E501
         else:
             j = j.start_subjob([2, 8])
             kw = {}
@@ -333,8 +411,30 @@ class Scanner:
             match_job = j.start_subjob([2, 8], tr("Looking for duplicate contents"))
         else:
             match_job = j
-        matches = self._getmatches(files, match_job)
-        logging.info("Found %d matches" % len(matches))
+        # A plain contents scan can build its groups from equivalence classes, which is linear in
+        # each cluster where the pairwise path is quadratic (issue #180). The other scan types
+        # keep the pairwise route: picture matching merges a second match list into this one,
+        # full verification filters matches, and folder mode has a match-based filter of its own.
+        use_classes = self.scan_type == ScanType.CONTENTS and not combining and not self.full_verify
+        intact_classes = None
+        if use_classes:
+            classes = self._getclasses(files, match_job)
+            logging.info("Found %d content class(es)" % len(classes))
+            intact_classes = []
+            broken = []
+            for members, partial in classes:
+                intact, split = self._split_class(members, ignore_list)
+                intact_classes += [(part, partial) for part in intact]
+                broken += [engine.ContentClass(part, partial) for part in split]
+            # Anything a filter broke becomes ordinary matches and takes the ordinary route from
+            # here, so it meets every filter below exactly as it always did. Only the classes
+            # that are still complete skip the pairwise machinery.
+            matches = engine.matches_from_classes(broken) if broken else []
+            if broken:
+                logging.info("Falling back to pairwise grouping for %d class(es)" % len(broken))
+        else:
+            matches = self._getmatches(files, match_job)
+            logging.info("Found %d matches" % len(matches))
         if combining:
             # Only alongside a contents scan. Merging resemblances into a filename or tag scan
             # would mix two weak signals and call the result a duplicate.
@@ -381,6 +481,11 @@ class Scanner:
             matches = [m for m in matches if not ignore_list.are_ignored(str(m.first.path), str(m.second.path))]
         logging.info("Grouping matches")
         groups = engine.get_groups(matches, report=self.scan_report)
+        if intact_classes:
+            groups += [
+                engine.Group.from_identical(part, 100, partial, engine.MatchKind.EXACT)
+                for part, partial in intact_classes
+            ]
         if self.scan_type in {
             ScanType.FILENAME,
             ScanType.FIELDS,

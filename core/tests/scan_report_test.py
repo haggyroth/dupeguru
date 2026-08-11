@@ -32,6 +32,30 @@ from core.scanner import ScanType
 from core.tests.base import NamedObject
 
 
+def exhaust_content_matching(monkeypatch):
+    """Make a contents scan give up, on the path it actually takes.
+
+    Raised from inside ``content_classes``'s per-bucket loop, which is where a real exhaustion
+    would surface now that a plain contents scan builds equivalence classes. Patching
+    ``itertools.combinations`` -- what these tests did before -- no longer reaches that path at
+    all, because building classes never enumerates pairs.
+
+    The first ``defaultdict`` is the size bucketing, which must succeed for there to be a bucket
+    to fail on; every one after it is the per-bucket digest grouping.
+    """
+    from collections import defaultdict as real_defaultdict
+
+    calls = {"n": 0}
+
+    def exploding(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] > 1:
+            raise MemoryError
+        return real_defaultdict(*args, **kwargs)
+
+    monkeypatch.setattr(engine, "defaultdict", exploding)
+
+
 class TestTheReportItself:
     def test_a_fresh_report_is_not_truncated(self):
         assert ScanReport().truncated is False
@@ -83,10 +107,7 @@ class TestTheStagesRecord:
         return files
 
     def test_content_matching_records_running_out_of_memory(self, monkeypatch):
-        def explode(*args, **kwargs):
-            raise MemoryError
-
-        monkeypatch.setattr(engine.itertools, "combinations", explode)
+        exhaust_content_matching(monkeypatch)
         report = ScanReport()
         engine.getmatches_by_contents(self._files(), report=report)
         assert [t["stage"] for t in report.truncations] == ["content matching"]
@@ -142,10 +163,7 @@ class TestItReachesTheUser:
         return app
 
     def test_a_truncated_scan_is_visible_on_the_app(self, scanned, monkeypatch):
-        def explode(*args, **kwargs):
-            raise MemoryError
-
-        monkeypatch.setattr(engine.itertools, "combinations", explode)
+        exhaust_content_matching(monkeypatch)
         cli._run_scan(scanned, verbose=False)
         assert scanned.scan_report.truncated is True
 
