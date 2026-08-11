@@ -26,6 +26,7 @@ extension or a new source file cannot leave this check silently covering less th
 from __future__ import annotations
 
 import ast
+import sysconfig
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -83,14 +84,33 @@ def _path_parts(node: ast.expr) -> list[str]:
 def built_extension(module_name: str, repo_root: Path) -> Path | None:
     """Find the built artifact for ``core.pe._block``-style *module_name*, if any.
 
-    The suffix carries the interpreter and platform (``.cp314-win_amd64.pyd``), so this globs
-    rather than reconstructing it -- a build for a different Python is still a build, and
-    still stale.
+    Returns the one *this* interpreter would import when there is a choice. The suffix carries
+    the interpreter and platform (``.cp314-win_amd64.pyd``), and ``EXT_SUFFIX`` is that exact
+    string, so an artifact matching it is the one that will actually be loaded.
+
+    Preferring it matters because artifacts from several Pythons accumulate side by side --
+    switch version, build again, and the old one is still sitting there. Picking by sorted glob
+    instead returns whichever sorts first, so a leftover 3.12 build would be examined while the
+    3.14 build is the one in use: a permanent "rebuild your extensions" warning for a build that
+    is perfectly current. A warning that cries wolf is worse than none, and this one's only job
+    is to be believed at the moment something crashes.
+
+    Falls back to the glob when nothing matches ``EXT_SUFFIX``, which keeps two cases working:
+    an artifact built by a different Python (still a build, and still stale), and the
+    unsuffixed ``.pyd``/``.so`` some toolchains produce.
     """
     *package, stem = module_name.split(".")
     directory = repo_root.joinpath(*package)
     if not directory.is_dir():
         return None
+    # sysconfig rather than importlib.machinery: EXT_SUFFIX is the single suffix this
+    # interpreter uses, where EXTENSION_SUFFIXES is an ordered list whose first entry is the
+    # same string. One value, no ordering to reason about.
+    ext_suffix = sysconfig.get_config_var("EXT_SUFFIX")
+    if ext_suffix:
+        preferred = directory / f"{stem}{ext_suffix}"
+        if preferred.is_file():
+            return preferred
     candidates = sorted(directory.glob(f"{stem}.*.pyd")) + sorted(directory.glob(f"{stem}.*.so"))
     # An unsuffixed artifact is possible on some toolchains.
     candidates += sorted(directory.glob(f"{stem}.pyd")) + sorted(directory.glob(f"{stem}.so"))
