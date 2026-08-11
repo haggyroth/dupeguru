@@ -221,6 +221,7 @@ class Preferences(PreferencesBase):
         self.big_file_partial_hashes = get("BigFilePartialHashes", self.big_file_partial_hashes)
         self.big_file_size_threshold = get("BigFileSizeThreshold", self.big_file_size_threshold)
         self.full_verify = get("FullVerify", self.full_verify)
+        self.verify_before_delete = get("VerifyBeforeDelete", self.verify_before_delete)
         self.cache_file_list = get("CacheFileList", self.cache_file_list)
         self.scan_tag_track = get("ScanTagTrack", self.scan_tag_track)
         self.scan_tag_artist = get("ScanTagArtist", self.scan_tag_artist)
@@ -279,6 +280,8 @@ class Preferences(PreferencesBase):
         self.big_file_partial_hashes = False
         self.big_file_size_threshold = 100  # MB
         self.full_verify = False
+        # Off by default: it re-reads both files on every deletion (issue #188).
+        self.verify_before_delete = False
         self.cache_file_list = False
         self.scan_tag_track = False
         self.scan_tag_artist = True
@@ -338,6 +341,7 @@ class Preferences(PreferencesBase):
         set_("BigFilePartialHashes", self.big_file_partial_hashes)
         set_("BigFileSizeThreshold", self.big_file_size_threshold)
         set_("FullVerify", self.full_verify)
+        set_("VerifyBeforeDelete", self.verify_before_delete)
         set_("CacheFileList", self.cache_file_list)
         set_("ScanTagTrack", self.scan_tag_track)
         set_("ScanTagArtist", self.scan_tag_artist)

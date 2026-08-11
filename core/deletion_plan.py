@@ -20,6 +20,7 @@ from typing import NamedTuple
 from core.app import DeleteStatus, DupeGuru, check_deletable
 from core.clone import can_clone, cloning_is_possible
 from core.confidence import Confidence, classify_group
+from core.engine import MatchKind
 from hscommon.util import format_size
 
 
@@ -83,6 +84,57 @@ class DeletionPlan(NamedTuple):
     cloneable: int  # of the would-delete files, how many could be replaced by a clone instead
     confidence: dict  # Confidence tier -> count of planned groups sitting in it
     entries: list  # per-group plan, for machine-readable output
+
+
+#: Read in chunks rather than whole files: a deletion candidate can be any size, and the point
+#: is to stop at the first difference, which is usually near the front when there is one.
+_COMPARE_CHUNK = 1024 * 1024
+
+
+def verify_identical(dupe, ref) -> bool:
+    """Whether *dupe* and *ref* hold the same bytes, read and compared now.
+
+    The last gap between "almost certainly identical" and "identical". Everything upstream
+    reasons about digests, and a digest is a claim about content rather than the content: xxh3
+    makes no collision-resistance promise, and the fallback in core/fs.py was md5 until #189,
+    where colliding pairs are constructible rather than improbable.
+
+    Stops at the first differing chunk, so the cost is a full read of each file only when they
+    really are identical -- which is the case where the answer is needed.
+
+    The size check is an optimisation, not a correctness step: the chunk comparison already
+    separates files of different lengths, since the shorter one runs out first. Removing it
+    changes no result, only the cost -- without it, comparing a 10 GB file against a 1-byte one
+    reads the 10 GB to learn what one stat() already said.
+
+    Any read error is a refusal, not an exception. A file that cannot be read cannot be shown to
+    be a duplicate, and the caller's job is to decline to delete it rather than to crash.
+    """
+    try:
+        if dupe.path.stat().st_size != ref.path.stat().st_size:
+            return False
+        with dupe.path.open("rb") as first, ref.path.open("rb") as second:
+            while True:
+                a = first.read(_COMPARE_CHUNK)
+                b = second.read(_COMPARE_CHUNK)
+                if a != b:
+                    return False
+                if not a:
+                    return True
+    except OSError:
+        return False
+
+
+def claims_byte_identity(group, dupe) -> bool:
+    """Whether this pair was ever asserted to have identical *contents*.
+
+    Verification only means something against that claim. A picture match says two images look
+    alike -- a resize or a re-encode scores 100% while the files genuinely differ -- and a
+    metadata match says their tags agree. Byte-comparing either would refuse every deletion and
+    make the option useless in the modes where it was never relevant.
+    """
+    match = group.get_match_of(dupe) if group is not None else None
+    return getattr(match, "kind", None) == MatchKind.EXACT
 
 
 def device_of(path) -> int | None:

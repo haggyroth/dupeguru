@@ -130,6 +130,8 @@ class TestPreferencesReachTheScanner:
             "escape_filter_regexp",
             "ignore_hardlink_matches",
             "rehash_ignore_mtime",
+            # Read at deletion time by _do_delete_dupe, not during a scan.
+            "verify_before_delete",
         }
         unknown = [k for k in dgapp.model.options if k not in app_only and not any(hasattr(s, k) for s in scanners)]
         assert not unknown, f"options that reach no scanner attribute and are silently dropped: {unknown}"

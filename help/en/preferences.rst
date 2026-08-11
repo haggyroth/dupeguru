@@ -64,6 +64,23 @@ Preferences
     comparison, at the cost of reading the matched files a second time. Has no effect unless
     partial hashing is enabled above.
 
+**Compare contents byte for byte before deleting:**
+    dupeGuru decides two files are identical by comparing digests -- short summaries of the
+    contents, rather than the contents themselves. Two different files sharing a digest is
+    vanishingly unlikely with the hash normally in use, but a digest is still a claim about a
+    file rather than the file.
+
+    With this on, each file is read and compared directly against the one being kept,
+    immediately before it is deleted. Anything that turns out to differ is refused and reported
+    instead of removed.
+
+    Off by default, because it doubles the reading a deletion does. Worth turning on when you
+    are deleting something you could not replace.
+
+    It applies only where the match claimed identical *contents*. Picture matches are
+    resemblances -- a resized or re-encoded copy is meant to differ -- so they are unaffected,
+    as are matches made on names or tags. On the command line the same thing is ``--verify``.
+
 **Remember scan results between scans:**
     Reuses what the previous scan found when nothing has changed: folder listings, and in
     Picture mode the comparison results too. Re-reading folders is the slow part of scanning
