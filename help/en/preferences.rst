@@ -83,9 +83,17 @@ Preferences
 
 **Remember scan results between scans:**
     Reuses what the previous scan found when nothing has changed: folder listings, and in
-    Picture mode the comparison results too. Re-reading folders is the slow part of scanning
-    an external or network drive, and comparing a large photo library is slower still, so a
-    repeat scan of an unchanged drive becomes close to instant.
+    Picture mode the comparison results too.
+
+    Worth turning on for **external, network and other slow drives**, where re-reading folders
+    is the slow part of a scan and a repeat scan of an unchanged drive becomes close to
+    instant. In Picture mode it also skips comparing a large photo library again, which is
+    slower still and worth it far more widely.
+
+    It is not free, and on a *fast* drive it can cost more than it saves: checking each
+    remembered folder is still work, and on an internal disk that is quick to read anyway,
+    a measured scan came out a few percent slower with this on than with it off. If your
+    scans are of an internal drive and already quick, leave it off.
 
     Files added, removed or renamed are still noticed. A file edited *in place* without its
     folder changing may be missed until the next full scan, which is why this is off by

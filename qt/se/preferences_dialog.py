@@ -118,11 +118,12 @@ class PreferencesDialog(PreferencesDialogBase):
         self.cacheFileListBox.setToolTip(
             tr(
                 "Reuses what the last scan found when nothing has changed: folder listings, "
-                "and in Picture mode the comparison results too. This is the slow part of "
-                "scanning an external or network drive, and of comparing a large photo "
-                "library. Files added, removed or renamed are still noticed. A file edited in "
-                "place without its folder changing may be missed until the next full scan; "
-                "nothing is ever deleted on the basis of stale information."
+                "and in Picture mode the comparison results too. Worth it for external, "
+                "network and other slow drives, where re-reading folders is the slow part of "
+                "a scan; on a fast internal drive it can cost slightly more than it saves. "
+                "Files added, removed or renamed are still noticed. A file edited in place "
+                "without its folder changing may be missed until the next full scan; nothing "
+                "is ever deleted on the basis of stale information."
             )
         )
         self.verticalLayout_4.addWidget(self.cacheFileListBox)
