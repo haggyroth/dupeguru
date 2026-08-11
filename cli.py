@@ -56,6 +56,10 @@ Deletion:
     --full-verify    Re-read partial-hash matches and compare full content, discarding
                      any that turn out not to match. Removes the need for
                      --allow-partial-matches by making the matches certain.
+    --verify         Compare each file byte for byte against the one being kept,
+                     immediately before deleting it, and refuse any that differ. Costs a
+                     second read of both files. Applies only where the match claimed
+                     identical contents.
     --from-results F Re-use a prior JSON/NDJSON output instead of rescanning. Validates each
                      file's size and mtime before deleting; skips any that changed since the
                      prior scan. Combine with --delete --yes to act on saved results.
@@ -1049,6 +1053,17 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     knobs.add_argument(
+        "--verify",
+        action="store_true",
+        help=(
+            "Compare each file byte for byte against the one being kept, immediately before "
+            "deleting it, and refuse any that differ. Everything else reasons about digests, "
+            "which are a claim about content rather than the content itself. Costs a second "
+            "read of both files, so it is off by default. Only applies where the match claimed "
+            "identical contents; a picture match is a resemblance and is left alone."
+        ),
+    )
+    knobs.add_argument(
         "--trust-cache-ignore-mtime",
         "--rehash-ignore-mtime",  # old spelling, kept so existing scripts keep working
         dest="trust_cache_ignore_mtime",
@@ -1417,6 +1432,7 @@ def main(argv=None) -> int:
     app.options["large_size_threshold"] = args.max_size * 1024 * 1024  # MB -> bytes
     app.options["big_file_size_threshold"] = args.partial_hash_threshold * 1024 * 1024  # MiB -> bytes
     app.options["full_verify"] = args.full_verify
+    app.options["verify_before_delete"] = args.verify
     # The core option keeps its original name; only the CLI spelling changed.
     app.options["rehash_ignore_mtime"] = args.trust_cache_ignore_mtime
 

@@ -46,6 +46,9 @@ SHARED_SCAN_PREFS = [
     "ignore_hardlink_matches",
     "include_exists_check",
     "rehash_ignore_mtime",
+    # Not a scan option -- it is read at deletion time -- but it is a checkbox in
+    # every dialog, and the asymmetry this guard catches does not care which.
+    "verify_before_delete",
 ]
 MUSIC_ONLY_PREFS = [
     "scan_tag_track",

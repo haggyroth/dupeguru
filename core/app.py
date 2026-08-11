@@ -102,6 +102,7 @@ class DeleteStatus:
     SYMLINK = "symlink"  # path is now a symlink, which scans exclude
     UNREADABLE = "unreadable"  # stat() failed
     CHANGED = "changed"  # size or mtime differs from what the scan recorded
+    DIFFERS = "differs"  # byte comparison against the reference found a difference
 
 
 # 2-second tolerance covers FAT32's 2-second mtime resolution and NTFS rounding.
@@ -284,6 +285,10 @@ class DupeGuru(Broadcaster):
         # sent to the scanner. They don't have default values because those defaults values are
         # defined in the scanner class.
         self.options = {
+            # Off by default: it re-reads both files, doubling the I/O of a deletion. On by
+            # request it is the only thing that makes a deletion provably safe rather than
+            # safe on the strength of a digest (issue #188).
+            "verify_before_delete": False,
             "escape_filter_regexp": True,
             "clean_empty_dirs": False,
             "ignore_hardlink_matches": False,
@@ -400,6 +405,19 @@ class DupeGuru(Broadcaster):
             return
         if status != DeleteStatus.OK:
             raise OSError(message)
+        if self.options.get("verify_before_delete"):
+            # Imported here rather than at module scope: core.deletion_plan imports from this
+            # module, and a top-level import would be circular.
+            from core.deletion_plan import claims_byte_identity, verify_identical
+
+            group = self.results.get_group_of_duplicate(dupe)
+            if group is not None and claims_byte_identity(group, dupe):
+                if not verify_identical(dupe, group.ref):
+                    raise OSError(
+                        tr("'{}' does not have the same contents as '{}', so it was not deleted.").format(
+                            str(dupe.path), str(group.ref.path)
+                        )
+                    )
         str_path = str(dupe.path)
         link_tmp = None
         if link_deleted:

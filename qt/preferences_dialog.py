@@ -231,6 +231,20 @@ most users should not have to modify these."
         self.advanced_vlayout.addWidget(tab_label)
         self._setupAddCheckbox("include_exists_check_box", tr("Include existence check after scan completion"))
         self.advanced_vlayout.addWidget(self.include_exists_check_box)
+        # In the shared section rather than one mode's: deletion happens in every mode, and the
+        # option correctly does nothing where the match never claimed identical contents.
+        self._setupAddCheckbox("verify_before_delete_box", tr("Compare contents byte for byte before deleting"))
+        self.verify_before_delete_box.setToolTip(
+            tr(
+                "dupeGuru decides two files are identical by comparing digests, which summarise "
+                "the contents rather than being them. This re-reads both files and compares them "
+                "directly just before deleting, and refuses any that differ.\n\n"
+                "It doubles the reading a deletion does. It applies only where the match claimed "
+                "identical contents, so picture matches -- which are resemblances, not copies -- "
+                "are unaffected."
+            )
+        )
+        self.advanced_vlayout.addWidget(self.verify_before_delete_box)
         self._setupAddCheckbox("rehash_ignore_mtime_box", tr("Ignore difference in mtime when loading cached digests"))
         self.advanced_vlayout.addWidget(self.rehash_ignore_mtime_box)
 
@@ -354,6 +368,7 @@ most users should not have to modify these."
         if section & Sections.ADVANCED:
             setchecked(self.rehash_ignore_mtime_box, prefs.rehash_ignore_mtime)
             setchecked(self.include_exists_check_box, prefs.include_exists_check)
+            setchecked(self.verify_before_delete_box, prefs.verify_before_delete)
         if section & Sections.DEBUG:
             setchecked(self.debugModeBox, prefs.debug_mode)
             setchecked(self.profile_scan_box, prefs.profile_scan)
@@ -372,6 +387,7 @@ most users should not have to modify these."
         prefs.ignore_hardlink_matches = ischecked(self.ignoreHardlinkMatches)
         prefs.rehash_ignore_mtime = ischecked(self.rehash_ignore_mtime_box)
         prefs.include_exists_check = ischecked(self.include_exists_check_box)
+        prefs.verify_before_delete = ischecked(self.verify_before_delete_box)
         prefs.debug_mode = ischecked(self.debugModeBox)
         prefs.profile_scan = ischecked(self.profile_scan_box)
         prefs.reference_bold_font = ischecked(self.reference_bold_font)
