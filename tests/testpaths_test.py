@@ -90,6 +90,23 @@ def test_the_mutation_tree_is_not_collected(pytestconfig, testpaths):
     assert "mutants" not in testpaths
 
 
+#: pytest's own defaults, which setting norecursedirs replaces rather than extends.
+PYTEST_DEFAULT_NORECURSEDIRS = ["*.egg", ".*", "_darcs", "build", "CVS", "dist", "node_modules", "venv", "{arch}"]
+
+
+def test_overriding_norecursedirs_kept_pytest_s_defaults(pytestconfig):
+    """Setting norecursedirs replaces the defaults; forgetting one silently re-enables it.
+
+    ``.*`` is the one that matters and the easiest to lose, because it does not look like a
+    list of directories. It excludes *every* dot-directory, so enumerating .tox and .git by
+    hand -- which is the obvious thing to write -- quietly starts walking .venv, .pytest_cache
+    and anything else beginning with a dot.
+    """
+    configured = set(pytestconfig.getini("norecursedirs"))
+    missing = [name for name in PYTEST_DEFAULT_NORECURSEDIRS if name not in configured]
+    assert not missing, f"norecursedirs dropped pytest's defaults: {missing}"
+
+
 def test_the_mutation_tree_is_not_linted():
     """Same tree, same reason. pre-commit passes an explicit file list and never sees it, but
     tox runs a bare flake8, which would lint every generated file under mutants/."""

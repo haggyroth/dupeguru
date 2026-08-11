@@ -24,9 +24,27 @@ skip_gitignore = true
 # those explicit lists become a convenience rather than the thing holding the suite together.
 testpaths = ["core", "hscommon", "qt", "tests"]
 # testpaths is enough on its own for a bare `pytest`, but norecursedirs also covers `pytest .`
-# and an explicit path that contains the copy. Overriding this replaces pytest's defaults
-# rather than adding to them, so the ones worth keeping are repeated here.
-norecursedirs = ["mutants", "env*", "build", "dist", "pkg", ".tox", ".git", "*.egg"]
+# and an explicit path that contains the copy.
+#
+# Setting this *replaces* pytest's defaults rather than adding to them, so they are repeated
+# verbatim and the three we care about are appended. Note `.*`, which is doing more work than
+# it looks like: it excludes every dot-directory, so enumerating .tox and .git by hand would
+# quietly stop excluding .venv, .pytest_cache and the rest.
+norecursedirs = [
+    "*.egg",
+    ".*",
+    "_darcs",
+    "build",
+    "CVS",
+    "dist",
+    "node_modules",
+    "venv",
+    "{arch}",
+    # Ours: mutmut's generated copy, the Makefile's virtualenv, and the packaging output.
+    "mutants",
+    "env*",
+    "pkg",
+]
 # ResourceWarning is escalated where it can be. Note the limit, because it is easy to assume
 # more protection than this gives: sqlite3 and file objects emit ResourceWarning from their
 # finalisers, and an exception raised there is swallowed by the interpreter, so a leaked
