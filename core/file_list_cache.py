@@ -15,6 +15,27 @@ volume (issue #28):
 A second touch is ~3,000x faster: the whole cost is the device serving metadata it has not
 served yet. Collecting that corpus takes 31-92 minutes before a byte is hashed.
 
+Where it does not pay, measured since (issue #220). On Windows, a 45,837-file corpus on a
+plain NTFS volume on an internal SATA HDD, caches evicted between runs:
+
+    cold collection             ~3,230 files/s
+    warm collection             ~4,035 files/s
+    with this cache, full hit    3,148 files/s
+
+Cold collection there is 15-43x faster than the cold figure above, so the cold-to-warm ratio
+is about 1.25x rather than ~3,000x -- and a *total* cache hit came out ~6.6% slower than not
+using the cache at all. Every one of the 2,979 directories was served from cache and none was
+re-read; validating that many directory mtimes and reading a 22.7 MB SQLite database simply
+costs more than letting NTFS stream 45,837 MFT entries.
+
+The two measurements differ in more than one variable -- external vs internal, exFAT vs NTFS,
+macOS vs Windows -- so the gap is not attributable to any one of them, and the NTFS result is
+n=1 per condition on one machine. What it does establish is that **the saving this is priced
+against is a property of the volume, not of the feature**: where the first touch is already
+cheap, there is nothing to save and the cache is pure overhead. The device this helps is a
+slow or high-latency one -- external, network, spinning-up -- which is what the user-facing
+description now says rather than promising a fast repeat scan everywhere.
+
 Three fixes were measured and rejected before arriving here. Threads gave 1.0x (16, 64 and
 128 workers all matched serial -- the resource is serialized below us). Halving the
 syscalls per file gave 0.96x (the second call hits the cache the first populated). And
@@ -39,7 +60,9 @@ What that can and cannot cause:
   stale size groups a file wrongly.
 
 Under-reporting rather than over-reporting is the safe direction, but it is still a real
-behaviour change, which is why this is opt-in rather than the default.
+behaviour change, which is why this is opt-in rather than the default. The NTFS figures above
+are a second reason to leave it that way: a default-on cache would be a small tax on every
+user whose volume is already fast, paid to solve a problem they do not have.
 """
 
 import logging
