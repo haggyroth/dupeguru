@@ -94,6 +94,10 @@ def _apply_digest(f, digest, size, bigsize):
 class Scanner:
     def __init__(self):
         self.discarded_file_count = 0
+        # Every stage that gave up early during the last scan. Carried out of the scan the same
+        # way discarded_file_count is, because the front ends need it for the same reason:
+        # a number the results alone cannot tell you (issue #180).
+        self.scan_report = engine.ScanReport()
         self.parallel_scan = (os.cpu_count() or 1) > 1
         # Populated by _verify_partial_matches when full_verify is on.
         self.discarded_partial_count = 0
@@ -256,7 +260,9 @@ class Scanner:
                 if candidates:
                     j.start_job(len(candidates), tr("Checking hash cache"))
                     self._hash_files_parallel(candidates, j, bigsize=self.big_file_size_threshold)
-            return engine.getmatches_by_contents(files, bigsize=self.big_file_size_threshold, j=j)
+            return engine.getmatches_by_contents(
+                files, bigsize=self.big_file_size_threshold, j=j, report=self.scan_report
+            )
         else:
             j = j.start_subjob([2, 8])
             kw = {}
@@ -283,7 +289,7 @@ class Scanner:
             for f in j.iter_with_progress(files, tr("Read metadata of %d/%d files")):
                 logging.debug("Reading metadata of %s", f.path)
                 f.words = func(f)
-            return engine.getmatches(files, j=j, **kw)
+            return engine.getmatches(files, j=j, report=self.scan_report, **kw)
 
     @staticmethod
     def _key_func(dupe):
@@ -374,7 +380,7 @@ class Scanner:
         if ignore_list:
             matches = [m for m in matches if not ignore_list.are_ignored(str(m.first.path), str(m.second.path))]
         logging.info("Grouping matches")
-        groups = engine.get_groups(matches)
+        groups = engine.get_groups(matches, report=self.scan_report)
         if self.scan_type in {
             ScanType.FILENAME,
             ScanType.FIELDS,

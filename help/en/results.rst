@@ -65,6 +65,22 @@ before acting. Reference files and files in Reference folders are never marked b
 On the command line, ``--plan`` reports the same tiers, per group and as a total, so a scripted
 cleanup can act on exactly the set you reviewed in the window.
 
+When a scan could not be completed
+----------------------------------
+
+Very occasionally dupeGuru runs out of room part way through a scan — most often on a folder
+containing a very large number of identical files. When that happens it keeps what it has found
+rather than failing outright, and **tells you the results are incomplete** before showing them.
+
+Take that message seriously. The duplicates listed are real, but there are almost certainly more
+that were never found, so a folder cleared out on the basis of an incomplete scan is not
+finished. Scanning fewer folders at a time usually gets through it.
+
+On the command line the same situation prints a warning to stderr, and the statistics carry
+``truncated`` along with a ``truncations`` list naming the stage that stopped. Those fields are
+present on every scan, so a script can check whether the results are complete rather than
+assuming they are.
+
 Marking and Selecting
 ---------------------
 

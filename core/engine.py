@@ -33,6 +33,51 @@ PROGRESS_MESSAGE = tr("%d matches found from %d groups")
 GETMATCHES_LIMIT = 5_000_000  # max matches returned by getmatches(); override for tests
 
 
+class ScanReport:
+    """Records the places a scan gave up, so an incomplete result cannot pass for a complete one.
+
+    Matching and grouping both degrade rather than fail when they run out of room: they keep
+    what they have and carry on. That is a reasonable choice -- half an answer beats a traceback
+    -- but it was only ever written to the log, so the user saw a finished scan reporting fewer
+    duplicates than exist, with nothing to suggest otherwise. Someone could delete what was
+    found, believe the folder was deduplicated, and be wrong (issue #180).
+
+    So every one of those places records here instead, and the front ends read it. Deliberately
+    a plain object passed down rather than module state: two scans must not see each other's
+    truncations, and a test must be able to assert on one scan's report.
+    """
+
+    #: Why a stage stopped early, in words, keyed by the reason a stage passes in.
+    REASONS = {
+        "memory": "ran out of memory",
+        "limit": "reached the maximum number of matches it can hold",
+    }
+
+    def __init__(self):
+        self.truncations = []
+
+    def record_truncation(self, stage: str, reason: str, kept: int) -> None:
+        """Note that *stage* stopped early, keeping only *kept* of what it would have found."""
+        self.truncations.append({"stage": stage, "reason": reason, "kept": kept})
+
+    @property
+    def truncated(self) -> bool:
+        return bool(self.truncations)
+
+    def describe(self) -> list:
+        """The truncations as human-readable lines, without a leading label.
+
+        Shared so the window and the command line cannot describe the same incomplete scan
+        differently.
+        """
+        return [
+            "{} {}, and stopped after {:,} match(es)".format(
+                entry["stage"], self.REASONS.get(entry["reason"], entry["reason"]), entry["kept"]
+            )
+            for entry in self.truncations
+        ]
+
+
 def getwords(s):
     # We decompose the string so that ascii letters with accents can be part of the word.
     s = normalize("NFD", s)
@@ -266,6 +311,7 @@ def getmatches(
     weight_words=False,
     no_field_order=False,
     j=job.nulljob,
+    report=None,
 ):
     """Returns a list of :class:`Match` within ``objects`` after fuzzily matching their words.
 
@@ -352,6 +398,11 @@ def getmatches(
                             if m.percentage >= min_match_percentage:
                                 result.append(m)
                                 if len(result) >= GETMATCHES_LIMIT:
+                                    # A cap, not a failure -- but the caller still receives a
+                                    # partial answer, which is the thing that must not pass for
+                                    # a complete one.
+                                    if report is not None:
+                                        report.record_truncation("name matching", "limit", len(result))
                                     return result
                 word_count += 1
                 j.add_progress(desc=PROGRESS_MESSAGE % (len(result), word_count))
@@ -359,6 +410,8 @@ def getmatches(
             # This is the place where the memory usage is at its peak during the scan.
             # Just continue the process with an incomplete list of matches.
             logging.warning("Memory Overflow. Matches: %d. Word dict: %d" % (len(result), len(word_dict)))
+            if report is not None:
+                report.record_truncation("name matching", "memory", len(result))
             return result
         finally:
             _pairs_conn.close()
@@ -370,7 +423,7 @@ def getmatches(
         return result
 
 
-def getmatches_by_contents(files, bigsize=0, j=job.nulljob):
+def getmatches_by_contents(files, bigsize=0, j=job.nulljob, report=None):
     """Returns a list of :class:`Match` within ``files`` if their contents is the same.
 
     :param bigsize: The size in bytes over which we consider files big enough to
@@ -413,6 +466,8 @@ def getmatches_by_contents(files, bigsize=0, j=job.nulljob):
     except MemoryError:
         del candidate_groups
         logging.warning("Memory Overflow. Matches: %d. Groups processed: %d" % (len(result), group_count))
+        if report is not None:
+            report.record_truncation("content matching", "memory", len(result))
     return result
 
 
@@ -594,7 +649,7 @@ class Group:
             return self[0]
 
 
-def get_groups(matches):
+def get_groups(matches, report=None):
     """Returns a list of :class:`Group` from ``matches``.
 
     Create groups out of match pairs in the smartest way possible.
@@ -631,6 +686,10 @@ def get_groups(matches):
         del matches
         # should free enough memory to continue
         logging.warning(f"Memory Overflow. Groups: {len(groups)}")
+        # Distinct from the matching stages above: every pair may have been found and the
+        # grouping of them still be incomplete, so a scan can be truncated here alone.
+        if report is not None:
+            report.record_truncation("grouping", "memory", len(groups))
     # Now that we have a group, we have to discard groups' matches and see if there're any "orphan"
     # matches, that is, matches that were candidate in a group but that none of their 2 files were
     # accepted in the group. With these orphan groups, it's safe to build additional groups

@@ -252,6 +252,7 @@ def _run_scan(app: DupeGuru, verbose: bool, progress_json: bool = False) -> None
 
     app.results.groups = scanner.get_dupe_groups(files, app.ignore_list, j)
     app.discarded_file_count = scanner.discarded_file_count
+    app.scan_report = scanner.scan_report
     app.discarded_partial_count = scanner.discarded_partial_count
     app.verified_partial_count = scanner.verified_partial_count
 
@@ -394,6 +395,10 @@ def _results_stats(app: DupeGuru, groups: list[dict]) -> dict:
         "total_duplicate_size_bytes": totals.total_bytes,
         "partial_matches": sum(1 for g in groups for d in g["duplicates"] if d["partial_match"]),
         "discarded_files": app.discarded_file_count,
+        # False for every complete scan, which is nearly all of them. Present unconditionally
+        # so a consumer can rely on reading it rather than inferring completeness from silence.
+        "truncated": app.scan_report.truncated,
+        "truncations": list(app.scan_report.truncations),
         # Reclaimable equals total_duplicate_size_bytes by construction (the reference always
         # stays); it is named explicitly because that equality is a fact worth stating rather
         # than a coincidence a reader has to rederive.
@@ -1522,6 +1527,15 @@ def main(argv=None) -> int:
         return EXIT_SCAN_ERROR
 
     group_count = len(app.results.groups)
+
+    # Unconditional, not behind --verbose: a truncated scan found fewer duplicates than exist,
+    # and a caller acting on the output needs to know that whether or not they asked for
+    # chatter. Goes to stderr so it cannot corrupt the JSON on stdout.
+    if app.scan_report.truncated:
+        print("warning: this scan could not be completed, so the results are incomplete:", file=sys.stderr)
+        for line in app.scan_report.describe():
+            print(f"warning:   {line}", file=sys.stderr)
+        print("warning: more duplicates probably exist. Scan fewer folders at once.", file=sys.stderr)
 
     if args.verbose:
         discarded = app.discarded_file_count

@@ -30,7 +30,7 @@ from core import sensitive_paths
 from core.confidence import classify_group
 from core.pe.photo import get_delta_dimensions
 from core.util import cmp_value, fix_surrogate_encoding
-from core import directories, results, export, fs, prioritize
+from core import directories, engine, results, export, fs, prioritize
 from core.ignore import IgnoreList
 from core.exclude import ExcludeDict as ExcludeList
 from core.scanner import ScanType
@@ -263,6 +263,7 @@ class DupeGuru(Broadcaster):
             os.makedirs(self.appdata)
         self.app_mode = AppMode.STANDARD
         self.discarded_file_count = 0
+        self.scan_report = engine.ScanReport()
         # Set by the scanner when the full_verify option is on; both stay 0 otherwise.
         self.discarded_partial_count = 0
         self.verified_partial_count = 0
@@ -578,6 +579,17 @@ class DupeGuru(Broadcaster):
             from core.hash_cache import hashcachedb
 
             hashcachedb.commit()
+            # Said before the results appear, not after. An incomplete result that looks
+            # complete is the whole of issue #180: the user would otherwise act on a short list
+            # believing the folder was fully searched.
+            if self.scan_report.truncated:
+                self.view.show_message(
+                    tr(
+                        "This scan could not be completed, so these results are incomplete "
+                        "and more duplicates probably exist:\n\n{}\n\n"
+                        "Scanning fewer folders at once will usually get through it."
+                    ).format("\n".join(self.scan_report.describe()))
+                )
             if not self.results.groups:
                 self.view.show_message(tr("No duplicates found."))
             else:
@@ -1292,6 +1304,7 @@ class DupeGuru(Broadcaster):
             self.folder_file_counts = count_files_per_folder(files, [str(path) for path in self.directories])
             self.results.groups = scanner.get_dupe_groups(files, self.ignore_list, j)
             self.discarded_file_count = scanner.discarded_file_count
+            self.scan_report = scanner.scan_report
             self.discarded_partial_count = getattr(scanner, "discarded_partial_count", 0)
             self.verified_partial_count = getattr(scanner, "verified_partial_count", 0)
             if profile_scan:
