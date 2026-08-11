@@ -131,8 +131,13 @@ class TestSummaryWording:
         return DeletionPlan(**fields)
 
     def test_trash_and_permanent_deletion_are_worded_differently(self):
-        assert "send to trash" in summarize_plan(self._plan(), direct_delete=False)[0]
+        # Asked for rather than spelled out: the trashing verb names the Recycle Bin on Windows
+        # and the trash elsewhere (#215), so a literal here would pass on one platform only.
+        from core.trash import deletion_verb
+
+        assert deletion_verb(False) in summarize_plan(self._plan(), direct_delete=False)[0]
         assert "permanently delete" in summarize_plan(self._plan(), direct_delete=True)[0]
+        assert deletion_verb(False) != deletion_verb(True)
 
     def test_a_clean_plan_says_nothing_about_skips_or_clones(self):
         lines = summarize_plan(self._plan())

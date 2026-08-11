@@ -23,6 +23,7 @@ from qtpy.QtWidgets import (
     QCheckBox,
 )
 
+from hscommon import plat
 from hscommon.trans import trget
 from qt.util import move_to_screen_center, horizontal_wrap, create_actions
 from qt.search_edit import SearchEdit
@@ -40,6 +41,16 @@ from qt.me.results_model import ResultsModel as ResultsModelMusic
 from qt.pe.results_model import ResultsModel as ResultsModelPicture
 
 tr = trget("ui")
+
+
+def _send_marked_label() -> str:
+    """The Actions entry that starts a deletion, named for the platform (#215).
+
+    Kept here rather than beside its siblings in core/trash.py because this module translates
+    against the "ui" domain: both variants are already in ui.po, in 22 languages, and looking
+    them up under "core" would find nothing and silently fall back to English.
+    """
+    return tr("Send Marked to Recycle Bin...") if plat.ISWINDOWS else tr("Send Marked to Trash...")
 
 
 class ResultWindow(QMainWindow):
@@ -98,7 +109,7 @@ class ResultWindow(QMainWindow):
                 "actionDeleteMarked",
                 "Ctrl+D",
                 "",
-                tr("Send Marked to Recycle Bin..."),
+                _send_marked_label(),
                 self.deleteTriggered,
             ),
             (

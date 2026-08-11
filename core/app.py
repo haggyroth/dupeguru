@@ -38,7 +38,7 @@ from core.gui.deletion_options import DeletionOptions
 from core.deletion_log import DeletionLog, DeletionRecord, default_log_path
 from core.folder_overlap import count_files_per_folder
 from core.scan_profile import ProfileStore, ScanProfile, ScanProfileError
-from core.trash import trash_file
+from core.trash import all_sent_message, sending_job_title, trash_file
 from core.gui.details_panel import DetailsPanel
 from core.gui.directory_tree import DirectoryTree
 from core.gui.ignore_list_dialog import IgnoreListDialog
@@ -87,7 +87,7 @@ JOBID2TITLE = {
     JobType.LOAD: tr("Loading"),
     JobType.MOVE: tr("Moving"),
     JobType.COPY: tr("Copying"),
-    JobType.DELETE: tr("Sending to Trash"),
+    JobType.DELETE: sending_job_title(),
 }
 
 
@@ -640,7 +640,7 @@ class DupeGuru(Broadcaster):
                 elif jobid == JobType.DELETE and self.deletion_options.direct:
                     msg = tr("All marked files were deleted successfully.")
                 else:
-                    msg = tr("All marked files were successfully sent to Trash.")
+                    msg = all_sent_message()
                 self.view.show_message(msg)
 
     def _job_error(self, jobid, err):
