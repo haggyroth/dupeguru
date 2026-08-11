@@ -1495,7 +1495,10 @@ class TestJobCompleted:
         dgapp, _ = self._app()
         dgapp.deletion_options.direct = False
         dgapp._job_completed(app.JobType.DELETE)
-        assert dgapp.view.messages == ["All marked files were successfully sent to Trash."]
+        # Asked for, not spelled out: the report names the Recycle Bin on Windows (#215).
+        from core.trash import all_sent_message
+
+        assert dgapp.view.messages == [all_sent_message()]
 
     def test_move_and_delete_refresh_the_results(self):
         """`if jobid in {MOVE, DELETE}` -- inverting it survived mutation testing.
