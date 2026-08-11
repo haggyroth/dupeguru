@@ -116,10 +116,18 @@ def test_the_app_takes_the_report_from_the_scanner_after_a_real_scan(tmp_path, m
     # Run the scan job synchronously instead of on the progress window's thread.
     monkeypatch.setattr(dgapp, "_start_job", lambda jobid, func, args=(): func(jobmod.nulljob, *args))
 
-    def explode(*args, **kwargs):
-        raise MemoryError
+    from collections import defaultdict as real_defaultdict
 
-    monkeypatch.setattr(core_app.engine.itertools, "combinations", explode)
+    calls = {"n": 0}
+
+    def exploding(*args, **kwargs):
+        # Inside content_classes' per-bucket loop, which is where a contents scan now gives up.
+        calls["n"] += 1
+        if calls["n"] > 1:
+            raise MemoryError
+        return real_defaultdict(*args, **kwargs)
+
+    monkeypatch.setattr(core_app.engine, "defaultdict", exploding)
 
     dgapp.start_scanning()
 
@@ -131,6 +139,11 @@ def test_grouping_truncation_reaches_the_app_through_a_real_scan(tmp_path, monke
 
     Every pair can be found and the grouping of them still be incomplete, so a scan can be
     truncated here alone -- with matching having reported nothing at all.
+
+    Driven through a filename scan rather than a contents scan on purpose. A contents scan now
+    builds its groups from equivalence classes and never calls ``add_match`` for them, so
+    grouping has nothing left to run out of memory over -- which is the point of that change,
+    and means this guarantee has to be pinned on the route that still goes pair by pair.
     """
     from hscommon.jobprogress import job as jobmod
 
@@ -138,12 +151,12 @@ def test_grouping_truncation_reaches_the_app_through_a_real_scan(tmp_path, monke
     from core.hash_cache import hashcachedb
     from core.scanner import ScanType
 
-    (tmp_path / "a.txt").write_bytes(b"same")
-    (tmp_path / "b.txt").write_bytes(b"same")
+    (tmp_path / "holiday photo.txt").write_bytes(b"one")
+    (tmp_path / "holiday photo copy.txt").write_bytes(b"two")
 
     dgapp = TestApp().app
     dgapp.view = _View()
-    dgapp.options["scan_type"] = ScanType.CONTENTS
+    dgapp.options["scan_type"] = ScanType.FILENAME
     dgapp.directories.add_path(tmp_path)
     monkeypatch.setattr(fs.filesdb, "purge_if_stale", lambda: None)
     monkeypatch.setattr(hashcachedb, "purge_if_stale", lambda: None)

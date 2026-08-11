@@ -569,6 +569,73 @@ def getmatches_by_contents(files, bigsize=0, j=job.nulljob, report=None):
     return matches_from_classes(classes, report=report)
 
 
+class UniformMatches:
+    """The match set of a group whose members are all identical, without storing it.
+
+    k files established as byte-identical produce k(k-1)/2 matches that differ only in their two
+    endpoints: every one is the same percentage, the same kind, and the same partial flag. So
+    the set is *fully determined* by the members and one descriptor, and materialising it stores
+    284 million namedtuples to describe a cluster of 23,857 files -- about 23 GiB, for one fact
+    (issue #180).
+
+    This is a representation change rather than an approximation. Every pair the real set would
+    contain is yielded here, with identical values; nothing is dropped or invented. What it
+    avoids is keeping them alive between the scan and the moment somebody asks.
+
+    Membership is read from the group's own ``ordered`` list rather than copied, so reordering
+    -- which ``prioritize`` and ``switch_ref`` both do, and which changes which matches contain
+    the reference -- needs no invalidation here.
+    """
+
+    __slots__ = ("_ordered", "percentage", "partial", "kind")
+
+    def __init__(self, ordered, percentage, partial, kind):
+        self._ordered = ordered
+        self.percentage = percentage
+        self.partial = partial
+        self.kind = kind
+
+    def _pair(self, first, second):
+        return Match(first, second, self.percentage, partial=self.partial, kind=self.kind)
+
+    def __iter__(self):
+        for first, second in itertools.combinations(self._ordered, 2):
+            yield self._pair(first, second)
+
+    def __len__(self):
+        k = len(self._ordered)
+        return k * (k - 1) // 2
+
+    def __bool__(self):
+        return len(self._ordered) > 1
+
+    def __contains__(self, match):
+        try:
+            first, second, percentage, partial, kind = match
+        except (TypeError, ValueError):
+            return False
+        if (percentage, partial, kind) != (self.percentage, self.partial, self.kind):
+            return False
+        members = self._ordered
+        return first is not second and first in members and second in members
+
+    def matches_for(self, item):
+        """Every match containing *item*. O(k), and the only iteration order that matters."""
+        return [self._pair(item, other) for other in self._ordered if other is not item]
+
+    def match_between(self, first, second):
+        return self._pair(first, second)
+
+    def materialise(self) -> set:
+        """A real set of every match, for the paths that need to mutate one.
+
+        Quadratic by definition. Reached only when something adds a match to a group built from
+        an equivalence class, which the scanner never does -- it is here so that no caller can
+        silently get a half-working set instead of the memory it asked for.
+        """
+        return set(self)
+
+
 class Group:
     """A group of :class:`~core.fs.File` that match together.
 
@@ -601,6 +668,26 @@ class Group:
     def __init__(self):
         self._clear()
 
+    @classmethod
+    def from_identical(cls, files, percentage=100, partial=False, kind=MatchKind.EXACT):
+        """A group whose members are already known to be identical to each other.
+
+        Built directly rather than by feeding pairs to :meth:`add_match`, which exists to work
+        out *whether* a file belongs -- it admits one only once it matches every current member.
+        For an equivalence class that question is already answered, and answering it again costs
+        the k(k-1)/2 pairs this whole path exists to avoid.
+        """
+        group = cls()
+        group.ordered = list(files)
+        group.unordered = set(files)
+        group.matches = UniformMatches(group.ordered, percentage, partial, kind)
+        return group
+
+    @property
+    def is_uniform(self):
+        """Whether this group's matches are derived from its members rather than stored."""
+        return isinstance(self.matches, UniformMatches)
+
     def __contains__(self, item):
         return item in self.unordered
 
@@ -625,7 +712,10 @@ class Group:
     def _get_matches_for_ref(self):
         if self._matches_for_ref is None:
             ref = self.ref
-            self._matches_for_ref = [match for match in self.matches if ref in match]
+            if self.is_uniform:
+                self._matches_for_ref = self.matches.matches_for(ref)
+            else:
+                self._matches_for_ref = [match for match in self.matches if ref in match]
         return self._matches_for_ref
 
     # ---Public
@@ -663,6 +753,11 @@ class Group:
 
         You can call this after the duplicate scanning process to free a bit of memory.
         """
+        if self.is_uniform:
+            # Every match is between two current members by construction, so none is an orphan.
+            # Materialising the set to discover that would defeat the point of the class.
+            self.candidates = defaultdict(set)
+            return set()
         discarded = {m for m in self.matches if not all(obj in self.unordered for obj in [m.first, m.second])}
         self.matches -= discarded
         self.candidates = defaultdict(set)
@@ -672,6 +767,11 @@ class Group:
         """Returns the match pair between ``item`` and :attr:`ref`."""
         if item is self.ref:
             return
+        if self.is_uniform:
+            # Answered directly. Returning None here instead would be quietly dangerous:
+            # core/deletion_plan.py reads a missing match as partial=False, so a sampled-hash
+            # duplicate would be reported as fully compared and slip past the partial-match gate.
+            return self.matches.match_between(self.ref, item) if item in self.unordered else None
         for m in self._get_matches_for_ref():
             if item in m:
                 return m
@@ -709,8 +809,10 @@ class Group:
             self._percentage = None
             self._matches_for_ref = None
             if (len(self) > 1) and any(not getattr(item, "is_ref", False) for item in self):
-                if discard_matches:
+                if discard_matches and not self.is_uniform:
                     self.matches = {m for m in self.matches if item not in m}
+                # A uniform group needs nothing here: its matches are read from `ordered`, which
+                # the removal above has already updated.
             else:
                 self._clear()
         except ValueError:
@@ -735,8 +837,13 @@ class Group:
     def percentage(self):
         if self._percentage is None:
             if self.dupes:
-                matches = self._get_matches_for_ref()
-                self._percentage = sum(match.percentage for match in matches) // len(matches)
+                if self.is_uniform:
+                    # Every match carries the same percentage, so the mean is that value. Going
+                    # through the matches would be O(k) to rediscover a constant.
+                    self._percentage = self.matches.percentage
+                else:
+                    matches = self._get_matches_for_ref()
+                    self._percentage = sum(match.percentage for match in matches) // len(matches)
             else:
                 self._percentage = 0
         return self._percentage
