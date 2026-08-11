@@ -28,6 +28,7 @@ plausible fallbacks are both wrong: copying would double the space this is meant
 and deleting would destroy the file the user was promised would survive.
 """
 
+import contextlib
 import ctypes
 import ctypes.util
 import errno
@@ -107,23 +108,36 @@ def clone_file(source: os.PathLike, dest: os.PathLike) -> None:
     if _ISLINUX and fcntl is not None:
         src_fd = os.open(src, os.O_RDONLY)
         try:
+            # Unlike clonefile(2), FICLONE needs the destination to exist before it can clone
+            # into it -- so from here on there is a file at dst that this function created,
+            # and every failure below has to remove it. On ext4, on XFS without reflink, or
+            # across two filesystems, the ioctl *always* fails; leaving the destination behind
+            # meant one zero-byte .dupeguru-link per duplicate the user tried to clone.
             dst_fd = os.open(dst, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             try:
                 try:
-                    fcntl.ioctl(dst_fd, _FICLONE, src_fd)
-                except OSError as e:
-                    if e.errno in (errno.ENOTSUP, errno.EXDEV, errno.EOPNOTSUPP, errno.EINVAL):
-                        raise CloneNotSupportedError(e.errno, os.strerror(e.errno), src) from e
-                    raise
-            finally:
-                os.close(dst_fd)
+                    try:
+                        fcntl.ioctl(dst_fd, _FICLONE, src_fd)
+                    except OSError as e:
+                        if e.errno in (errno.ENOTSUP, errno.EXDEV, errno.EOPNOTSUPP, errno.EINVAL):
+                            raise CloneNotSupportedError(e.errno, os.strerror(e.errno), src) from e
+                        raise
+                finally:
+                    os.close(dst_fd)
+                # FICLONE copies data only; carry the mode and timestamps over so the clone is
+                # a faithful stand-in for the file it replaces.
+                st = os.stat(src)
+                os.chmod(dst, st.st_mode)
+                os.utime(dst, ns=(st.st_atime_ns, st.st_mtime_ns))
+            except BaseException:
+                # Covers the metadata calls as well as the ioctl: a destination that exists but
+                # is not a finished clone is litter either way. BaseException so that a
+                # KeyboardInterrupt mid-clone does not leave one behind.
+                with contextlib.suppress(OSError):
+                    os.unlink(dst)
+                raise
         finally:
             os.close(src_fd)
-        # FICLONE copies data only; carry the mode and timestamps over so the clone is a
-        # faithful stand-in for the file it replaces.
-        st = os.stat(src)
-        os.chmod(dst, st.st_mode)
-        os.utime(dst, ns=(st.st_atime_ns, st.st_mtime_ns))
         return
 
     raise CloneNotSupportedError(errno.ENOTSUP, "cloning is not supported on this platform", src)
@@ -152,5 +166,10 @@ def can_clone(source: os.PathLike, dest_dir: os.PathLike) -> bool:
     finally:
         try:
             os.unlink(probe)
+        except FileNotFoundError:
+            # Expected on the unsupported path: clone_file removes a destination it could not
+            # finish, so there is nothing left to clean up here. Warning about it would fire on
+            # every ext4 machine, for the case this function exists to detect.
+            pass
         except OSError:
             logging.warning("Could not remove clone probe %r", probe)

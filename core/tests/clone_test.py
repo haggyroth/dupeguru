@@ -12,6 +12,8 @@ because it is the entire difference between a clone and a hardlink, and the reas
 safe to offer where linking is not.
 """
 
+import errno
+import logging
 import os
 
 import pytest
@@ -109,6 +111,129 @@ class TestPlatformsWithoutCloning:
         source.write_bytes(b"x")
         with pytest.raises(clone.CloneNotSupportedError):
             clone.clone_file(source, tmp_path / "d.bin")
+
+
+class TestFailedCloneLeavesNothingBehind:
+    """A clone that could not be made must not leave a destination (issue #202).
+
+    FICLONE needs the destination to exist before it can clone into it, so the Linux path
+    creates the file and only then discovers whether the filesystem can do the work. On ext4,
+    on XFS without reflink, or across two filesystems, it never can -- and the destination
+    used to survive the failure. ``_do_delete_dupe`` builds the clone at ``<name>``
+    ``.dupeguru-link`` *before* deleting anything, and its cleanup lives in the ``except``
+    around the deletion, which that failure never reaches. Result: one zero-byte file beside
+    every duplicate the user tried to clone, and ``_unused_link_path`` then counted around the
+    litter (``.dupeguru-link1``, ``.dupeguru-link2``, ...) rather than reusing it.
+
+    These drive the Linux branch with a stub ``fcntl`` so the unsupported case is reachable on
+    a filesystem that supports cloning perfectly well.
+    """
+
+    @staticmethod
+    def _fake_fcntl(exc):
+        """A stand-in for the fcntl module whose ioctl always fails with *exc*."""
+
+        class FakeFcntl:
+            @staticmethod
+            def ioctl(fd, request, arg):
+                raise exc
+
+        return FakeFcntl
+
+    def _linux_with_failing_ioctl(self, monkeypatch, exc):
+        monkeypatch.setattr(clone, "_clonefile", None)
+        monkeypatch.setattr(clone, "_ISLINUX", True)
+        monkeypatch.setattr(clone, "fcntl", self._fake_fcntl(exc))
+
+    @pytest.mark.parametrize(
+        "err",
+        [errno.ENOTSUP, errno.EXDEV, errno.EOPNOTSUPP, errno.EINVAL],
+        ids=["enotsup", "exdev", "eopnotsupp", "einval"],
+    )
+    def test_unsupported_filesystem_leaves_no_destination(self, tmp_path, monkeypatch, err):
+        """ext4 and a cross-filesystem pair both land here, and both used to litter."""
+        self._linux_with_failing_ioctl(monkeypatch, OSError(err, os.strerror(err)))
+        source = tmp_path / "s.bin"
+        source.write_bytes(b"A" * 4096)
+        dest = tmp_path / "s.bin.dupeguru-link"
+
+        with pytest.raises(clone.CloneNotSupportedError):
+            clone.clone_file(source, dest)
+
+        assert not dest.exists(), "a zero-byte destination was left behind"
+        assert set(os.listdir(tmp_path)) == {"s.bin"}
+
+    def test_an_unexpected_oserror_also_leaves_no_destination(self, tmp_path, monkeypatch):
+        """A full disk or a permission problem is not a support problem, but still litters."""
+        self._linux_with_failing_ioctl(monkeypatch, OSError(errno.ENOSPC, "No space left on device"))
+        source = tmp_path / "s.bin"
+        source.write_bytes(b"A" * 4096)
+        dest = tmp_path / "out.bin"
+
+        with pytest.raises(OSError) as exc:
+            clone.clone_file(source, dest)
+        assert not isinstance(exc.value, clone.CloneNotSupportedError)
+        assert not dest.exists()
+
+    def test_a_keyboard_interrupt_mid_clone_leaves_no_destination(self, tmp_path, monkeypatch):
+        """Cleanup is on BaseException, so cancelling a long deletion does not litter either."""
+        self._linux_with_failing_ioctl(monkeypatch, KeyboardInterrupt())
+        source = tmp_path / "s.bin"
+        source.write_bytes(b"A" * 4096)
+        dest = tmp_path / "out.bin"
+
+        with pytest.raises(KeyboardInterrupt):
+            clone.clone_file(source, dest)
+        assert not dest.exists()
+
+    def test_failing_metadata_copy_leaves_no_half_made_clone(self, tmp_path, monkeypatch):
+        """A destination that exists but is not a finished clone is litter too.
+
+        The ioctl succeeds here and the chmod does not, which is the one path that leaves a
+        destination with real content rather than zero bytes. Still not a clone the caller
+        asked for, so it goes.
+        """
+        monkeypatch.setattr(clone, "_clonefile", None)
+        monkeypatch.setattr(clone, "_ISLINUX", True)
+
+        class FakeFcntl:
+            @staticmethod
+            def ioctl(fd, request, arg):
+                os.write(fd, b"A" * 4096)  # stand in for the blocks FICLONE would share
+
+        monkeypatch.setattr(clone, "fcntl", FakeFcntl)
+
+        def boom(*args, **kwargs):
+            raise OSError(errno.EPERM, "Operation not permitted")
+
+        monkeypatch.setattr(clone.os, "chmod", boom)
+
+        source = tmp_path / "s.bin"
+        source.write_bytes(b"A" * 4096)
+        dest = tmp_path / "out.bin"
+
+        with pytest.raises(OSError):
+            clone.clone_file(source, dest)
+        assert not dest.exists()
+
+    def test_can_clone_does_not_warn_when_the_probe_was_already_cleaned(self, tmp_path, monkeypatch, caplog):
+        """The regression this fix could have introduced.
+
+        can_clone's ``finally`` unlinks its probe and warns when it cannot. Now that
+        clone_file removes a destination it could not finish, that unlink raises
+        FileNotFoundError on the unsupported path -- which would have logged a warning on
+        every ext4 machine, for the exact case can_clone exists to detect.
+        """
+        err = errno.ENOTSUP
+        self._linux_with_failing_ioctl(monkeypatch, OSError(err, os.strerror(err)))
+        source = tmp_path / "s.bin"
+        source.write_bytes(b"A" * 4096)
+
+        with caplog.at_level(logging.WARNING):
+            assert clone.can_clone(source, tmp_path) is False
+
+        assert "clone probe" not in caplog.text
+        assert set(os.listdir(tmp_path)) == {"s.bin"}
 
 
 class TestSupportDetection:
