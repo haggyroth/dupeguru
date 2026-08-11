@@ -130,7 +130,7 @@ def prepare_picture_worker(args):
         return (path_str, None, None, f"{type(e).__name__}: {e}")
 
 
-def prepare_pictures(pictures, cache_path, with_dimensions, match_rotated, j=job.nulljob):
+def prepare_pictures(pictures, cache_path, with_dimensions, match_rotated, j=job.nulljob, report=None):
     # The MemoryError handlers in there use logging without first caring about whether or not
     # there is enough memory left to carry on the operation because it is assumed that the
     # MemoryError happens when trying to read an image file, which is freed from memory by the
@@ -214,6 +214,10 @@ def prepare_pictures(pictures, cache_path, with_dimensions, match_rotated, j=job
                     raise
     except MemoryError:
         logging.warning("Ran out of memory while preparing pictures")
+        # Truncates the *input* to the comparison rather than its output: every picture after
+        # this point is simply never compared, so matches involving them cannot be found.
+        if report is not None:
+            report.record_truncation("picture preparation", "memory", len(prepared))
     cache.close()
     return prepared
 
@@ -225,7 +229,14 @@ def get_match(first, second, percentage):
 
 
 def getmatches(
-    pictures, cache_path, threshold, match_scaled=False, match_rotated=False, j=job.nulljob, match_cache=None
+    pictures,
+    cache_path,
+    threshold,
+    match_scaled=False,
+    match_rotated=False,
+    j=job.nulljob,
+    match_cache=None,
+    report=None,
 ):
     """Return a list of Match objects for pictures whose block signatures are
     similar enough to meet *threshold* (0–100).
@@ -253,7 +264,7 @@ def getmatches(
             j.set_progress(100, tr("Reusing previous match results"))
             return cached
     j = j.start_subjob([3, 7])
-    pictures = prepare_pictures(pictures, cache_path, not match_scaled, match_rotated, j=j)
+    pictures = prepare_pictures(pictures, cache_path, not match_scaled, match_rotated, j=j, report=report)
 
     j = j.start_subjob([2, 8], tr("Loading picture blocks"))
 

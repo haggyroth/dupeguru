@@ -253,6 +253,10 @@ class TestNdjsonOutput:
                 "total_duplicate_size_bytes": 0,
                 "partial_matches": 0,
                 "discarded_files": 0,
+                # Present on every scan, complete or not, so a consumer reads completeness
+                # rather than inferring it from the absence of a warning (issue #180).
+                "truncated": False,
+                "truncations": [],
                 "total_reclaimable_bytes": 0,
                 "reclaimable_partial_bytes": 0,
                 "confirmed_reclaimable_bytes": 0,

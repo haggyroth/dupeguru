@@ -36,6 +36,7 @@ class ScannerPE(Scanner):
                 match_rotated=self.match_rotated,
                 j=j,
                 match_cache=self.match_cache,
+                report=self.scan_report,
             )
         elif self.scan_type == ScanType.EXIFTIMESTAMP:
             return matchexif.getmatches(files, self.match_scaled, j)
