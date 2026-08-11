@@ -208,8 +208,84 @@ class TestPackagingWorkflow:
         assert ".app" not in paths
 
     def test_stays_manual(self):
-        """Attaching binaries to releases is a deliberate decision, not a side effect."""
+        """Building and attaching are deliberate, not a side effect of pushing a tag."""
         workflow = yaml.safe_load((REPO_ROOT / ".github" / "workflows" / "packaging.yml").read_text(encoding="utf-8"))
         # PyYAML parses a bare `on:` key as the boolean True.
         triggers = workflow.get("on", workflow.get(True))
         assert set(triggers) == {"workflow_dispatch"}, f"packaging must stay manual, found {triggers}"
+
+
+class TestTheAttachJob:
+    """A green packaging run must end with the release actually offering a download (#216).
+
+    Attaching used to be a manual step recorded only in a workflow comment, and it was
+    forgotten: 4.19.0 and 4.20.0 were both published with no assets at all, so the newest build
+    anyone could install was two releases old. Nothing failed and nothing warned.
+
+    The tests here pin two things that pull against each other -- that attaching happens, and
+    that it does not cost the least-privilege property the build jobs rely on.
+    """
+
+    @staticmethod
+    def _workflow():
+        return yaml.safe_load((REPO_ROOT / ".github" / "workflows" / "packaging.yml").read_text(encoding="utf-8"))
+
+    def _job(self):
+        return self._workflow()["jobs"]["attach"]
+
+    def test_it_runs_after_the_build(self):
+        needs = self._job()["needs"]
+        assert "applications" in ([needs] if isinstance(needs, str) else needs)
+
+    def test_it_only_runs_on_a_tag(self):
+        # Dispatching on a branch builds something that is not a release, and attaching that
+        # to whatever release happens to share the name would be worse than doing nothing.
+        assert "refs/tags/v" in self._job()["if"]
+
+    def test_it_can_be_declined(self):
+        triggers = self._workflow().get("on", self._workflow().get(True))
+        assert "attach" in triggers["workflow_dispatch"]["inputs"]
+        assert "inputs.attach" in self._job()["if"]
+
+    def test_only_this_job_may_write_to_releases(self):
+        """The property that makes automating this acceptable at all.
+
+        `applications` pip installs PyInstaller, PyQt and a full dependency tree. A token that
+        can rewrite a release must never be in that job, so the write lives here and the
+        workflow default stays read.
+        """
+        workflow = self._workflow()
+        assert workflow["permissions"]["contents"] == "read"
+        for name in ("freeze", "applications"):
+            assert "permissions" not in workflow["jobs"][name], f"{name} was given its own permissions"
+        assert self._job()["permissions"]["contents"] == "write"
+
+    def test_it_runs_no_third_party_code(self):
+        """The other half of the same argument: privilege is fine where nothing untrusted runs.
+
+        No `uses:` at all -- not even a pinned action -- and nothing that fetches or executes
+        the project's own dependency tree. `gh` is preinstalled on the runner.
+        """
+        job = self._job()
+        assert [s["uses"] for s in job["steps"] if "uses" in s] == []
+        joined = "\n".join(s.get("run", "") for s in job["steps"])
+        for forbidden in ("pip install", "actions/checkout", "setup-python", "python -m"):
+            assert forbidden not in joined, f"the privileged job runs {forbidden!r}"
+
+    def test_it_verifies_rather_than_assuming(self):
+        """An upload can report success and leave a release with nothing on it."""
+        joined = "\n".join(s.get("run", "") for s in self._job()["steps"])
+        assert "gh release view" in joined, "nothing re-reads the release after uploading"
+        assert "has no disk image after upload" in joined
+        assert "has no installer after upload" in joined
+
+    def test_it_refuses_when_there_is_no_release(self):
+        # Attaching to a tag with no release cannot silently do nothing -- that is the failure
+        # being fixed, one step earlier.
+        joined = "\n".join(s.get("run", "") for s in self._job()["steps"])
+        assert "no release exists for" in joined
+
+    def test_it_attaches_both_deliverables(self):
+        joined = "\n".join(s.get("run", "") for s in self._job()["steps"])
+        assert "dupeguru_osx_" in joined and ".dmg" in joined
+        assert "dupeGuru_win64_" in joined and ".exe" in joined

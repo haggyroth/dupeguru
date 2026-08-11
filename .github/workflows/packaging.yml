@@ -23,10 +23,20 @@ name: Packaging
 
 on:
   workflow_dispatch:
+    inputs:
+      attach:
+        description: "Attach the built installer and disk image to the release for this tag"
+        type: boolean
+        default: true
 
 # Least privilege: these jobs only check out code and upload artifacts. Without this they
 # inherit the repository default, which is `write` -- a token that can push to master and
 # edit releases, handed to jobs that pip install a large third-party dependency tree.
+#
+# The `attach` job below raises this to `contents: write` for itself alone. It has to, to touch
+# a release -- but it installs nothing and checks out nothing, so the token is never in the same
+# job as the dependency tree. That separation is the whole point: it is why attaching is a
+# distinct job rather than two more lines at the end of `applications`.
 permissions:
   contents: read
 
@@ -126,8 +136,8 @@ jobs:
     # separately and without Qt.
     #
     # Separate from the freeze job above, which smoke-tests the CLI against issue #10.
-    # Attaching these to a release is still a deliberate step rather than a side effect of
-    # tagging: this workflow only builds and uploads artifacts, and a human publishes them.
+    # This job only builds and uploads artifacts; the `attach` job below puts them on the
+    # release. It used to be a human who did that, and twice nobody did (#216).
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -234,3 +244,59 @@ jobs:
         with:
           name: dupeguru-macos-dmg
           path: dist-dmg/*.dmg
+
+  attach:
+    # Puts what `applications` built onto the release, which used to be a manual step and was
+    # therefore forgotten: 4.19.0 and 4.20.0 were both published with no downloads at all, so
+    # for a while the newest build anyone could install was two versions old. Nothing failed
+    # and nothing warned -- a green packaging run simply was not the end of a release (#216).
+    #
+    # Deliberately a separate job. It needs `contents: write` to touch a release, and the
+    # reason the build jobs must not have that is they pip install a large third-party
+    # dependency tree. This one installs nothing, checks out nothing, and uses no third-party
+    # action -- `gh` is preinstalled on the runner -- so a compromised package never sits in
+    # the same job as a token that can rewrite a download.
+    needs: applications
+    if: ${{ inputs.attach && startsWith(github.ref, 'refs/tags/v') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # to upload release assets
+      actions: read # to download this run's own artifacts
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - name: Download what this run built
+        run: gh run download "${{ github.run_id }}" --repo "${{ github.repository }}" --dir assets
+      - name: Attach them to the release
+        run: |
+          set -euo pipefail
+          # A release has to exist already; this attaches to one rather than publishing it, so
+          # that what the notes say and what the binaries are stay a human decision.
+          if ! gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "::error::no release exists for $TAG. Create it, then re-run this workflow." >&2
+            exit 1
+          fi
+          dmg=$(find assets -name 'dupeguru_osx_*.dmg' | head -1)
+          exe=$(find assets -name 'dupeGuru_win64_*.exe' | head -1)
+          if [ -z "$dmg" ] || [ -z "$exe" ]; then
+            echo "::error::expected a .dmg and a .exe among the artifacts, found: $(find assets -type f | tr '\n' ' ')" >&2
+            exit 1
+          fi
+          # --clobber so a re-run replaces rather than failing half way.
+          gh release upload "$TAG" "$dmg" "$exe" --repo "${{ github.repository }}" --clobber
+      - name: Verify the release actually offers them
+        run: |
+          set -euo pipefail
+          # The check that was missing. An upload can report success and leave a release with
+          # nothing on it, and that is invisible until somebody tries to download.
+          names=$(gh release view "$TAG" --repo "${{ github.repository }}" --json assets -q '[.assets[].name] | join(" ")')
+          echo "release $TAG now offers: $names"
+          case "$names" in
+            *.dmg*) ;;
+            *) echo "::error::$TAG has no disk image after upload" >&2; exit 1 ;;
+          esac
+          case "$names" in
+            *.exe*) ;;
+            *) echo "::error::$TAG has no installer after upload" >&2; exit 1 ;;
+          esac
