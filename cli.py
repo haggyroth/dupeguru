@@ -660,10 +660,11 @@ def _delete_dupes(app: DupeGuru, direct_delete: bool, verbose: bool):
     """
     app.results.mark_all()
 
-    # Essential, not tidiness: the CLI never calls app.load(), so this log starts empty, and
-    # the save() inside DeletionLog.record writes whatever is in memory over the whole file.
-    # Without this read-back a single command-line deletion would wipe every previously
-    # recorded run, including the GUI's, and take their restore destinations with it.
+    # The CLI never calls app.load(), so this log starts empty. It no longer *has* to be read
+    # back for safety -- records are appended now, so a command-line deletion cannot overwrite
+    # the runs already on disk -- but reading it is still what applies the MAX_RUNS trim and
+    # what lets `get()` find an earlier run. Without it the file would grow without bound on a
+    # machine that only ever dedupes from the command line.
     app.deletion_log.load()
     run = app.deletion_log.start_run(permanent=direct_delete)
 

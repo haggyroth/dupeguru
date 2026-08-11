@@ -23,15 +23,29 @@ removed file with no entry.
 be occupied by something newer, or the file may have been put back by hand already. Restoring
 blindly would create exactly the data loss this exists to undo, so every one of those is
 checked and refused rather than guessed at.
+
+The on-disk format follows from the first rule, and used to contradict it (issue #198). Records
+are **appended**, one self-contained JSON object per line. Writing per file was always the
+intent -- so that a crash costs one entry -- but the file was rewritten in full each time, from
+a single XML document that ``load()`` discarded entirely if any part of it failed to parse. So
+each write truncated the whole history and rebuilt it, and a crash mid-write lost everything,
+once per deleted file. It also made deleting *n* files cost O(n^2): 4,000 files spent 34.9 s in
+the log alone.
+
+One line per record fixes both, because both are properties of the format rather than of the
+code around it. Appending is the natural write, a truncated tail costs the partial last line,
+and a damaged line is skipped while the lines around it still load. A destination learned after
+the record was written -- which is every trashed file, since the trash reports where it put
+things -- is appended as an amendment rather than paid for with a rewrite.
 """
 
+import json
+import logging
 import os
 import shutil
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from pathlib import Path
-
-from hscommon.util import FileOrPath
 
 
 class RestoreStatus:
@@ -234,95 +248,291 @@ class DeletionLog:
         return run
 
     def record(self, run: DeletionRun, record: DeletionRecord) -> None:
-        """Add a file to *run* and persist immediately.
+        """Add a file to *run* and append it to the log immediately.
 
-        Written per file rather than per run, and by the caller *before* the file is deleted.
-        A crash mid-run then costs at most the entry for the file being deleted at that moment,
-        instead of the whole run's worth of records.
+        Written per file rather than per run, and by the caller *before* the file is deleted,
+        so a crash mid-run costs at most the entry for the file being deleted at that moment.
+
+        That was the intent before this was appended rather than rewritten, but it was not what
+        happened: ``save()`` opened the file truncating and wrote every run from scratch, so a
+        crash during any single write destroyed the whole history -- and it ran once per deleted
+        file, so deleting more files opened more windows to lose everything in. Appending one
+        line delivers the guarantee the paragraph above always claimed.
         """
         run.records.append(record)
-        self.save()
+        self._append(_record_line(run, record))
+
+    def record_destination(self, run: DeletionRun, record: DeletionRecord) -> None:
+        """Note where a trashed file went, after the trash has said.
+
+        The record is written before the deletion, when the destination cannot be known yet --
+        it is what ``core.trash`` reads back afterwards. Rather than rewriting the file to fill
+        it in, this appends an amendment naming the record it updates. Append-only is what keeps
+        the cost linear and the crash window one line wide; an amendment that never arrives
+        leaves a record whose destination is empty, which already means "no restore for this
+        one" everywhere else.
+        """
+        self._append(_amendment_line(run, record))
 
     def discard_if_empty(self, run: DeletionRun) -> None:
-        """Drop a run that recorded nothing, so cancelled deletions leave no empty entry."""
+        """Drop a run that recorded nothing, so cancelled deletions leave no empty entry.
+
+        No longer touches the file. A run is only ever on disk through its records, so one that
+        recorded nothing never wrote anything to take back.
+        """
         if not run.records and run in self.runs:
             self.runs.remove(run)
-            self.save()
 
     # --- Persistence
 
-    def save(self) -> None:
+    def _append(self, line: str) -> None:
+        """Add one line to the log, creating it if needed.
+
+        Opened per line rather than held open for the run. A handle kept across a deletion has
+        to survive cancellation, exceptions and a front end that never finishes the run, and
+        getting that wrong loses records; an open-write-close costs a few microseconds against
+        a deletion that touches the disk anyway.
+        """
         if not self.path:
             return
         try:
-            with FileOrPath(self.path, "wb") as fp:
-                root = ET.Element("deletion_log")
-                for run in sorted(self.runs, key=lambda r: r.started_at):
-                    run_node = ET.SubElement(root, "run")
-                    run_node.set("id", run.run_id)
-                    run_node.set("started_at", run.started_at.isoformat())
-                    run_node.set("permanent", str(run.permanent))
-                    for record in run.records:
-                        node = ET.SubElement(run_node, "file")
-                        node.set("path", record.original_path)
-                        node.set("size", str(record.size))
-                        node.set("permanent", str(record.permanent))
-                        if record.digest:
-                            node.set("digest", record.digest)
-                        if record.destination:
-                            node.set("destination", record.destination)
-                        if record.reference_path:
-                            node.set("reference", record.reference_path)
-                ET.ElementTree(root).write(fp, encoding="utf-8")
+            os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
+            with open(self.path, "a", encoding="utf-8") as fp:
+                fp.write(line + "\n")
         except OSError:
             # Never let logging failure break a deletion. The user asked to delete files, not
             # to maintain a log, and refusing the deletion because the log could not be written
             # would be a worse outcome than losing the undo.
-            import logging
+            logging.warning("Could not append to the deletion log at %s", self.path, exc_info=True)
 
+    def save(self) -> None:
+        """Rewrite the whole file from memory.
+
+        Only for compaction and for migrating an old XML log -- both once-per-load operations.
+        Deliberately *not* used per record: doing that is what made deleting n files cost
+        O(n^2), and what put the entire history at risk on every single write.
+
+        Written to a temporary file and moved into place, so an interrupted compaction leaves
+        the previous log intact rather than a half-written one.
+        """
+        if not self.path:
+            return
+        tmp = f"{self.path}.tmp"
+        try:
+            os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
+            with open(tmp, "w", encoding="utf-8") as fp:
+                for run in sorted(self.runs, key=lambda r: r.started_at):
+                    for record in run.records:
+                        fp.write(_record_line(run, record) + "\n")
+            os.replace(tmp, self.path)
+        except OSError:
             logging.warning("Could not write the deletion log to %s", self.path, exc_info=True)
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
 
     def load(self) -> None:
-        """Read the log, leaving it empty if the file is missing or damaged."""
+        """Read the log, keeping every record that still parses.
+
+        Damage costs the damaged lines and nothing else. It used to cost everything: the reader
+        parsed the file as one XML document and ``except Exception: return`` left the log empty,
+        so a crash mid-write, one invalid byte, or a single stray ``&`` anywhere in the file
+        discarded every run in it -- silently, which is the part that made it dangerous.
+
+        An old XML log is read and rewritten in the new format, so upgrading keeps the undo
+        history rather than quietly starting over.
+        """
         self.runs = []
         if not self.path:
             return
-        try:
-            root = ET.parse(self.path).getroot()
-        except Exception:
+
+        text = self._read_text(self.path)
+        if text is None:
+            # Nothing at the configured path. An older version wrote XML beside it under the
+            # same stem; read that once and carry it forward.
+            legacy = os.path.splitext(self.path)[0] + ".xml"
+            legacy_text = self._read_text(legacy) if legacy != self.path else None
+            if legacy_text is None:
+                return
+            self.runs = _parse_legacy_xml(legacy_text)
+            self._trim()
+            self.save()
             return
-        for run_node in root.iter("run"):
+
+        if text.lstrip().startswith("<"):
+            # The file at our own path is still in the old format.
+            self.runs = _parse_legacy_xml(text)
+            self._trim()
+            self.save()
+            return
+
+        self.runs, damaged = _parse_lines(text)
+        if damaged:
+            logging.warning("Skipped %d damaged line(s) in the deletion log at %s", damaged, self.path)
+        if self._trim() or damaged:
+            # Compact on read rather than on write: this is the one moment the in-memory log is
+            # known to hold everything on disk, so it is the only safe moment to rewrite it.
+            # Trimming during a deletion would rewrite from whatever happened to be loaded.
+            self.save()
+
+    @staticmethod
+    def _read_text(path):
+        try:
+            with open(path, encoding="utf-8", errors="replace") as fp:
+                return fp.read()
+        except OSError:
+            return None
+
+    def _trim(self) -> bool:
+        """Keep only the newest MAX_RUNS runs. True if anything was dropped."""
+        if len(self.runs) <= self.MAX_RUNS:
+            return False
+        self.runs.sort(key=lambda run: run.started_at)
+        del self.runs[: len(self.runs) - self.MAX_RUNS]
+        return True
+
+
+def _record_line(run: DeletionRun, record: DeletionRecord) -> str:
+    """One record as a self-contained JSON object.
+
+    Each line repeats its run's identity rather than referring back to a header line. That is
+    about sixty redundant bytes per record, and it buys the property the whole format exists
+    for: a damaged line costs exactly that record. A header carrying the run would orphan
+    every record under it.
+    """
+    return json.dumps(
+        {
+            "run": run.run_id,
+            "started_at": run.started_at.isoformat(),
+            "run_permanent": run.permanent,
+            "path": record.original_path,
+            "size": record.size,
+            "digest": record.digest,
+            "destination": record.destination,
+            "reference": record.reference_path,
+            "permanent": record.permanent,
+        },
+        ensure_ascii=False,
+    )
+
+
+def _amendment_line(run: DeletionRun, record: DeletionRecord) -> str:
+    """A destination learned after the record was written."""
+    return json.dumps(
+        {"run": run.run_id, "amend": record.original_path, "destination": record.destination},
+        ensure_ascii=False,
+    )
+
+
+def _parse_lines(text: str):
+    """Read JSONL into runs, skipping what will not parse. Returns (runs, damaged_count)."""
+    runs: dict = {}
+    order: list = []
+    damaged = 0
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entry = json.loads(line)
+            if not isinstance(entry, dict):
+                raise ValueError("not an object")
+            run_id = entry["run"]
+        except (ValueError, TypeError, KeyError):
+            # A truncated final line -- the normal shape of a crash -- lands here, as does any
+            # single corrupted record. Both cost one line.
+            damaged += 1
+            continue
+
+        if "amend" in entry:
+            run = runs.get(run_id)
+            if run is not None:
+                for record in run.records:
+                    if record.original_path == entry["amend"]:
+                        record.destination = entry.get("destination", "") or ""
+                        break
+            continue
+
+        if run_id not in runs:
             try:
-                started_at = datetime.fromisoformat(run_node.get("started_at", ""))
-            except ValueError:
+                started_at = datetime.fromisoformat(entry.get("started_at", ""))
+            except (ValueError, TypeError):
                 started_at = datetime.now()
-            run = DeletionRun(
-                run_id=run_node.get("id", ""),
+            runs[run_id] = DeletionRun(
+                run_id=run_id,
                 started_at=started_at,
-                permanent=run_node.get("permanent") == "True",
+                permanent=bool(entry.get("run_permanent", False)),
             )
-            for node in run_node.iter("file"):
-                path = node.get("path")
-                if not path:
-                    continue
-                try:
-                    size = int(node.get("size", "0"))
-                except ValueError:
-                    size = 0
-                run.records.append(
-                    DeletionRecord(
-                        original_path=path,
-                        size=size,
-                        digest=node.get("digest", ""),
-                        destination=node.get("destination", ""),
-                        reference_path=node.get("reference", ""),
-                        permanent=node.get("permanent") == "True",
-                    )
+            order.append(run_id)
+        try:
+            size = int(entry.get("size", 0))
+        except (ValueError, TypeError):
+            size = 0
+        runs[run_id].records.append(
+            DeletionRecord(
+                original_path=str(entry.get("path", "")),
+                size=size,
+                digest=str(entry.get("digest", "") or ""),
+                destination=str(entry.get("destination", "") or ""),
+                reference_path=str(entry.get("reference", "") or ""),
+                permanent=bool(entry.get("permanent", False)),
+            )
+        )
+    return [runs[run_id] for run_id in order if runs[run_id].records], damaged
+
+
+def _parse_legacy_xml(text: str) -> list:
+    """Read a log written before this was line-based.
+
+    Still all-or-nothing, because XML is: a damaged document cannot be partially parsed. That
+    is the reason for the format change rather than an argument for keeping this shape, and it
+    only ever runs once, on the upgrade.
+    """
+    runs = []
+    try:
+        root = ET.fromstring(text)
+    except Exception:
+        logging.warning("The previous deletion log could not be read and was not carried over")
+        return runs
+    for run_node in root.iter("run"):
+        try:
+            started_at = datetime.fromisoformat(run_node.get("started_at", ""))
+        except ValueError:
+            started_at = datetime.now()
+        run = DeletionRun(
+            run_id=run_node.get("id", ""),
+            started_at=started_at,
+            permanent=run_node.get("permanent") == "True",
+        )
+        for node in run_node.iter("file"):
+            path = node.get("path")
+            if not path:
+                continue
+            try:
+                size = int(node.get("size", "0"))
+            except ValueError:
+                size = 0
+            run.records.append(
+                DeletionRecord(
+                    original_path=path,
+                    size=size,
+                    digest=node.get("digest", ""),
+                    destination=node.get("destination", ""),
+                    reference_path=node.get("reference", ""),
+                    permanent=node.get("permanent") == "True",
                 )
-            if run.records:
-                self.runs.append(run)
+            )
+        if run.records:
+            runs.append(run)
+    return runs
 
 
 def default_log_path(appdata) -> str:
-    """Where the log lives, beside the other application data."""
-    return os.path.join(appdata, "deletion_log.xml")
+    """Where the log lives, beside the other application data.
+
+    ``.jsonl`` rather than ``.xml``: the format changed, and a new name means an older build
+    reading the directory finds no log rather than a file it cannot parse. ``load()`` picks up
+    the ``.xml`` beside it once, on the first run after upgrading.
+    """
+    return os.path.join(appdata, "deletion_log.jsonl")
