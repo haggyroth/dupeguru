@@ -9,6 +9,32 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [4.18.0] - 2026-08-11
+
+### Fixed
+
+- **A scan that ran out of memory reported its partial results as complete.** Matching and
+  grouping both keep what they have and carry on when they run out of room, which is a
+  reasonable choice, but it was written only to the log. The window now says the results are
+  incomplete *before* showing them, and the command line warns on stderr and carries
+  `truncated` in its statistics on every scan. Six places could give up this way, only one of
+  which had been noticed; one of them was not a failure at all but a hard cap on the number of
+  matches.
+
+### Changed
+
+- **Folders holding very large clusters of identical files no longer exhaust memory.** A
+  contents scan established that k files were identical by comparing every pair and keeping
+  every one of them, so a cluster of 23,857 files -- an ordinary shape for a photo archive --
+  needed 284 million match records, about 23 GiB, to record a single fact.
+
+  Identical files are now found by grouping on their digest rather than by pairwise comparison,
+  and a group of identical files derives its matches from its members instead of storing them.
+  Measured on a cluster of 700 files: 1.2 MiB where the match set alone would have been 21 MiB.
+
+  Digest reads dropped correspondingly, from once per pair to once per file. Over a bucket of
+  300 same-size files that is 300 reads where there were 134,550.
+
 ## [4.17.0] - 2026-08-11
 
 ### Added
@@ -1003,7 +1029,8 @@ fork no longer routes anyone or anything upstream, and CI runs for the first tim
 
 See `git log` for changes prior to this changelog.
 
-[Unreleased]: https://github.com/haggyroth/dupeguru/compare/v4.17.0...HEAD
+[Unreleased]: https://github.com/haggyroth/dupeguru/compare/v4.18.0...HEAD
+[4.18.0]: https://github.com/haggyroth/dupeguru/compare/v4.17.0...v4.18.0
 [4.17.0]: https://github.com/haggyroth/dupeguru/compare/v4.16.0...v4.17.0
 [4.16.0]: https://github.com/haggyroth/dupeguru/compare/v4.15.0...v4.16.0
 [4.15.0]: https://github.com/haggyroth/dupeguru/compare/v4.14.1...v4.15.0
