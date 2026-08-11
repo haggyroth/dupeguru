@@ -189,6 +189,71 @@ class TestDamageCostsOnlyWhatWasDamaged:
         assert len(reloaded(tmp_path / "never-written.jsonl")) == 0
 
 
+class TestRunIdsAreUnique:
+    """Records name their run, so two runs sharing an id merge into one (issue #198).
+
+    This was caught only by the Windows CI leg. ``datetime.now()`` advances in ~15.6 ms steps
+    there against microseconds on macOS and Linux, so a timestamp-only id collided for every
+    run started in the same tick -- 60 runs came back as 14. The clock is therefore mocked here
+    rather than trusted, so the guarantee is checked everywhere instead of on one runner.
+
+    It only became load-bearing with the line-based format. The old XML nested <file> inside
+    <run>, so grouping was structural and a duplicate id was merely untidy.
+    """
+
+    @pytest.fixture
+    def frozen_clock(self, monkeypatch):
+        """A clock that never advances: what Windows looks like within a single tick."""
+        import core.deletion_log as module
+
+        fixed = datetime(2026, 1, 1, 12, 0, 0)
+
+        class Frozen(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return fixed
+
+        monkeypatch.setattr(module, "datetime", Frozen)
+        return fixed
+
+    def test_ids_are_distinct_even_when_the_clock_does_not_move(self, frozen_clock):
+        from core.deletion_log import DeletionRun
+
+        ids = [DeletionRun().run_id for _ in range(200)]
+        assert len(set(ids)) == 200, "runs started in the same clock tick shared an id"
+
+    def test_runs_started_in_one_tick_stay_separate_on_disk(self, tmp_path, frozen_clock):
+        """The consequence, which is what actually broke: three runs came back as one."""
+        path = tmp_path / "log.jsonl"
+        log = DeletionLog(path)
+        for r in range(3):
+            run = log.start_run(permanent=False)
+            log.record(run, DeletionRecord(f"/d/r{r}.bin", destination=f"/trash/r{r}.bin"))
+        assert counts(reloaded(path)) == (3, 3), "runs merged because they shared an id"
+
+    def test_an_amendment_reaches_only_its_own_run(self, tmp_path, frozen_clock):
+        """The sharper failure: an amendment matches on run and path, so a shared id could
+        attach one run's trash destination to a different run's record."""
+        path = tmp_path / "log.jsonl"
+        log = DeletionLog(path)
+
+        first = log.start_run(permanent=False)
+        record_a = DeletionRecord("/d/same-name.bin")
+        log.record(first, record_a)
+
+        second = log.start_run(permanent=False)
+        record_b = DeletionRecord("/d/same-name.bin")
+        log.record(second, record_b)
+
+        record_b.destination = "/trash/second.bin"
+        log.record_destination(second, record_b)
+
+        runs = {run.run_id: run for run in reloaded(path).runs}
+        assert len(runs) == 2, "the two runs were not kept apart"
+        assert runs[first.run_id].records[0].destination == "", "the amendment landed on the wrong run"
+        assert runs[second.run_id].records[0].destination == "/trash/second.bin"
+
+
 class TestTheLineIsSelfContained:
     """Why each line repeats its run rather than pointing at a header."""
 

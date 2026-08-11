@@ -46,6 +46,7 @@ import shutil
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from pathlib import Path
+from uuid import uuid4
 
 
 class RestoreStatus:
@@ -103,7 +104,17 @@ class DeletionRun:
     """One deletion operation: everything removed in a single press of Delete."""
 
     def __init__(self, run_id="", started_at=None, permanent=False, records=None):
-        self.run_id = run_id or datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+        #: Unique by construction, not by clock resolution. The timestamp alone was not: on
+        #: Windows ``datetime.now()`` advances in ~15.6 ms steps, so two runs started in the
+        #: same tick got the same id -- invisible on macOS, where the clock has microseconds.
+        #:
+        #: That only became load-bearing when the log went line-based. The old XML nested
+        #: <file> inside <run>, so the grouping was structural and duplicate ids merely looked
+        #: odd; records now name their run, so two runs sharing an id merge into one on reload
+        #: and an amendment can attach to the wrong run's record. The suffix keeps the readable,
+        #: sortable timestamp and makes collision impossible -- across processes too, which
+        #: matters because the GUI and the command line write the same file.
+        self.run_id = run_id or f"{datetime.now():%Y%m%d-%H%M%S-%f}-{uuid4().hex[:8]}"
         self.started_at = started_at or datetime.now()
         #: Whether the run bypassed the trash. Recorded per run *and* per record: the run-level
         #: flag is what the user chose, and a record can still be permanent within a
