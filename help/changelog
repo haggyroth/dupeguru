@@ -1,3 +1,9 @@
+=== 4.21.0 (2026-08-11)
+* Fix the Windows command line keeping its caches and deletion log at the root of whichever drive it was started from, rather than with your own settings
+* The command line and the window now share one set of remembered work, so neither re-reads what the other already knows
+* Say in a deletion preview when a duplicate would be replaced by a copy-on-write clone instead of removed
+* Explain where remembering folder listings between scans helps, and where it costs more than it saves
+
 === 4.20.0 (2026-08-11)
 * Delete large numbers of files without the deletion log slowing the operation to a crawl
 * Keep the rest of the deletion history when part of the log is damaged, instead of losing all of it
