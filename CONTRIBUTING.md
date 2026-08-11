@@ -75,6 +75,26 @@ While the prerequisites above must be satisfied prior to having your pull reques
    from `core.__version__`. Do **not** use `#123` references there: `build.py` linkifies them
    against the *upstream* issue tracker, so they would resolve to unrelated tickets.
 4. Commit, tag `vX.Y.Z`, push both, then create the GitHub release.
+5. Dispatch the packaging workflow **on the tag**, not on a branch:
+   `gh workflow run packaging.yml --ref vX.Y.Z`. An artifact labelled 4.9.0 that does not
+   contain the code tagged 4.9.0 is a mislabelled release, and that has happened once.
+6. **Attach the built installer and disk image to the release.** The packaging workflow
+   deliberately does not do this — it runs with `contents: read` so that jobs installing a
+   large third-party dependency tree cannot edit releases — so the artifacts sit on the
+   workflow run until somebody moves them:
+
+   ```
+   gh run download <run-id> --dir /tmp/assets
+   gh release upload vX.Y.Z /tmp/assets/*/dupeguru_osx_*.dmg /tmp/assets/*/dupeGuru_win64_*.exe
+   ```
+
+   A green packaging run is **not** the end of the release. 4.19.0 and 4.20.0 were both
+   published with no downloads at all because this step was not written down here — the newest
+   build anyone could get was two versions old, and nothing failed or warned. Check it:
+
+   ```
+   gh release view vX.Y.Z --json assets -q '[.assets[].name]'
+   ```
 
 > **Release titles must be bare semver.** Name the GitHub release `4.4.1`, not
 > `v4.4.1 - some description`. Builds at 4.4.0 and earlier read `release["name"]` and parse it

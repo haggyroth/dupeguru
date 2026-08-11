@@ -439,12 +439,20 @@ cache removes.
 
 ## Releases
 
-The process is in [CONTRIBUTING.md](CONTRIBUTING.md#cutting-a-release). Two things there are
+The process is in [CONTRIBUTING.md](CONTRIBUTING.md#cutting-a-release). Three things there are
 easy to get wrong and are written down for that reason: the Sphinx docs take their version
-from `help/changelog`, not `core.__version__`; and **GitHub release titles must be bare
-semver** (`4.5.0`, not `v4.5.0 — description`). Builds at 4.4.0 and earlier parse the release
-*name* as semver, so a descriptive title breaks their update check. That constraint lifts once
-nobody is running 4.4.0.
+from `help/changelog`, not `core.__version__`; **GitHub release titles must be bare semver**
+(`4.5.0`, not `v4.5.0 — description`), because builds at 4.4.0 and earlier parse the release
+*name* as semver and a descriptive title breaks their update check — that constraint lifts
+once nobody is running 4.4.0; and **a green packaging run does not attach anything**.
+
+That last one is the quiet failure. The packaging workflow runs with `contents: read` on
+purpose, so it cannot edit releases and cannot be used to attach what it builds. Uploading is
+a separate manual step, and it is invisible when skipped: nothing fails, nothing warns, and
+the release page simply offers no download. 4.19.0 and 4.20.0 both shipped that way, so for a
+while the newest build anyone could install was 4.18.0 — two releases behind a `master` that
+had just fixed a data-safety bug. Verify with `gh release view vX.Y.Z --json assets`, and see
+issue #216 for making it harder to miss.
 
 ## Open issues
 
