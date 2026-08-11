@@ -9,6 +9,42 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [4.21.0] - 2026-08-11
+
+### Fixed
+
+- **On Windows, the command line kept its data at the root of whichever drive it was started
+  from.** The packaged command line ships without Qt deliberately, so it fell back to a stub
+  returning the literal `"/tmp"` — which is a real absolute directory on macOS and Linux, and
+  on Windows is *drive-relative*. Its hash cache, ignore list, exclude list and **deletion log**
+  therefore went to `<cwd-drive>:\tmp`, a directory it created at the drive root and which moved
+  depending on where the tool was launched from.
+
+  A drive root is not per-user. The deletion log is the record of what was removed and where it
+  went, so on a shared machine one person's was readable and writable by another.
+
+  All of it now resolves the same per-user directory the window uses. Anything left behind in a
+  `\tmp` folder at a drive root is from the old behaviour and can be deleted.
+
+- **A deletion preview never mentioned cloning.** The planner accepted the check that decides
+  whether a duplicate could be replaced by a copy-on-write clone, and never called it — so the
+  count was always zero, and neither the summary nor the preview could say a file would be
+  cloned rather than removed. The option itself worked; only the description of it was missing.
+
+### Changed
+
+- **The command line and the window now share one set of remembered work.** They resolved
+  different application-data directories, so a hash cache, ignore list or exclude list built up
+  in one was invisible to the other and the same files were read twice. A consequence of the
+  fix above rather than a separate change, but it is the part most people will notice.
+
+- **The documentation for remembering folder listings between scans now says where it does not
+  pay.** It promised that a repeat scan of an unchanged drive becomes "close to instant". That
+  holds for external, network and other slow drives, which is what the sentence was about — but
+  it generalised to any drive, and on an internal disk a measured scan came out a few percent
+  *slower* with the option on than off. The saving is a property of the volume rather than of
+  the feature: where the first read is already cheap, there is nothing to save.
+
 ## [4.20.0] - 2026-08-11
 
 ### Fixed
@@ -1128,7 +1164,8 @@ fork no longer routes anyone or anything upstream, and CI runs for the first tim
 
 See `git log` for changes prior to this changelog.
 
-[Unreleased]: https://github.com/haggyroth/dupeguru/compare/v4.20.0...HEAD
+[Unreleased]: https://github.com/haggyroth/dupeguru/compare/v4.21.0...HEAD
+[4.21.0]: https://github.com/haggyroth/dupeguru/compare/v4.20.0...v4.21.0
 [4.20.0]: https://github.com/haggyroth/dupeguru/compare/v4.19.0...v4.20.0
 [4.19.0]: https://github.com/haggyroth/dupeguru/compare/v4.18.0...v4.19.0
 [4.18.0]: https://github.com/haggyroth/dupeguru/compare/v4.17.0...v4.18.0
