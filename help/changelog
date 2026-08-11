@@ -1,3 +1,8 @@
+=== 4.20.0 (2026-08-11)
+* Delete large numbers of files without the deletion log slowing the operation to a crawl
+* Keep the rest of the deletion history when part of the log is damaged, instead of losing all of it
+* Fix a file being sent to the trash on macOS and then reported as not deleted, with no way to restore it
+
 === 4.19.0 (2026-08-11)
 * Optionally compare two files byte for byte before deleting one of them, for certainty over speed
 * Stop using md5 as the hashing fallback when xxhash is unavailable, since md5 collisions can be constructed
