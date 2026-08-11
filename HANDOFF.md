@@ -446,13 +446,20 @@ from `help/changelog`, not `core.__version__`; **GitHub release titles must be b
 *name* as semver and a descriptive title breaks their update check — that constraint lifts
 once nobody is running 4.4.0; and **a green packaging run does not attach anything**.
 
-That last one is the quiet failure. The packaging workflow runs with `contents: read` on
-purpose, so it cannot edit releases and cannot be used to attach what it builds. Uploading is
-a separate manual step, and it is invisible when skipped: nothing fails, nothing warns, and
-the release page simply offers no download. 4.19.0 and 4.20.0 both shipped that way, so for a
-while the newest build anyone could install was 4.18.0 — two releases behind a `master` that
-had just fixed a data-safety bug. Verify with `gh release view vX.Y.Z --json assets`, and see
-issue #216 for making it harder to miss.
+That last one was the quiet failure, and is now handled. Uploading used to be a separate manual
+step, invisible when skipped: nothing failed, nothing warned, and the release page simply
+offered no download. 4.19.0 and 4.20.0 both shipped that way, so for a while the newest build
+anyone could install was 4.18.0 — two releases behind a `master` that had just fixed a
+data-safety bug.
+
+The workflow's `attach` job now does it, and verifies the release really carries both files
+afterwards. It is deliberately a *separate* job: it needs `contents: write`, and the reason the
+build jobs must not have that is they pip install a large third-party dependency tree, so the
+token and the untrusted code never share a job. That job installs nothing and uses no
+third-party action. `tests/packaging_test.py` pins both halves — that attaching happens, and
+that the privilege stays where nothing untrusted runs.
+
+Still worth a glance at `gh release view vX.Y.Z --json assets` before calling a release done.
 
 ## Open issues
 

@@ -113,18 +113,34 @@ def test_artifact_uploads_exclude_the_fallback_leg():
         )
 
 
+#: The one job allowed to write contents, and why. An explicit pair rather than a loosened
+#: rule: a job gaining this privilege has to be a decision someone made on purpose, which is
+#: the whole point of the test below.
+MAY_WRITE_CONTENTS = {
+    ("packaging.yml", "attach"): (
+        "Uploads the built installer and disk image to the release (#216), which cannot be "
+        "done with a read token. Acceptable only because that job installs nothing, checks "
+        "out nothing and uses no third-party action -- so the token never shares a job with "
+        "the dependency tree. tests/packaging_test.py::TestTheAttachJob pins those properties."
+    ),
+}
+
+
 def test_every_job_runs_with_least_privilege_permissions():
     """A job with no `permissions:` block inherits the repository default.
 
     That default is `write` unless someone changes it, which hands a token able to push to
     master and edit releases to jobs that `pip install` a large third-party dependency tree.
-    Nothing in these workflows needs to write contents, so an absent block is an oversight
-    rather than a choice -- and an invisible one, because CI stays green either way.
+    Almost nothing here needs to write contents, so an absent block is an oversight rather
+    than a choice -- and an invisible one, because CI stays green either way.
 
     Checked per job against the effective value (job-level overrides workflow-level) rather
     than against a pinned list, so a newly added workflow or job cannot slip in without a
     decision. Scopes other than `contents` are left alone: CodeQL genuinely needs
     `security-events: write` to upload its results.
+
+    The single exception is listed in MAY_WRITE_CONTENTS above, with its reason. Adding to that
+    list is the decision; inheriting the privilege by accident is what this prevents.
     """
     workflows = sorted(WORKFLOW.parent.glob("*.yml"))
     assert workflows, "no workflows found; the glob or the path is wrong"
@@ -138,10 +154,25 @@ def test_every_job_runs_with_least_privilege_permissions():
                 "sets no default, so it inherits the repository default. Add "
                 "`permissions:\n  contents: read` at the top of the workflow."
             )
+            if (path.name, job_name) in MAY_WRITE_CONTENTS:
+                continue
             assert effective.get("contents") in ("read", "none"), (
                 f"{path.name}: job {job_name!r} runs with contents: "
-                f"{effective.get('contents')!r}; none of these jobs write to the repository."
+                f"{effective.get('contents')!r}. If that is deliberate, add it to "
+                "MAY_WRITE_CONTENTS with the reason; otherwise it is an oversight."
             )
+
+
+def test_no_allowance_outlives_the_job_it_was_written_for():
+    """An allowance for a job that no longer exists is an unnoticed hole.
+
+    If `attach` is renamed or removed, MAY_WRITE_CONTENTS has to be updated with it, rather
+    than silently permitting a name that a different job might later take.
+    """
+    for (filename, job_name), reason in MAY_WRITE_CONTENTS.items():
+        workflow = yaml.safe_load((WORKFLOW.parent / filename).read_text(encoding="utf-8"))
+        assert job_name in workflow["jobs"], f"{filename} has no job {job_name!r}, but it is still allowed to write"
+        assert reason.strip(), f"{filename}:{job_name} is allowed to write with no reason given"
 
 
 def test_no_matrix_cancels_its_siblings_on_first_failure():

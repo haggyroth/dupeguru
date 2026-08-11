@@ -78,22 +78,24 @@ While the prerequisites above must be satisfied prior to having your pull reques
 5. Dispatch the packaging workflow **on the tag**, not on a branch:
    `gh workflow run packaging.yml --ref vX.Y.Z`. An artifact labelled 4.9.0 that does not
    contain the code tagged 4.9.0 is a mislabelled release, and that has happened once.
-6. **Attach the built installer and disk image to the release.** The packaging workflow
-   deliberately does not do this — it runs with `contents: read` so that jobs installing a
-   large third-party dependency tree cannot edit releases — so the artifacts sit on the
-   workflow run until somebody moves them:
+
+   Create the release *before* dispatching, or at least before the build finishes: the
+   workflow's `attach` job needs one to exist and fails loudly if it does not.
+6. **Confirm the release offers a download.** The `attach` job uploads the installer and disk
+   image and then re-reads the release to check they are really there, so this should be a
+   formality — but it is the step whose absence shipped 4.19.0 and 4.20.0 with nothing to
+   download at all, so confirm it rather than assume:
+
+   ```
+   gh release view vX.Y.Z --json assets -q '[.assets[].name]'
+   ```
+
+   If you dispatched with `attach: false`, or the job failed after the build succeeded, attach
+   by hand instead:
 
    ```
    gh run download <run-id> --dir /tmp/assets
    gh release upload vX.Y.Z /tmp/assets/*/dupeguru_osx_*.dmg /tmp/assets/*/dupeGuru_win64_*.exe
-   ```
-
-   A green packaging run is **not** the end of the release. 4.19.0 and 4.20.0 were both
-   published with no downloads at all because this step was not written down here — the newest
-   build anyone could get was two versions old, and nothing failed or warned. Check it:
-
-   ```
-   gh release view vX.Y.Z --json assets -q '[.assets[].name]'
    ```
 
 > **Release titles must be bare semver.** Name the GitHub release `4.4.1`, not
