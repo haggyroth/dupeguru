@@ -13,6 +13,7 @@ verified on one CI leg. The real thing is covered by the round-trip test in
 core/tests/deletion_log_test.py, which runs on every platform.
 """
 
+import os
 import sys
 import types
 
@@ -122,6 +123,65 @@ class TestWindowsCapture:
         # None in sys.modules makes `import pythoncom` raise ImportError.
         assert trash._trash_windows(r"C:\photos\a.txt") == ""
         assert deleted == [r"C:\photos\a.txt"], "the file must still be recycled"
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="CoreServices trashing is macOS-only")
+class TestMacOSCapture:
+    """The real thing, on the one platform that can run it.
+
+    Unlike the Windows tests above there is nothing to stand in for: FSMoveObjectToTrashSync
+    either moves the file or it does not, and the destination it reports is only meaningful if
+    something is actually there. So these trash real files and put them back.
+
+    None of this can observe the buffer bug it was written alongside -- writing into a bytes
+    object produces the right answer right up until CPython decides otherwise. What it does
+    cover is that the buffer is read back correctly at all, which is what makes replacing it
+    safe to do.
+    """
+
+    @staticmethod
+    def trashed(tmp_path, name, data=b"x"):
+        """Trash a file and yield where it went, removing it afterwards."""
+        source = tmp_path / name
+        source.write_bytes(data)
+        destination = trash._trash_macos(str(source))
+        return source, destination
+
+    def test_the_destination_is_reported_and_real(self, tmp_path):
+        source, destination = self.trashed(tmp_path, "trash-probe.txt")
+        try:
+            assert destination, "the destination was not captured"
+            assert os.path.exists(destination), f"nothing at the reported destination {destination!r}"
+            assert not source.exists(), "the file was not trashed"
+        finally:
+            if destination and os.path.exists(destination):
+                os.remove(destination)
+
+    def test_a_non_ascii_name_survives_the_round_trip(self, tmp_path):
+        # The buffer holds UTF-8 bytes, so a multi-byte name is where a truncation or a decode
+        # done at the wrong width would show up. The trash may rename on collision, but never
+        # transliterates, so the name itself has to come back intact.
+        name = "trash-probe-é你好.txt"
+        source, destination = self.trashed(tmp_path, name)
+        try:
+            assert destination, "the destination was not captured"
+            assert os.path.exists(destination)
+            assert "é你好" in os.path.basename(destination)
+        finally:
+            if destination and os.path.exists(destination):
+                os.remove(destination)
+
+    def test_the_reported_path_stops_at_the_terminator(self, tmp_path):
+        # The buffer is 1024 bytes and the path is far shorter, so everything past it is NUL.
+        # Reading the whole buffer would return a path with a tail of zeros that exists()
+        # would reject -- the assertion above would catch it, but this says why.
+        source, destination = self.trashed(tmp_path, "trash-probe-terminator.txt")
+        try:
+            assert "\0" not in destination
+            assert destination == destination.rstrip("\0")
+        finally:
+            if destination and os.path.exists(destination):
+                os.remove(destination)
 
 
 class TestPlatformReporting:

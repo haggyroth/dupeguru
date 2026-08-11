@@ -74,7 +74,7 @@ def can_report_destination() -> bool:
 def _trash_macos(str_path: str) -> str:
     """Trash via CoreServices, capturing the out-parameter send2trash discards."""
     try:
-        from ctypes import POINTER, Structure, byref, c_char, c_char_p, c_uint32, cdll
+        from ctypes import POINTER, Structure, byref, c_char, c_char_p, c_uint32, cdll, create_string_buffer
         from ctypes.util import find_library
 
         foundation = cdll.LoadLibrary(find_library("Foundation"))
@@ -100,9 +100,14 @@ def _trash_macos(str_path: str) -> str:
         check(make_ref(str_path.encode("utf-8"), 0x01, byref(source), None))
         target = FSRef()
         check(move_to_trash(byref(source), byref(target), 0))
-        buf = bytes(1024)
+        # A writable buffer, not a bytes object. FSRefMakePath writes the path into whatever it
+        # is handed, and ctypes will pass the interior pointer of a bytes just as readily -- so
+        # the obvious `bytes(1024)` appears to work while mutating an immutable object, which
+        # CPython does not promise to tolerate. create_string_buffer is the supported form, and
+        # .value already stops at the first NUL.
+        buf = create_string_buffer(1024)
         check(ref_to_path(byref(target), buf, len(buf)))
-        return buf.split(b"\0", 1)[0].decode("utf-8")
+        return buf.value.decode("utf-8")
     except OSError:
         # A genuine failure to trash. Let it propagate: the caller treats this as the file not
         # having been deleted, which is true.
