@@ -9,6 +9,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [4.17.0] - 2026-08-11
+
 ### Added
 
 - **The command line reports what a deletion removed.** `--delete` now writes a record — to
@@ -37,6 +39,23 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   install directory is nested inside a vendor folder, and only the inner one was removed. The
   new removal is guarded, so a different Hardcoded Software product installed alongside keeps
   its folder.
+
+### Development
+
+- **A stale compiled C extension is now reported before the tests run.** Pulling does not
+  rebuild the extensions in `setup.py`, and the resulting failure explains itself uniquely
+  badly: a stale `_block` handed a `bytes` object walks off the end of memory, so pytest dies
+  with a Windows access violation instead of a test failure — no assertion text, and the crash
+  lands inside an unrelated test. It is also per-machine, so CI never sees it. The
+  extension-to-source mapping is read out of `setup.py` rather than restated, so a new source
+  file cannot leave the check silently covering less than it claims. Thanks to @dchaudhari7177.
+
+### Documentation
+
+- Documented the exclusion list and the Windows backslash trap, on both the GUI and the command
+  line. Thanks to @dchaudhari7177.
+- Recorded the corpus that `MIN_SHARE` in the folder-overlap report was measured against, so the
+  constant is evidence rather than a guess.
 
 ## [4.16.0] - 2026-08-08
 
@@ -984,7 +1003,8 @@ fork no longer routes anyone or anything upstream, and CI runs for the first tim
 
 See `git log` for changes prior to this changelog.
 
-[Unreleased]: https://github.com/haggyroth/dupeguru/compare/v4.16.0...HEAD
+[Unreleased]: https://github.com/haggyroth/dupeguru/compare/v4.17.0...HEAD
+[4.17.0]: https://github.com/haggyroth/dupeguru/compare/v4.16.0...v4.17.0
 [4.16.0]: https://github.com/haggyroth/dupeguru/compare/v4.15.0...v4.16.0
 [4.15.0]: https://github.com/haggyroth/dupeguru/compare/v4.14.1...v4.15.0
 [4.14.1]: https://github.com/haggyroth/dupeguru/compare/v4.14.0...v4.14.1
