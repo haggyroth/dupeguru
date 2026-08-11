@@ -193,6 +193,14 @@ def build_plan(app: DupeGuru, clone_probe=None) -> DeletionPlan:
     itself uses -- so the plan reports the files that would be refused instead of assuming
     every marked file is removable. That costs a stat() per marked file, which is nothing
     beside the scan that produced the results.
+
+    *clone_probe*, when given, is asked about each file that would actually be deleted, and the
+    ones it accepts are reported as clonable instead. It is optional because answering costs a
+    real filesystem test per candidate; when it is None the plan simply never mentions cloning.
+
+    It was accepted and never called until #214, so ``cloneable`` was always 0 -- which made the
+    summary line about copy-on-write clones, and the preview's "replaced by a clone of the
+    reference", unreachable in every front end.
     """
     files = total_bytes = partial = full_content = blocked_bytes = cross_volume = 0
     cloneable = 0
@@ -231,6 +239,20 @@ def build_plan(app: DupeGuru, clone_probe=None) -> DeletionPlan:
                 if ref_device is not None and device is not None and device != ref_device:
                     cross_volume += 1
                     entry["cross_volume"] = True
+                # Asked only when a probe was supplied, which the GUI does only when the user
+                # has chosen to replace duplicates with clones. default_clone_probe performs a
+                # real clone and removes it -- measured at 180 us per candidate on APFS, so
+                # about 1.8 s over 10,000 -- and that is not a cost to pay for a question
+                # nobody asked.
+                #
+                # Do not be tempted to memoise the probe itself on (device, directory). It
+                # looks safe and is not: default_clone_probe also compares digests, so a False
+                # caused by one group's mismatch would be reused for a different group in the
+                # same directory whose files really are clonable. Only the filesystem question
+                # inside it is cacheable, and that belongs there rather than here.
+                if clone_probe is not None and clone_probe(dupe, group.ref):
+                    cloneable += 1
+                    entry["cloneable"] = True
             else:
                 blocked[status] = blocked.get(status, 0) + 1
                 blocked_bytes += dupe.size
