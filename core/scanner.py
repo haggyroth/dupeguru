@@ -169,6 +169,9 @@ class Scanner:
         # retried sequentially afterwards.
         failed_entries: list = []
         parallel_done = 0
+        worker_failures = 0  # futures that raised; each is retried sequentially
+        unreadable = 0  # files no attempt could read
+        pool_error = ""
 
         window_start = 0
         finished: set = set()  # ids of the current window's files whose futures came back
@@ -189,12 +192,15 @@ class Scanner:
                         except Exception as exc:
                             logging.warning("Worker failed for %s (%s), will retry", f.path, exc)
                             failed_entries.append((f, sz, mt))
+                            worker_failures += 1
                             parallel_done += 1
                             continue
                         if result is not None:
                             _, digest = result
                             _apply_digest(f, digest, sz, bigsize)
                             new_rows.append((f.path, sz, mt, digest))
+                        else:
+                            unreadable += 1
                         parallel_done += 1
                         if parallel_done % _BATCH_SIZE == 0:
                             hashcachedb.set_batch(new_rows)
@@ -208,7 +214,14 @@ class Scanner:
             # Pool-level failure: everything from the current window on that has not come back.
             # Ids from earlier windows are not in `finished`, but those windows are before
             # window_start and so are not in this slice.
-            failed_entries += [m for m in cache_misses[window_start:] if id(m[0]) not in finished]
+            stranded = [m for m in cache_misses[window_start:] if id(m[0]) not in finished]
+            failed_entries += stranded
+            pool_error = f"{type(exc).__name__}: {exc}"
+            self.scan_report.record_degradation("hashing", "pool", len(stranded), pool_error)
+
+        # Worker failures that the pool-level handler above did not already count: a stranded
+        # file is reported as a pool failure, not once more as a worker one.
+        self.scan_report.record_degradation("hashing", "worker", worker_failures)
 
         if failed_entries:
             for seq_done, (f, sz, mt) in enumerate(failed_entries, 1):
@@ -217,6 +230,8 @@ class Scanner:
                     _, digest = result
                     _apply_digest(f, digest, sz, bigsize)
                     new_rows.append((f.path, sz, mt, digest))
+                else:
+                    unreadable += 1
                 if seq_done % _BATCH_SIZE == 0:
                     hashcachedb.set_batch(new_rows)
                     new_rows = []
@@ -227,6 +242,7 @@ class Scanner:
 
         if new_rows:
             hashcachedb.set_batch(new_rows)
+        self.scan_report.record_degradation("hashing", "unreadable", unreadable)
         j.set_progress(total)
 
     def _verify_partial_matches(self, matches, j):

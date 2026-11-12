@@ -403,6 +403,11 @@ def _results_stats(app: DupeGuru, groups: list[dict]) -> dict:
         # so a consumer can rely on reading it rather than inferring completeness from silence.
         "truncated": app.scan_report.truncated,
         "truncations": list(app.scan_report.truncations),
+        # Same reasoning: present on every scan so a consumer reads it rather than inferring
+        # health from silence. A degraded scan may still be complete (a retry succeeded), so it
+        # is reported separately from `truncated`.
+        "degraded": app.scan_report.degraded,
+        "degradations": list(app.scan_report.degradations),
         # Reclaimable equals total_duplicate_size_bytes by construction (the reference always
         # stays); it is named explicitly because that equality is a fact worth stating rather
         # than a coincidence a reader has to rederive.
@@ -1553,6 +1558,13 @@ def main(argv=None) -> int:
         for line in app.scan_report.describe():
             print(f"warning:   {line}", file=sys.stderr)
         print("warning: more duplicates probably exist. Scan fewer folders at once.", file=sys.stderr)
+
+    # Also unconditional. Not necessarily an incomplete result -- a pool that died and was
+    # retried sequentially is only slow -- but a run that did not go as designed should say so.
+    if app.scan_report.degraded:
+        print("warning: this scan ran in a degraded state:", file=sys.stderr)
+        for line in app.scan_report.describe_degradations():
+            print(f"warning:   {line}", file=sys.stderr)
 
     if args.verbose:
         discarded = app.discarded_file_count

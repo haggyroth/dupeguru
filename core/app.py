@@ -618,6 +618,12 @@ class DupeGuru(Broadcaster):
                         "Scanning fewer folders at once will usually get through it."
                     ).format("\n".join(self.scan_report.describe()))
                 )
+            if self.scan_report.degraded:
+                self.view.show_message(
+                    tr("This scan ran in a degraded state:\n\n{}").format(
+                        "\n".join(self.scan_report.describe_degradations())
+                    )
+                )
             if not self.results.groups:
                 self.view.show_message(tr("No duplicates found."))
             else:
