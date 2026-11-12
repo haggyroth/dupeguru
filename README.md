@@ -363,6 +363,17 @@ than scanning without a threshold at all.
 Results saved before this fork recorded `partial_match` cannot be checked. Deleting from such
 a file warns and proceeds rather than reporting a false zero; re-scan if you need the flag.
 
+### How many files are hashed at once
+
+A contents scan hashes every file that shares a size with another, in parallel.
+`--hash-workers N` sets how many processes do that (the default, `0`, is one fewer than the
+cores; the preferences window has the same setting, "Hashing processes"). Hashing mostly waits
+on the disk, so the right number follows the storage rather than the CPU. On a pool of spinning
+disks, reading cold files, the cost per file fell from 11.6 ms with 1 process to 3.8 ms with 4
+and 2.0 ms with 16, while the disks stayed under one outstanding request at 4. Raise it when
+the disks are idle; lower it to leave them to other programs. It changes how long a scan takes,
+never what it finds.
+
 Run `dupeguru-scan --help` for the full option list, including the scanner knobs
 (`--min-match`, `--min-size`, `--max-size`, `--partial-hash-threshold`, and others).
 

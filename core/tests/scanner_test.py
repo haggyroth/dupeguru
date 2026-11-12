@@ -1134,6 +1134,7 @@ def test_scanner_declares_the_options_the_front_ends_set():
         "size_threshold",
         "large_size_threshold",
         "big_file_size_threshold",
+        "hash_workers",
         "full_verify",
         "include_exists_check",
         "scanned_tags",
@@ -1323,3 +1324,55 @@ def test_cache_key_is_none_for_an_unreadable_file(tmp_path):
     from core.scanner import _cache_key
 
     assert _cache_key(_WindowFile(tmp_path / "gone.bin", mtime_ns=0)) is None
+
+
+# ---------------------------------------------------------------------------
+# hash_workers: the number of hashing processes is a setting, not a guess
+# ---------------------------------------------------------------------------
+
+
+def _scanner(workers=0, parallel=True):
+    s = Scanner()
+    s.parallel_scan = parallel
+    s.hash_workers = workers
+    return s
+
+
+def test_hash_workers_defaults_to_automatic():
+    eq_(Scanner().hash_workers, 0)
+
+
+def test_automatic_is_one_fewer_than_the_cores(monkeypatch):
+    monkeypatch.setattr("core.scanner.os.cpu_count", lambda: 8)
+    eq_(_scanner()._hash_worker_count(), 7)
+
+
+def test_an_explicit_count_is_used_whatever_the_cores(monkeypatch):
+    # Hashing waits on the disk, so asking for more processes than cores is legitimate.
+    monkeypatch.setattr("core.scanner.os.cpu_count", lambda: 4)
+    monkeypatch.setattr("core.scanner.sys.platform", "linux")
+    eq_(_scanner(workers=12)._hash_worker_count(), 12)
+    monkeypatch.setattr("core.scanner.os.cpu_count", lambda: 64)
+    eq_(_scanner(workers=2)._hash_worker_count(), 2)
+
+
+def test_an_explicit_count_is_still_capped_on_windows(monkeypatch):
+    monkeypatch.setattr("core.scanner.sys.platform", "win32")
+    eq_(_scanner(workers=500)._hash_worker_count(), 61)
+
+
+def test_a_single_core_machine_still_gets_one_worker(monkeypatch):
+    monkeypatch.setattr("core.scanner.os.cpu_count", lambda: 1)
+    eq_(_scanner()._hash_worker_count(), 1)
+
+
+def test_a_scanner_that_is_not_parallel_ignores_the_setting():
+    eq_(_scanner(workers=8, parallel=False)._hash_worker_count(), 1)
+
+
+def test_the_pool_is_created_with_the_requested_count(tmp_path):
+    _reset_pool()
+    files = [_WindowFile(tmp_path / f"f{i}.bin") for i in range(4)]
+    scanner = _scanner(workers=3)
+    _run_hash(scanner, files)
+    eq_(_TrackingPool.created_with, 3)

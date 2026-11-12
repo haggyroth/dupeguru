@@ -1050,6 +1050,18 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     knobs.add_argument(
+        "--hash-workers",
+        type=int,
+        default=0,
+        metavar="N",
+        help=(
+            "Processes used to hash file contents in parallel (default: 0, which uses one fewer "
+            "than the number of cores). Hashing mostly waits on the disk, so on spinning or "
+            "shared storage the best value follows the storage rather than the CPU: raise it "
+            "if the disks are idle, lower it to leave them to other programs."
+        ),
+    )
+    knobs.add_argument(
         "--full-verify",
         action="store_true",
         help=(
@@ -1230,6 +1242,10 @@ def main(argv=None) -> int:
     # --- Basic flag validation --------------------------------------------
     if args.verbose and args.progress_json:
         print("error: --verbose and --progress-json are mutually exclusive", file=sys.stderr)
+        return EXIT_BAD_ARGS
+
+    if args.hash_workers < 0:
+        print("error: --hash-workers cannot be negative (0 means automatic)", file=sys.stderr)
         return EXIT_BAD_ARGS
 
     wants_delete = args.delete or args.direct_delete
@@ -1437,6 +1453,7 @@ def main(argv=None) -> int:
     app.options["size_threshold"] = args.min_size * 1024  # KB -> bytes
     app.options["large_size_threshold"] = args.max_size * 1024 * 1024  # MB -> bytes
     app.options["big_file_size_threshold"] = args.partial_hash_threshold * 1024 * 1024  # MiB -> bytes
+    app.options["hash_workers"] = args.hash_workers
     app.options["full_verify"] = args.full_verify
     app.options["verify_before_delete"] = args.verify
     # The core option keeps its original name; only the CLI spelling changed.

@@ -546,9 +546,12 @@ class TestScannerKnobs:
                     "--partial-hash-threshold",
                     "200",
                     "--rehash-ignore-mtime",
+                    "--hash-workers",
+                    "3",
                 ]
             )
 
+        assert captured_options["hash_workers"] == 3
         assert captured_options["min_match_percentage"] == 42
         assert captured_options["word_weighting"] is True
         assert captured_options["size_threshold"] == 5 * 1024
@@ -1840,3 +1843,41 @@ class TestFileListCache:
         _write_files(scan, {"a.txt": b"x"})
         assert main([str(scan), "--file-list-cache", str(db), "--dry-run"]) == EXIT_OK
         assert db.exists()
+
+
+class TestHashWorkersFlag:
+    """--hash-workers: a setting for how many processes hash file contents."""
+
+    def _options_for(self, tmp_path, *extra):
+        captured = {}
+        original_run = cli._run_scan
+
+        def _capture_run(app, verbose, progress_json=False):
+            captured.update(app.options)
+            return original_run(app, verbose, progress_json)
+
+        import unittest.mock as mock
+
+        _write_files(tmp_path, {"a.txt": b"same", "b.txt": b"same"})
+        with mock.patch("cli._run_scan", side_effect=_capture_run):
+            rc = main([str(tmp_path), *extra])
+        return rc, captured
+
+    def test_the_default_is_automatic(self, tmp_path):
+        _, options = self._options_for(tmp_path)
+        assert options["hash_workers"] == 0
+
+    def test_a_negative_count_is_rejected_as_bad_arguments(self, tmp_path, capsys):
+        _write_files(tmp_path, {"a.txt": b"same", "b.txt": b"same"})
+        rc = main([str(tmp_path), "--hash-workers", "-1"])
+        assert rc == EXIT_BAD_ARGS
+        assert "--hash-workers" in capsys.readouterr().err
+
+    def test_zero_is_accepted_and_means_automatic(self, tmp_path):
+        rc, options = self._options_for(tmp_path, "--hash-workers", "0")
+        assert rc == EXIT_DUPES_FOUND
+        assert options["hash_workers"] == 0
+
+    def test_a_count_does_not_change_what_is_found(self, tmp_path):
+        rc, _ = self._options_for(tmp_path, "--hash-workers", "2")
+        assert rc == EXIT_DUPES_FOUND

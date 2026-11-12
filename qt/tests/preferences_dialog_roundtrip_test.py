@@ -197,6 +197,42 @@ class TestNonBooleanPreferences:
         assert restore_prefs.destination_type == 2
 
 
+class TestStandardOnlyHashWorkers:
+    """The GUI's --hash-workers. Only standard mode hashes file contents, so only its dialog has it.
+
+    Both directions, for the reason in the module docstring: a round trip alone cannot catch a
+    value that ``_save`` never writes.
+    """
+
+    def test_saving_reads_the_widget(self, open_dialog, restore_prefs):
+        dialog, _ = open_dialog("standard")
+        restore_prefs.hash_workers = 0
+        dialog.load()
+        dialog.hashWorkersSpinBox.setValue(9)
+        dialog.save()
+        assert restore_prefs.hash_workers == 9
+
+    def test_loading_shows_the_preference(self, open_dialog, restore_prefs):
+        dialog, _ = open_dialog("standard")
+        restore_prefs.hash_workers = 5
+        dialog.load()
+        assert dialog.hashWorkersSpinBox.value() == 5
+
+    def test_saving_untouched_changes_nothing(self, open_dialog, restore_prefs):
+        dialog, _ = open_dialog("standard")
+        restore_prefs.hash_workers = 4
+        dialog.load()
+        dialog.save()
+        assert restore_prefs.hash_workers == 4
+
+    def test_zero_means_automatic_and_round_trips(self, open_dialog, restore_prefs):
+        dialog, _ = open_dialog("standard")
+        restore_prefs.hash_workers = 0
+        dialog.load()
+        dialog.save()
+        assert restore_prefs.hash_workers == 0
+
+
 class TestPictureSpecifics:
     def test_the_similarity_slider_follows_the_scan_type(self, open_dialog, restore_prefs):
         # Filter hardness only means something for the fuzzy block scan; leaving it enabled for
