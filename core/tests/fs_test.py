@@ -6,6 +6,7 @@
 # which should be included with this package. The terms are also available at
 # http://www.gnu.org/licenses/gpl-3.0.html
 
+import os
 import sqlite3
 import typing
 from os import urandom
@@ -264,3 +265,24 @@ def test_filesdb_connect_twice_does_not_leak(tmp_path):
             first.execute("SELECT 1")
     finally:
         db.close()
+
+
+def test_file_from_a_direntry_records_the_nanosecond_mtime(tmp_path):
+    """The hash cache is keyed on it; reading it from the listing saves a stat per file."""
+    p = tmp_path / "a.bin"
+    p.write_bytes(b"abc")
+    with os.scandir(tmp_path) as it:
+        entry = next(it)
+    f = fs.File(entry)
+    assert object.__getattribute__(f, "mtime_ns") == p.stat().st_mtime_ns
+
+
+def test_file_from_a_cached_entry_reads_the_nanosecond_mtime_on_demand(tmp_path):
+    """A cached listing only has a float, which cannot reproduce the integer the cache was keyed on."""
+    p = tmp_path / "a.bin"
+    p.write_bytes(b"abc")
+    st = p.stat()
+    entry = fs.CachedDirEntry("a.bin", str(p), False, False, st.st_size, st.st_mtime)
+    f = fs.File(entry)
+    assert object.__getattribute__(f, "mtime_ns") is fs.NOT_SET
+    assert f.mtime_ns == st.st_mtime_ns

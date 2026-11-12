@@ -1150,3 +1150,176 @@ def test_full_verify_defaults_off_and_survives_the_bridge():
             setattr(s, k, v)
     eq_(s.full_verify, True)
     assert not hasattr(s, "not_a_scanner_option")
+
+
+# ---------------------------------------------------------------------------
+# Bounded submission, stat-free cache keys, Windows worker cap
+# ---------------------------------------------------------------------------
+
+
+class _WindowFile:
+    digest = None
+    digest_partial = None
+    digest_samples = None
+
+    def __init__(self, path, size=10, mtime_ns=1_700_000_000_000_000_000):
+        self.path = path
+        self.size = size
+        self.mtime_ns = mtime_ns
+        self.name = path.name
+
+
+class _TrackingPool:
+    """Counts futures that have been submitted but not yet handed back by as_completed."""
+
+    outstanding = 0
+    peak = 0
+    created_with = None
+
+    def __init__(self, max_workers):
+        type(self).created_with = max_workers
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def submit(self, fn, path_str):
+        cls = type(self)
+        cls.outstanding += 1
+        cls.peak = max(cls.peak, cls.outstanding)
+        return _Done(path_str)
+
+
+class _Done:
+    def __init__(self, path_str):
+        self._path = path_str
+
+    def result(self):
+        return (self._path, b"digest")
+
+
+def _tracking_as_completed(fmap):
+    for fut in list(fmap):
+        _TrackingPool.outstanding -= 1
+        yield fut
+
+
+def _reset_pool():
+    _TrackingPool.outstanding = 0
+    _TrackingPool.peak = 0
+    _TrackingPool.created_with = None
+
+
+def _patched_hashing(pool=_TrackingPool, as_completed=_tracking_as_completed, worker=None):
+    from core import hash_cache as hc_module
+
+    return (
+        patch.object(hc_module.hashcachedb, "get", return_value=None),
+        patch.object(hc_module.hashcachedb, "set_batch"),
+        patch.object(hc_module.hashcachedb, "conn", new=object()),
+        patch("core.scanner.ProcessPoolExecutor", pool),
+        patch("core.scanner.as_completed", as_completed),
+        patch("core.scanner.hash_file_worker", worker or (lambda p: (p, b"digest"))),
+    )
+
+
+def _run_hash(scanner, files):
+    from contextlib import ExitStack
+
+    with ExitStack() as stack:
+        for ctx in _patched_hashing():
+            stack.enter_context(ctx)
+        scanner._hash_files_parallel(files, job.nulljob)
+
+
+def test_parallel_hasher_never_has_more_than_one_window_in_flight(tmp_path, monkeypatch):
+    """Submitting every miss at once is what cost ~2.3 KB of parent memory per file."""
+    monkeypatch.setattr("core.scanner._HASH_WINDOW", 3)
+    _reset_pool()
+    files = [_WindowFile(tmp_path / f"f{i}.bin") for i in range(10)]
+    scanner = Scanner()
+    scanner.parallel_scan = True
+    _run_hash(scanner, files)
+    assert _TrackingPool.peak == 3
+    assert all(f.digest == b"digest" for f in files), "every window must be hashed, not just the first"
+
+
+def test_parallel_hasher_crash_in_one_window_retries_later_windows(tmp_path, monkeypatch):
+    """A pool that dies mid-run must not drop the windows it never got to submit."""
+    monkeypatch.setattr("core.scanner._HASH_WINDOW", 2)
+    files = [_WindowFile(tmp_path / f"f{i}.bin") for i in range(5)]
+    calls = {"n": 0}
+
+    def crashing_as_completed(fmap):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise RuntimeError("pool died in window 2")
+        yield from fmap
+
+    sequential = []
+
+    def worker(path_str):
+        sequential.append(path_str)
+        return (path_str, b"fallback")
+
+    from contextlib import ExitStack
+
+    scanner = Scanner()
+    scanner.parallel_scan = True
+    _reset_pool()
+    with ExitStack() as stack:
+        for ctx in _patched_hashing(as_completed=crashing_as_completed, worker=worker):
+            stack.enter_context(ctx)
+        scanner._hash_files_parallel(files, job.nulljob)
+
+    assert [f.digest for f in files[:2]] == [b"digest", b"digest"], "window 1 finished in the pool"
+    assert all(f.digest == b"fallback" for f in files[2:]), "window 2 onward falls back to sequential"
+    assert sorted(sequential) == sorted(str(f.path) for f in files[2:])
+
+
+def test_parallel_hasher_caps_workers_on_windows(tmp_path, monkeypatch):
+    """ProcessPoolExecutor raises above 61 workers on Windows, which used to mean silently sequential."""
+    monkeypatch.setattr("core.scanner.sys.platform", "win32")
+    monkeypatch.setattr("core.scanner.os.cpu_count", lambda: 128)
+    _reset_pool()
+    scanner = Scanner()
+    scanner.parallel_scan = True
+    _run_hash(scanner, [_WindowFile(tmp_path / "a.bin"), _WindowFile(tmp_path / "b.bin")])
+    assert _TrackingPool.created_with == 61
+
+
+def test_parallel_hasher_does_not_cap_workers_elsewhere(tmp_path, monkeypatch):
+    monkeypatch.setattr("core.scanner.sys.platform", "linux")
+    monkeypatch.setattr("core.scanner.os.cpu_count", lambda: 128)
+    _reset_pool()
+    scanner = Scanner()
+    scanner.parallel_scan = True
+    _run_hash(scanner, [_WindowFile(tmp_path / "a.bin"), _WindowFile(tmp_path / "b.bin")])
+    assert _TrackingPool.created_with == 127
+
+
+def test_cache_key_uses_collected_metadata_without_touching_the_disk(tmp_path):
+    """The path does not exist: a stat() here would return None, so a key proves none was made."""
+    from core.scanner import _cache_key
+
+    f = _WindowFile(tmp_path / "missing.bin", size=42, mtime_ns=123456789)
+    assert _cache_key(f) == (42, 123456789)
+
+
+def test_cache_key_falls_back_to_stat_when_no_nanosecond_timestamp(tmp_path):
+    """Files built from the file-list cache have only a float mtime."""
+    from core.scanner import _cache_key
+
+    p = tmp_path / "real.bin"
+    p.write_bytes(b"x" * 7)
+    st = p.stat()
+    f = _WindowFile(p, size=999, mtime_ns=0)
+    assert _cache_key(f) == (st.st_size, st.st_mtime_ns)
+
+
+def test_cache_key_is_none_for_an_unreadable_file(tmp_path):
+    from core.scanner import _cache_key
+
+    assert _cache_key(_WindowFile(tmp_path / "gone.bin", mtime_ns=0)) is None
