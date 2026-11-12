@@ -418,6 +418,42 @@ class Scanner:
                 f.words = func(f)
             return engine.getmatches(files, j=j, report=self.scan_report, **kw)
 
+    def _getmatches_classed(self, files, j):
+        """``(matches, classes)`` with byte-identical pictures matched as classes, or None.
+
+        None means this scan has no such route, and the caller takes the ordinary one. Picture
+        mode overrides it; see :mod:`core.pe.identical` for what a class is and why it is safe.
+        """
+        return None
+
+    def _expand_picture_classes(self, groups, classes):
+        """Turn groups of representatives back into groups of every picture they stand for.
+
+        *groups* came from matches over one representative per class, plus pictures that are
+        alone, and was seeded with each representative (see get_dupe_groups). A group holding a
+        representative takes in its whole class, with the percentage between two classes read from
+        the matches the representatives had. A class nothing joined is a group of its own: that is
+        what the pairwise route produced, because a set of identical pictures is all 100% matches.
+        Nothing here builds a match per pair.
+        """
+        by_rep = {members[0]: members for members in classes}
+        result = []
+        for group in groups:
+            reps = list(group.ordered)
+            if not any(rep in by_rep for rep in reps):
+                result.append(group)
+                continue
+            if len(reps) == 1:
+                result.append(engine.Group.from_identical(by_rep[reps[0]], 100, False, engine.MatchKind.RESEMBLANCE))
+                continue
+            index = {rep: i for i, rep in enumerate(reps)}
+            between = {}
+            for match in group.matches:
+                low, high = sorted((index[match.first], index[match.second]))
+                between[(low, high)] = match.percentage
+            result.append(engine.Group.from_classes([by_rep.get(rep, [rep]) for rep in reps], between))
+        return result
+
     @staticmethod
     def _key_func(dupe):
         return -dupe.size
@@ -466,6 +502,7 @@ class Scanner:
         # full verification filters matches, and folder mode has a match-based filter of its own.
         use_classes = self.scan_type == ScanType.CONTENTS and not combining and not self.full_verify
         intact_classes = None
+        picture_classes = []
         if use_classes:
             classes = self._getclasses(files, match_job)
             logging.info("Found %d content class(es)" % len(classes))
@@ -482,8 +519,15 @@ class Scanner:
             if broken:
                 logging.info("Falling back to pairwise grouping for %d class(es)" % len(broken))
         else:
-            matches = self._getmatches(files, match_job)
-            logging.info("Found %d matches" % len(matches))
+            # Without an ignore list, which removes individual pairs and so is not something a
+            # class can stand in for. See core.pe.identical for everything that falls back.
+            classed = None if (combining or ignore_list) else self._getmatches_classed(files, match_job)
+            if classed is not None:
+                matches, picture_classes = classed
+                logging.info("Found %d matches and %d identical class(es)" % (len(matches), len(picture_classes)))
+            else:
+                matches = self._getmatches(files, match_job)
+                logging.info("Found %d matches" % len(matches))
         if combining:
             # Only alongside a contents scan. Merging resemblances into a filename or tag scan
             # would mix two weak signals and call the result a duplicate.
@@ -530,7 +574,19 @@ class Scanner:
         if ignore_list:
             matches = [m for m in matches if not ignore_list.are_ignored(str(m.first.path), str(m.second.path))]
         logging.info("Grouping matches")
-        groups = engine.get_groups(matches, report=self.scan_report)
+        # The pairwise route formed each identical set as a group before any weaker match was read.
+        # After that, a match between two files in different groups was skipped, so one class could
+        # neither merge with another nor join a group of lookalikes -- but a lone picture could join
+        # the class. Seeding the groups with each class's representative reproduces exactly that.
+        preformed = []
+        for members in picture_classes:
+            seed = engine.Group()
+            seed.ordered = [members[0]]
+            seed.unordered = {members[0]}
+            preformed.append(seed)
+        groups = engine.get_groups(matches, report=self.scan_report, preformed=preformed)
+        if picture_classes:
+            groups = self._expand_picture_classes(groups, picture_classes)
         if intact_classes:
             groups += [
                 engine.Group.from_identical(part, 100, partial, engine.MatchKind.EXACT)

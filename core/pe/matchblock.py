@@ -20,6 +20,7 @@ from core.pe.bktree import BKTree
 from core.pe.cache import colors_to_bytes
 from core.pe.cache_sqlite import SqliteCache
 from core.pe import match_cache as match_cache_module
+from core.pe import identical
 from core.workers import worker_count
 
 MIN_ITERATIONS = 3
@@ -241,6 +242,46 @@ def getmatches(
     workers=0,
 ):
     """Return a list of Match objects for pictures whose block signatures are
+    similar enough to meet *threshold* (0-100). Every similar pair, including every pair of
+    identical files; see :func:`getmatches_classed` for the form that does not materialise those.
+    """
+    matches, _ = _getmatches(
+        pictures, cache_path, threshold, match_scaled, match_rotated, j, match_cache, report, workers, None
+    )
+    return matches
+
+
+def getmatches_classed(
+    pictures,
+    cache_path,
+    threshold,
+    collapse,
+    match_scaled=False,
+    match_rotated=False,
+    j=job.nulljob,
+    match_cache=None,
+    report=None,
+    workers=0,
+):
+    """Like :func:`getmatches`, but byte-identical pictures are matched once, as a class.
+
+    Returns ``(matches, classes)``. *classes* lists every set of identical pictures that was
+    collapsed, each as a list whose first member is the representative; *matches* covers only the
+    representatives and the pictures that are alone. Pairs inside a class, and pairs between a
+    class and anything else, are not in *matches* -- they are implied by it (see
+    :mod:`core.pe.identical`).
+
+    *collapse* is a :class:`core.pe.identical.Collapse`.
+    """
+    return _getmatches(
+        pictures, cache_path, threshold, match_scaled, match_rotated, j, match_cache, report, workers, collapse
+    )
+
+
+def _getmatches(
+    pictures, cache_path, threshold, match_scaled, match_rotated, j, match_cache, report, workers, collapse
+):
+    """Return a list of Match objects for pictures whose block signatures are
     similar enough to meet *threshold* (0–100).
 
     Uses a BK-tree index to prune the O(n²) comparison space to O(n log n)
@@ -259,12 +300,17 @@ def getmatches(
     """
     scan_key = None
     if match_cache is not None:
-        scan_key = match_cache_module.compute_key(pictures, threshold, match_scaled, match_rotated)
-        cached = match_cache.get(scan_key, pictures)
+        # The collapse options are part of the key: they decide which pictures were classes, so a
+        # set stored under one setting is wrong for another.
+        scan_key = match_cache_module.compute_key(
+            pictures, threshold, match_scaled, match_rotated, extra=repr(collapse)
+        )
+        cached = match_cache.get_with_classes(scan_key, pictures)
         if cached is not None:
-            logging.info("Reusing %d cached picture matches", len(cached))
+            matches, classes = cached
+            logging.info("Reusing %d cached picture matches", len(matches))
             j.set_progress(100, tr("Reusing previous match results"))
-            return cached
+            return matches, classes
     j = j.start_subjob([3, 7])
     pictures = prepare_pictures(
         pictures, cache_path, not match_scaled, match_rotated, j=j, report=report, workers=workers
@@ -289,10 +335,25 @@ def getmatches(
     cache.close()
 
     pictures = [p for p in pictures if p in pic_to_blocks]
+
+    classes = []
+    if collapse is not None:
+        # Only pictures the matcher would actually have compared can be collapsed: one with no
+        # orientation-0 signature matched nothing before, so grouping its identical copies now
+        # would invent groups the pairwise route never produced.
+        classes = identical.identical_classes(
+            pictures, lambda pic: (tuple(pic_to_blocks[pic]) if pic_to_blocks[pic][0] else None), collapse
+        )
+        pictures = identical.representatives(pictures, classes)
     id2picture = {p.cache_id: p for p in pictures}
 
     if len(pictures) < 2:
-        return []
+        # Everything may have collapsed into classes that resemble nothing else. That is a real
+        # result with nothing to compare, and worth remembering: without this a rescan of such a
+        # corpus would decode it all again.
+        if classes and match_cache is not None and scan_key is not None:
+            match_cache.put(scan_key, [], classes)
+        return [], classes
 
     # --- Group pictures by (normalised) dimensions ---
     # Building separate BK-trees per dimension group means we never waste
@@ -381,6 +442,6 @@ def getmatches(
         result.append(get_match(ref, other, pct))
 
     if match_cache is not None and scan_key is not None:
-        match_cache.put(scan_key, result)
+        match_cache.put(scan_key, result, classes)
 
-    return result
+    return result, classes

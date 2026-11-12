@@ -8,7 +8,7 @@ from hscommon.trans import tr
 
 from core.scanner import Scanner, ScanType, ScanOption
 
-from core.pe import matchblock, matchexif
+from core.pe import identical, matchblock, matchexif
 
 
 class ScannerPE(Scanner):
@@ -25,6 +25,22 @@ class ScannerPE(Scanner):
             ScanOption(ScanType.FUZZYBLOCK, tr("Contents")),
             ScanOption(ScanType.EXIFTIMESTAMP, tr("EXIF Timestamp")),
         ]
+
+    def _getmatches_classed(self, files, j):
+        if self.scan_type != ScanType.FUZZYBLOCK:
+            return None
+        return matchblock.getmatches_classed(
+            files,
+            cache_path=self.cache_path,
+            threshold=self.min_match_percentage,
+            collapse=identical.Collapse(self.mix_file_kind, self.include_exists_check),
+            match_scaled=self.match_scaled,
+            match_rotated=self.match_rotated,
+            j=j,
+            match_cache=self.match_cache,
+            report=self.scan_report,
+            workers=self.workers,
+        )
 
     def _getmatches(self, files, j):
         if self.scan_type == ScanType.FUZZYBLOCK:

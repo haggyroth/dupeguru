@@ -41,7 +41,7 @@ from core.engine import Match, MatchKind
 # Bumped when the stored shape changes. On mismatch the cache is dropped rather than
 # migrated: everything here is recomputable, so a rebuild is always cheaper and safer than a
 # migration path nobody exercises.
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 CACHE_FILENAME = "picture_matches.db"
 
@@ -51,7 +51,7 @@ def default_cache_path(appdata) -> str:
     return os.path.join(appdata, CACHE_FILENAME)
 
 
-def compute_key(pictures, threshold, match_scaled, match_rotated) -> str:
+def compute_key(pictures, threshold, match_scaled, match_rotated, extra: str = "") -> str:
     """A digest of everything that can change the match set.
 
     Includes size and mtime, not just paths: a file edited in place keeps its path, and
@@ -61,9 +61,13 @@ def compute_key(pictures, threshold, match_scaled, match_rotated) -> str:
     cache. Uses the size and mtime already loaded during collection, so this costs no
     syscalls -- important, because a key that re-stats every file would spend exactly what
     the cache is meant to save.
+
+    *extra* carries any further setting that changes what is stored -- today, how identical
+    pictures were collapsed -- so a set is never served to a scan that would have built another.
     """
     digest = hashlib.blake2b(digest_size=16)
-    digest.update(f"v{SCHEMA_VERSION}|{threshold}|{int(bool(match_scaled))}|{int(bool(match_rotated))}|".encode())
+    flags = f"{int(bool(match_scaled))}|{int(bool(match_rotated))}"
+    digest.update(f"v{SCHEMA_VERSION}|{threshold}|{flags}|{extra}|".encode())
     for path, size, mtime in sorted((str(p.path), p.size, int(p.mtime)) for p in pictures):
         digest.update(f"{path}\0{size}\0{mtime}\0".encode("utf-8", "surrogateescape"))
     return digest.hexdigest()
@@ -87,6 +91,7 @@ class MatchCache:
         if row is not None and row[0] != str(SCHEMA_VERSION):
             logging.debug("match cache schema %s != %s, discarding", row[0], SCHEMA_VERSION)
             self.con.execute("DROP TABLE IF EXISTS matches")
+            self.con.execute("DROP TABLE IF EXISTS classes")
             row = None
         self.con.execute(
             "CREATE TABLE IF NOT EXISTS matches ("
@@ -94,6 +99,15 @@ class MatchCache:
             "percentage INTEGER NOT NULL)"
         )
         self.con.execute("CREATE INDEX IF NOT EXISTS idx_matches_key ON matches (scan_key)")
+        # Classes of byte-identical pictures collapsed before matching (see core.pe.identical).
+        # The matches above then name only representatives, so the two are one result and are
+        # stored and replaced together. ``position`` keeps a class's members in order, the first
+        # being the representative.
+        self.con.execute(
+            "CREATE TABLE IF NOT EXISTS classes ("
+            "scan_key TEXT NOT NULL, class_id INTEGER NOT NULL, position INTEGER NOT NULL, path TEXT NOT NULL)"
+        )
+        self.con.execute("CREATE INDEX IF NOT EXISTS idx_classes_key ON classes (scan_key)")
         if row is None:
             self.con.execute(
                 "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)",
@@ -125,20 +139,69 @@ class MatchCache:
             matches.append(Match(first, second, percentage, False, kind=MatchKind.RESEMBLANCE))
         return matches
 
-    def put(self, scan_key: str, matches) -> None:
+    def get_with_classes(self, scan_key: str, pictures):
+        """``(matches, classes)`` for this key, or None when it was never stored.
+
+        *classes* is a list of lists of pictures, each starting with its representative; empty
+        when the stored scan collapsed nothing. As in :meth:`get`, a path that is not among
+        *pictures* makes the whole thing a miss rather than a partial answer.
+        """
+        if self.con is None:
+            return None
+        match_rows = self.con.execute(
+            "SELECT first_path, second_path, percentage FROM matches WHERE scan_key=?", (scan_key,)
+        ).fetchall()
+        class_rows = self.con.execute(
+            "SELECT class_id, path FROM classes WHERE scan_key=? ORDER BY class_id, position", (scan_key,)
+        ).fetchall()
+        # Nothing stored under this key. An empty match set is still a real result -- everything
+        # may have collapsed into classes that resemble nothing else -- and is told apart by the
+        # classes being present.
+        if not match_rows and not class_rows:
+            return None
+        by_path = {str(p.path): p for p in pictures}
+        matches = []
+        for first_path, second_path, percentage in match_rows:
+            first, second = by_path.get(first_path), by_path.get(second_path)
+            if first is None or second is None:
+                logging.warning("Match cache references a file not in this scan; recomputing")
+                return None
+            matches.append(Match(first, second, percentage, False, kind=MatchKind.RESEMBLANCE))
+        grouped = {}
+        for class_id, path in class_rows:
+            picture = by_path.get(path)
+            if picture is None:
+                logging.warning("Match cache references a file not in this scan; recomputing")
+                return None
+            grouped.setdefault(class_id, []).append(picture)
+        return matches, list(grouped.values())
+
+    def put(self, scan_key: str, matches, classes=()) -> None:
         """Replace the stored set. Only the newest key is kept.
 
         Keeping older keys would grow the file without bound for no benefit: a key is only
         ever hit by a scan with identical inputs, so a superseded one is dead weight.
+
+        *classes* are stored with the matches because the matches alone are incomplete without
+        them: they name only representatives.
         """
         if self.con is None:
             return
         try:
             self.con.execute("BEGIN")
             self.con.execute("DELETE FROM matches")
+            self.con.execute("DELETE FROM classes")
             self.con.executemany(
                 "INSERT INTO matches (scan_key, first_path, second_path, percentage) VALUES (?, ?, ?, ?)",
                 [(scan_key, str(m.first.path), str(m.second.path), int(m.percentage)) for m in matches],
+            )
+            self.con.executemany(
+                "INSERT INTO classes (scan_key, class_id, position, path) VALUES (?, ?, ?, ?)",
+                [
+                    (scan_key, class_id, position, str(member.path))
+                    for class_id, members in enumerate(classes)
+                    for position, member in enumerate(members)
+                ],
             )
             self.con.execute("COMMIT")
         except sqlite3.Error:
@@ -149,6 +212,7 @@ class MatchCache:
     def clear(self) -> None:
         if self.con is not None:
             self.con.execute("DELETE FROM matches")
+            self.con.execute("DELETE FROM classes")
 
     def close(self) -> None:
         if self.con is not None:
