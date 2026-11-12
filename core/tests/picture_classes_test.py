@@ -86,9 +86,7 @@ def describe(groups):
     described = {}
     for group in groups:
         members = frozenset(str(f.path) for f in group)
-        described[members] = {
-            frozenset((str(m.first.path), str(m.second.path))): m.percentage for m in group.matches
-        }
+        described[members] = {frozenset((str(m.first.path), str(m.second.path))): m.percentage for m in group.matches}
     return described
 
 
@@ -567,9 +565,9 @@ class TestSavingAndLoading:
         reloaded = Results(app)
         reloaded.load_from_xml(
             io.BytesIO(buf.getvalue()),
-            lambda path: None
-            if path.endswith("a3")
-            else NamedObject(PurePosixPath(path.replace("\\", "/")).name, size=10),
+            lambda path: (
+                None if path.endswith("a3") else NamedObject(PurePosixPath(path.replace("\\", "/")).name, size=10)
+            ),
         )
         [group] = reloaded.groups
         assert len(group) == 70
