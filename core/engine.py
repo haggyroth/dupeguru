@@ -54,8 +54,22 @@ class ScanReport:
         "limit": "reached the maximum number of matches it can hold",
     }
 
+    #: What a degradation means, in words. ``{n}`` is the file count. Unlike a truncation these
+    #: say what the user still has: the first two cost time but not results, the third is a real
+    #: gap in what was examined.
+    DEGRADATIONS = {
+        "pool": "the hashing worker pool failed, so {n} file(s) were hashed one at a time (slower, results unaffected)",
+        "worker": "a hashing worker failed on {n} file(s), which were retried one at a time (results unaffected)",
+        "unreadable": "{n} file(s) could not be read while hashing and were not compared by content",
+    }
+
     def __init__(self):
         self.truncations = []
+        # Stages that did not give up but did not run the way they should have. Kept apart from
+        # truncations because most of them lose nothing: a pool that died and was retried
+        # sequentially produces the same answer, an hour later. Writing that only to the log made
+        # a degraded run look identical to a healthy one.
+        self.degradations = []
 
     def record_truncation(self, stage: str, reason: str, kept: int) -> None:
         """Note that *stage* stopped early, keeping only *kept* of what it would have found."""
@@ -64,6 +78,38 @@ class ScanReport:
     @property
     def truncated(self) -> bool:
         return bool(self.truncations)
+
+    def record_degradation(self, stage: str, kind: str, count: int, detail: str = "") -> None:
+        """Note that *stage* hit trouble affecting *count* files, without losing the scan.
+
+        Several calls with the same stage and kind add up rather than repeating, so a stage
+        that reports per batch still produces one line.
+        """
+        if count <= 0:
+            return
+        for entry in self.degradations:
+            if entry["stage"] == stage and entry["kind"] == kind:
+                entry["count"] += count
+                if detail and not entry["detail"]:
+                    entry["detail"] = detail
+                return
+        self.degradations.append({"stage": stage, "kind": kind, "count": count, "detail": detail})
+
+    @property
+    def degraded(self) -> bool:
+        return bool(self.degradations)
+
+    def describe_degradations(self) -> list:
+        """The degradations as human-readable lines, without a leading label."""
+        lines = []
+        for entry in self.degradations:
+            text = self.DEGRADATIONS.get(entry["kind"], entry["kind"] + " ({n} file(s))").format(
+                n=f"{entry['count']:,}"
+            )
+            if entry["detail"]:
+                text += f" [{entry['detail']}]"
+            lines.append(f"{entry['stage']}: {text}")
+        return lines
 
     def describe(self) -> list:
         """The truncations as human-readable lines, without a leading label.

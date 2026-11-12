@@ -257,6 +257,10 @@ class TestNdjsonOutput:
                 # rather than inferring it from the absence of a warning (issue #180).
                 "truncated": False,
                 "truncations": [],
+                # Likewise present on every scan: a run that recovered from a hashing failure
+                # is complete but not healthy, and says so here rather than only in a log.
+                "degraded": False,
+                "degradations": [],
                 "total_reclaimable_bytes": 0,
                 "reclaimable_partial_bytes": 0,
                 "confirmed_reclaimable_bytes": 0,
