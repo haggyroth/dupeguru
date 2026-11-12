@@ -27,6 +27,53 @@ from core.markable import Markable
 _XML_INVALID_CHARS = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f]")
 
 
+def _rebuild_classed_group(group_elem, saved_files):
+    """A group of identical-file classes from its saved form, or None when it cannot be rebuilt.
+
+    ``<class members="0,1,2">`` lists the saved positions of one class; every file in no such
+    element is a class of its own. ``<match>`` elements give the percentage between two classes,
+    named by one member of each. Anything inconsistent -- a missing file that leaves two classes
+    with no recorded match, an index out of range -- returns None, and the caller falls back to
+    treating it as an ordinary group rather than showing invented percentages.
+    """
+    try:
+        class_of = {}
+        classes = []
+        for class_elem in group_elem.iter("class"):
+            members = [saved_files[int(i)] for i in class_elem.get("members", "").split(",") if i != ""]
+            members = [m for m in members if m is not None]
+            if len(members) < 2:
+                # Too few left to be a class; its survivors fall through as singletons below.
+                continue
+            for member in members:
+                class_of[id(member)] = len(classes)
+            classes.append(members)
+        # Singletons, in saved order alongside the classes, so class positions are stable.
+        ordered_classes = []
+        emitted = set()
+        for file in saved_files:
+            if file is None:
+                continue
+            index = class_of.get(id(file))
+            if index is None:
+                ordered_classes.append([file])
+            elif index not in emitted:
+                emitted.add(index)
+                ordered_classes.append(classes[index])
+        position = {id(m): i for i, members in enumerate(ordered_classes) for m in members}
+        between = {}
+        for match_elem in group_elem.iter("match"):
+            attrs = match_elem.attrib
+            first, second = saved_files[int(attrs["first"])], saved_files[int(attrs["second"])]
+            if first is None or second is None:
+                continue
+            low, high = sorted((position[id(first)], position[id(second)]))
+            between[(low, high)] = int(attrs["percentage"])
+        return engine.Group.from_classes(ordered_classes, between)
+    except (IndexError, KeyError, ValueError):
+        return None
+
+
 class Results(Markable):
     """Manages a collection of duplicate :class:`~core.engine.Group`.
 
@@ -238,17 +285,24 @@ class Results(Markable):
         for group_elem in j.iter_with_progress(group_elems, every=100):
             group = engine.Group()
             dupes = []
+            # Parallel to the saved file elements, None where a file is gone. A class refers to
+            # its members by their position in the saved list, which `dupes` (only the files that
+            # still exist) does not preserve.
+            saved_files = []
             for file_elem in group_elem.iter("file"):
                 path = file_elem.get("path")
                 words = file_elem.get("words", "")
                 if not path:
+                    saved_files.append(None)
                     continue
                 file = get_file(path)
                 if file is None:
+                    saved_files.append(None)
                     continue
                 file.words = words.split(",")
                 file.is_ref = file_elem.get("is_ref") == "y"
                 dupes.append(file)
+                saved_files.append(file)
                 if file_elem.get("marked") == "y":
                     marked.add(file)
             if group_elem.get("uniform") == "y" and len(dupes) >= 2:
@@ -267,7 +321,11 @@ class Results(Markable):
                     # an unrecognised kind must not be read as a stronger claim than it is.
                     kind = engine.MatchKind.METADATA
                 group = engine.Group.from_identical(dupes, percentage, group_elem.get("partial") == "y", kind)
-            for match_elem in group_elem.iter("match"):
+            elif group_elem.get("classed") == "y" and len(dupes) >= 2:
+                rebuilt = _rebuild_classed_group(group_elem, saved_files)
+                if rebuilt is not None:
+                    group = rebuilt
+            for match_elem in () if group.is_derived else group_elem.iter("match"):
                 try:
                     attrs = match_elem.attrib
                     first_file = dupes[int(attrs["first"])]
@@ -410,6 +468,10 @@ class Results(Markable):
                                     "kind": str(g.matches.kind),
                                 },
                             )
+                        elif g.is_derived:
+                            # Classes of identical files with a percentage between each pair of
+                            # classes. Writing the pairs would be quadratic in the class sizes.
+                            gen.startElement("group", {"classed": "y"})
                         else:
                             gen.startElement("group", {})
                         dupe2index = {}
@@ -432,7 +494,26 @@ class Results(Markable):
                                 },
                             )
                             gen.endElement("file")
-                        if not g.is_uniform:
+                        if g.is_derived and not g.is_uniform:
+                            classes = g.matches.classes()
+                            for members in classes:
+                                if len(members) > 1:
+                                    gen.startElement(
+                                        "class", {"members": ",".join(str(dupe2index[m]) for m in members)}
+                                    )
+                                    gen.endElement("class")
+                            for low, high, percentage in g.matches.class_percentages():
+                                gen.startElement(
+                                    "match",
+                                    {
+                                        "first": str(dupe2index[classes[low][0]]),
+                                        "second": str(dupe2index[classes[high][0]]),
+                                        "percentage": str(int(percentage)),
+                                        "partial": "n",
+                                    },
+                                )
+                                gen.endElement("match")
+                        elif not g.is_uniform:
                             for match in g.matches:
                                 gen.startElement(
                                     "match",

@@ -9,6 +9,30 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **Picture mode matches byte-identical pictures once, as a class, instead of pairwise.**
+  A folder holding the same image thousands of times turned into a ``Match`` for every pair:
+  measured on a real corpus, one folder with about 2% of all pictures being copies of one image
+  extrapolated to hundreds of millions of matches, which no machine has the memory for. Content
+  mode already avoided this with equivalence classes (#180); picture mode now does the same.
+  Identical pictures are found after their signatures are read (bucketed by size and signature,
+  confirmed by digest, so a corpus of mostly different pictures reads almost nothing extra), only
+  one representative per class is matched, and the classes are expanded again once groups exist.
+
+  The result is the same as before, not an approximation: a random comparison of both routes
+  over 1,500 small corpora, and over 1,200 real images from the corpus, agreed on group
+  membership and on every pair's percentage. One case the comparison found and the design now
+  honours: an identical set is already a group before any weaker match is read, so it cannot be
+  absorbed by two lookalike files.
+
+  Not collapsed, because the pairwise route handles them and collapsing would have to reproduce
+  subtler rules: a set containing a reference file, any scan with an ignore list, pictures with
+  no orientation-0 signature, and the picture matching that accompanies a standard contents scan.
+  Saved results gain a ``classed`` group form (one ``<class>`` per identical set and one
+  ``<match>`` per pair of classes) instead of a ``<match>`` per pair of files; the picture match
+  cache stores classes with its matches and is rebuilt once on upgrade.
+
 ### Added
 
 - **`--workers N`, and a "Worker processes" preference in every mode, set how many processes

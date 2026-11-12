@@ -615,7 +615,19 @@ def getmatches_by_contents(files, bigsize=0, j=job.nulljob, report=None):
     return matches_from_classes(classes, report=report)
 
 
-class UniformMatches:
+class DerivedMatches:
+    """A group's match set that is computed from its members instead of being stored.
+
+    The shared shape of :class:`UniformMatches` and :class:`ClassedMatches`. Every pair a real set
+    would hold is yielded with identical values; what is avoided is keeping k(k-1)/2 of them alive
+    between the scan and the moment somebody asks. Membership is read from the group's own
+    ``ordered`` list, so reordering needs no invalidation here.
+    """
+
+    __slots__ = ()
+
+
+class UniformMatches(DerivedMatches):
     """The match set of a group whose members are all identical, without storing it.
 
     k files established as byte-identical produce k(k-1)/2 matches that differ only in their two
@@ -682,6 +694,100 @@ class UniformMatches:
         return set(self)
 
 
+class ClassedMatches(DerivedMatches):
+    """The match set of a group made of classes of identical files, without storing it.
+
+    Picture mode used to turn every set of byte-identical pictures into all-pairs matches. One
+    folder holding tens of thousands of copies of the same image made that quadratic: the
+    measured sample suggested hundreds of millions of ``Match`` objects for a single cluster.
+
+    A *class* is a set of files known to be byte-identical, so every pair inside one is a 100%
+    match and every pair between two classes carries the same percentage -- the one recorded for
+    that pair of classes. A group is therefore determined by its members, which class each belongs
+    to, and a small table of class-to-class percentages. That is what this holds; the pairs are
+    produced on demand, with the same values a stored set would have.
+
+    A class of one is just a file. A group with no multi-member class has nothing to gain from
+    this and is built the ordinary way.
+    """
+
+    __slots__ = ("_ordered", "_class_of", "_between", "kind", "partial")
+
+    def __init__(self, ordered, class_of, between, kind=MatchKind.RESEMBLANCE, partial=False):
+        self._ordered = ordered
+        #: file -> index of its class. Read-only after construction.
+        self._class_of = class_of
+        #: (low class index, high class index) -> percentage, for every pair of distinct classes.
+        self._between = between
+        self.kind = kind
+        self.partial = partial
+
+    def percentage_between(self, first, second):
+        """The percentage of the match between two members."""
+        a, b = self._class_of[first], self._class_of[second]
+        if a == b:
+            return 100
+        return self._between[(a, b) if a < b else (b, a)]
+
+    def _pair(self, first, second):
+        return Match(first, second, self.percentage_between(first, second), partial=self.partial, kind=self.kind)
+
+    def __iter__(self):
+        for first, second in itertools.combinations(self._ordered, 2):
+            yield self._pair(first, second)
+
+    def __len__(self):
+        k = len(self._ordered)
+        return k * (k - 1) // 2
+
+    def __bool__(self):
+        return len(self._ordered) > 1
+
+    def __contains__(self, match):
+        try:
+            first, second, percentage, partial, kind = match
+        except (TypeError, ValueError):
+            return False
+        if first is second or first not in self._class_of or second not in self._class_of:
+            return False
+        members = self._ordered
+        if first not in members or second not in members:
+            return False
+        return (percentage, partial, kind) == (self.percentage_between(first, second), self.partial, self.kind)
+
+    def matches_for(self, item):
+        """Every match containing *item*. O(k)."""
+        return [self._pair(item, other) for other in self._ordered if other is not item]
+
+    def match_between(self, first, second):
+        return self._pair(first, second)
+
+    def classes(self):
+        """The classes present among the members, as lists in member order."""
+        grouped = {}
+        for item in self._ordered:
+            grouped.setdefault(self._class_of[item], []).append(item)
+        return list(grouped.values())
+
+    def class_percentages(self):
+        """``[(first class index, second class index, percentage)]`` over the classes present.
+
+        Indexes are positions in :meth:`classes`, so this and that describe the group together.
+        """
+        order = list(dict.fromkeys(self._class_of[item] for item in self._ordered))
+        position = {cls: i for i, cls in enumerate(order)}
+        result = []
+        for (a, b), percentage in self._between.items():
+            if a in position and b in position:
+                x, y = sorted((position[a], position[b]))
+                result.append((x, y, percentage))
+        return sorted(result)
+
+    def materialise(self) -> set:
+        """A real set of every match. Quadratic by definition; see :meth:`UniformMatches.materialise`."""
+        return set(self)
+
+
 class Group:
     """A group of :class:`~core.fs.File` that match together.
 
@@ -729,9 +835,35 @@ class Group:
         group.matches = UniformMatches(group.ordered, percentage, partial, kind)
         return group
 
+    @classmethod
+    def from_classes(cls, classes, between):
+        """A group of classes of identical files, with a percentage between each pair of classes.
+
+        *classes* is a list of lists of files (a class of one is a single file); *between* maps
+        ``(i, j)`` with ``i < j`` to the percentage between class *i* and class *j*. Every pair of
+        classes needs an entry -- a group is a set in which everything matches everything -- and a
+        missing one raises rather than inventing a percentage.
+        """
+        count = len(classes)
+        missing = [(i, j) for i in range(count) for j in range(i + 1, count) if (i, j) not in between]
+        if missing:
+            raise ValueError(f"classes {missing[0]} have no recorded match, so they cannot form a group")
+        ordered = [item for members in classes for item in members]
+        class_of = {item: index for index, members in enumerate(classes) for item in members}
+        group = cls()
+        group.ordered = ordered
+        group.unordered = set(ordered)
+        group.matches = ClassedMatches(group.ordered, class_of, dict(between))
+        return group
+
+    @property
+    def is_derived(self):
+        """Whether this group's matches are computed from its members rather than stored."""
+        return isinstance(self.matches, DerivedMatches)
+
     @property
     def is_uniform(self):
-        """Whether this group's matches are derived from its members rather than stored."""
+        """Whether every match in this group is the same, so one descriptor says it all."""
         return isinstance(self.matches, UniformMatches)
 
     def __contains__(self, item):
@@ -758,7 +890,7 @@ class Group:
     def _get_matches_for_ref(self):
         if self._matches_for_ref is None:
             ref = self.ref
-            if self.is_uniform:
+            if self.is_derived:
                 self._matches_for_ref = self.matches.matches_for(ref)
             else:
                 self._matches_for_ref = [match for match in self.matches if ref in match]
@@ -799,7 +931,7 @@ class Group:
 
         You can call this after the duplicate scanning process to free a bit of memory.
         """
-        if self.is_uniform:
+        if self.is_derived:
             # Every match is between two current members by construction, so none is an orphan.
             # Materialising the set to discover that would defeat the point of the class.
             self.candidates = defaultdict(set)
@@ -813,7 +945,7 @@ class Group:
         """Returns the match pair between ``item`` and :attr:`ref`."""
         if item is self.ref:
             return
-        if self.is_uniform:
+        if self.is_derived:
             # Answered directly. Returning None here instead would be quietly dangerous:
             # core/deletion_plan.py reads a missing match as partial=False, so a sampled-hash
             # duplicate would be reported as fully compared and slip past the partial-match gate.
@@ -855,7 +987,7 @@ class Group:
             self._percentage = None
             self._matches_for_ref = None
             if (len(self) > 1) and any(not getattr(item, "is_ref", False) for item in self):
-                if discard_matches and not self.is_uniform:
+                if discard_matches and not self.is_derived:
                     self.matches = {m for m in self.matches if item not in m}
                 # A uniform group needs nothing here: its matches are read from `ordered`, which
                 # the removal above has already updated.
@@ -900,14 +1032,23 @@ class Group:
             return self[0]
 
 
-def get_groups(matches, report=None):
+def get_groups(matches, report=None, preformed=()):
     """Returns a list of :class:`Group` from ``matches``.
 
     Create groups out of match pairs in the smartest way possible.
+
+    *preformed* are groups that already exist before any match is read, each holding the files it
+    starts with. A file in one behaves exactly as a file that an earlier, stronger match had put in
+    a group: a match to a file in another group is skipped, and a file in no group can join only if
+    it matches every member. Picture mode uses this to stand in for sets of identical pictures,
+    which the pairwise route had always formed into groups before reading anything weaker.
     """
     matches.sort(key=lambda match: -match.percentage)
     dupe2group = {}
-    groups = []
+    groups = list(preformed)
+    for group in groups:
+        for member in group:
+            dupe2group[member] = group
     try:
         for match in matches:
             first, second, *_ = match
