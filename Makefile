@@ -29,6 +29,13 @@ else
 	VENV_PYTHON = ./env/$(BIN)/python
 endif
 
+# Worker processes for the local test run (`make check`). The suite is about ten minutes serial
+# on Windows and well under a minute on six workers. It is deliberately not `-n auto`: that
+# would take every core of a big machine for what is a background chore. `--dist loadfile`
+# keeps each test file on one worker; the default split a Qt test file across workers and
+# tripped over state another file leaves behind on `DetailsDialog`. CI still runs serially.
+PYTEST_WORKERS ?= 6
+
 # If you're installing into a path that is not going to be the final path prefix (such as a
 # sandbox), set DESTDIR to that path.
 
@@ -63,7 +70,7 @@ check:
 	$(VENV_PYTHON) -m pre_commit run --all-files || true
 	git add -A
 	$(VENV_PYTHON) -m pre_commit run --all-files
-	$(VENV_PYTHON) -m pytest core hscommon qt tests -q
+	$(VENV_PYTHON) -m pytest core hscommon qt tests -q -n $(PYTEST_WORKERS) --dist loadfile
 
 # Mutation testing: an audit of whether the tests would notice if the code were wrong.
 #

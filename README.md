@@ -378,6 +378,10 @@ You can also run automated tests without Tox. Extra requirements for running tes
 `requirements-extra.txt`. So, you can do `pip install -r requirements-extra.txt` inside your
 virtualenv and then `py.test core hscommon`
 
+`pytest -n 6 --dist loadfile core hscommon qt tests` runs the suite on six workers (about 30
+seconds instead of ten minutes on Windows). Keep `--dist loadfile`: splitting a Qt test file
+across workers exposes state other files leave behind.
+
 ### Coverage
 
     $ pytest core hscommon --cov=core --cov=hscommon --cov=cli --cov-report=term-missing
