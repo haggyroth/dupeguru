@@ -363,16 +363,18 @@ than scanning without a threshold at all.
 Results saved before this fork recorded `partial_match` cannot be checked. Deleting from such
 a file warns and proceeds rather than reporting a false zero; re-scan if you need the flag.
 
-### How many files are hashed at once
+### How many files are read at once
 
-A contents scan hashes every file that shares a size with another, in parallel.
-`--hash-workers N` sets how many processes do that (the default, `0`, is one fewer than the
-cores; the preferences window has the same setting, "Hashing processes"). Hashing mostly waits
-on the disk, so the right number follows the storage rather than the CPU. On a pool of spinning
-disks, reading cold files, the cost per file fell from 11.6 ms with 1 process to 3.8 ms with 4
-and 2.0 ms with 16, while the disks stayed under one outstanding request at 4. Raise it when
-the disks are idle; lower it to leave them to other programs. It changes how long a scan takes,
-never what it finds.
+Two stages read files in parallel: a contents scan hashes every file that shares a size with
+another, and picture mode decodes every image. `--workers N` sets how many processes do that
+(the default, `0`, is one fewer than the cores; every mode's preferences window has the same
+setting under Advanced, "Worker processes"). `--hash-workers` still works as an older name.
+
+Reading mostly waits on the disk, so the right number follows the storage rather than the CPU.
+On a pool of spinning disks, reading cold files, the cost per file fell from 11.6 ms with 1
+process to 3.8 ms with 4 and 2.0 ms with 16, while the disks stayed under one outstanding
+request at 4. Raise it when the disks are idle; lower it to leave them to other programs. It
+changes how long a scan takes, never what it finds.
 
 Run `dupeguru-scan --help` for the full option list, including the scanner knobs
 (`--min-match`, `--min-size`, `--max-size`, `--partial-hash-threshold`, and others).
@@ -390,8 +392,8 @@ You can also run automated tests without Tox. Extra requirements for running tes
 virtualenv and then `py.test core hscommon`
 
 `pytest -n 6 --dist loadfile core hscommon qt tests` runs the suite on six workers (about 30
-seconds instead of ten minutes on Windows). Keep `--dist loadfile`: splitting a Qt test file
-across workers exposes state other files leave behind.
+seconds instead of ten minutes on Windows). `--dist loadfile` keeps each test file on one
+worker, which suits the Qt fixtures that are module-scoped.
 
 ### Coverage
 

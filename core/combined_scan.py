@@ -69,7 +69,7 @@ def photos_in(files, cls):
     return photos
 
 
-def picture_matches_over(files, j, threshold=75, match_scaled=False, match_rotated=False, cache_path=None):
+def picture_matches_over(files, j, threshold=75, match_scaled=False, match_rotated=False, cache_path=None, workers=0):
     """Perceptual matches among the images in *files*, reported against those same files.
 
     Returns an empty list rather than raising when there is no image decoder, or no images:
@@ -93,6 +93,7 @@ def picture_matches_over(files, j, threshold=75, match_scaled=False, match_rotat
         match_scaled=match_scaled,
         match_rotated=match_rotated,
         j=j,
+        workers=workers,
     )
 
     # Back to the collected files. A match between two stand-ins is a match between the files

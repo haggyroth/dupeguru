@@ -11,12 +11,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- **`--hash-workers N`, and a "Hashing processes" preference, set how many processes hash file
-  contents.** It was fixed at one fewer than the cores with no way to change it, which is
-  23 reader processes on a 24-core machine pointed at a few spinning disks. `0`, the default,
-  keeps that behaviour; an explicit count is honoured even above the core count, because the
-  workers mostly wait on the disk, and is still capped at 61 on Windows. The setting changes how
-  long a scan takes, never what it finds.
+- **`--workers N`, and a "Worker processes" preference in every mode, set how many processes
+  read files in parallel.** Both parallel stages -- hashing contents in a contents scan, and
+  decoding pictures in picture mode -- were fixed at one fewer than the cores with no way to
+  change it, which is 23 reader processes on a 24-core machine pointed at a few spinning
+  disks. `0`, the default, keeps that behaviour; an explicit count is honoured even above the
+  core count, because the workers mostly wait on the disk, and is still capped at 61 on
+  Windows. The setting changes how long a scan takes, never what it finds. `--hash-workers`
+  is accepted as an older name for the same option.
 
 ## [4.21.0] - 2026-08-11
 

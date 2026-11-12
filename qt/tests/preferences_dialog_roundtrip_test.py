@@ -75,6 +75,12 @@ DIALOGS = {
 def open_dialog(dgapp, restore_prefs):
     """Build a mode's preferences dialog against the sandboxed prefs."""
     made = []
+    # ``dgapp`` is shared by the whole session, and switching its mode rebuilds the result
+    # table and the details dialog for that mode. Left switched, a later file that expects the
+    # standard-mode dialog (preview_pane_test) finds a picture or music one without a
+    # previewPane -- which only showed up when the two files landed on the same xdist worker
+    # without app_test.py between them, and also reproduces serially in that order.
+    original_mode = dgapp.model.app_mode
 
     def build(kind):
         dialog_class, app_mode, prefs = DIALOGS[kind]
@@ -86,6 +92,7 @@ def open_dialog(dgapp, restore_prefs):
     yield build
     for dialog in made:
         dialog.close()
+    dgapp.model.app_mode = original_mode
 
 
 def set_all(prefs, names, value):
@@ -197,40 +204,52 @@ class TestNonBooleanPreferences:
         assert restore_prefs.destination_type == 2
 
 
-class TestStandardOnlyHashWorkers:
-    """The GUI's --hash-workers. Only standard mode hashes file contents, so only its dialog has it.
+@pytest.mark.parametrize("kind", list(DIALOGS))
+class TestWorkersSetting:
+    """The GUI's --workers, in every mode's dialog.
 
-    Both directions, for the reason in the module docstring: a round trip alone cannot catch a
-    value that ``_save`` never writes.
+    It started as a standard-mode-only control, on the reasoning that only that mode hashes
+    contents. That left picture mode -- whose decode pool is the I/O-heavy stage -- with no way
+    to limit it, and music mode, which also has a contents scan, without the box. The control
+    now lives on the shared Advanced tab, and both directions are driven here for the reason in
+    the module docstring: a round trip alone cannot catch a value that ``_save`` never writes.
     """
 
-    def test_saving_reads_the_widget(self, open_dialog, restore_prefs):
-        dialog, _ = open_dialog("standard")
-        restore_prefs.hash_workers = 0
+    def test_saving_reads_the_widget(self, open_dialog, restore_prefs, kind):
+        dialog, _ = open_dialog(kind)
+        restore_prefs.workers = 0
         dialog.load()
-        dialog.hashWorkersSpinBox.setValue(9)
+        dialog.workersSpinBox.setValue(9)
         dialog.save()
-        assert restore_prefs.hash_workers == 9
+        assert restore_prefs.workers == 9
 
-    def test_loading_shows_the_preference(self, open_dialog, restore_prefs):
-        dialog, _ = open_dialog("standard")
-        restore_prefs.hash_workers = 5
+    def test_loading_shows_the_preference(self, open_dialog, restore_prefs, kind):
+        dialog, _ = open_dialog(kind)
+        restore_prefs.workers = 5
         dialog.load()
-        assert dialog.hashWorkersSpinBox.value() == 5
+        assert dialog.workersSpinBox.value() == 5
 
-    def test_saving_untouched_changes_nothing(self, open_dialog, restore_prefs):
-        dialog, _ = open_dialog("standard")
-        restore_prefs.hash_workers = 4
-        dialog.load()
-        dialog.save()
-        assert restore_prefs.hash_workers == 4
-
-    def test_zero_means_automatic_and_round_trips(self, open_dialog, restore_prefs):
-        dialog, _ = open_dialog("standard")
-        restore_prefs.hash_workers = 0
+    def test_saving_untouched_changes_nothing(self, open_dialog, restore_prefs, kind):
+        dialog, _ = open_dialog(kind)
+        restore_prefs.workers = 4
         dialog.load()
         dialog.save()
-        assert restore_prefs.hash_workers == 0
+        assert restore_prefs.workers == 4
+
+    def test_zero_means_automatic_and_round_trips(self, open_dialog, restore_prefs, kind):
+        dialog, _ = open_dialog(kind)
+        restore_prefs.workers = 0
+        dialog.load()
+        dialog.save()
+        assert restore_prefs.workers == 0
+
+    def test_it_reaches_the_scanner_options(self, open_dialog, restore_prefs, dgapp, kind):
+        dialog, _ = open_dialog(kind)
+        dialog.load()
+        dialog.workersSpinBox.setValue(6)
+        dialog.save()
+        dgapp._update_options()
+        assert dgapp.model.options["workers"] == 6
 
 
 class TestPictureSpecifics:

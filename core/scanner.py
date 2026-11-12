@@ -8,7 +8,6 @@ import itertools
 import logging
 import os
 import re
-import sys
 import os.path as op
 from collections import namedtuple, defaultdict
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -19,10 +18,10 @@ from hscommon.trans import tr
 
 from core import combined_scan, engine
 from core.hash_cache import hashcachedb, hash_file_worker
+from core.workers import worker_count
 
 _BATCH_SIZE = 500  # rows written to hashcachedb per transaction
 _HASH_WINDOW = 10_000  # files submitted to the pool at once; bounds the parent's bookkeeping
-_MAX_WINDOWS_WORKERS = 61  # ProcessPoolExecutor's hard limit on Windows
 
 # It's quite ugly to have scan types from all editions all put in the same class, but because there's
 # there will be some nasty bugs popping up (ScanType is used in core when in should exclusively be
@@ -126,26 +125,9 @@ class Scanner:
         self.discarded_partial_count = 0
         self.verified_partial_count = 0
 
-    def _hash_worker_count(self) -> int:
-        """How many processes the hashing pool gets.
-
-        ``hash_workers`` of 0 means automatic: one fewer than the cores. Measured on a spinning
-        pool of disks, hashing is bound by per-file access latency rather than bandwidth, so the
-        right number depends on the storage and not the CPU -- which is why a person can set it.
-        An explicit value is honoured even above the core count (the workers mostly wait on the
-        disk), but never above what the platform allows.
-        """
-        if not self.parallel_scan:
-            return 1
-        if self.hash_workers > 0:
-            workers = self.hash_workers
-        else:
-            workers = max(1, (os.cpu_count() or 1) - 1)
-        if sys.platform == "win32":
-            # ProcessPoolExecutor raises ValueError above this on Windows. That used to land in
-            # the catch-all below and quietly turn a 64-thread machine into a sequential one.
-            workers = min(workers, _MAX_WINDOWS_WORKERS)
-        return workers
+    def _worker_count(self) -> int:
+        """How many processes the hashing pool gets: see :func:`core.workers.worker_count`."""
+        return worker_count(self.workers) if self.parallel_scan else 1
 
     def _hash_files_parallel(self, candidates, j, bigsize=0):
         """Pre-populate File.digest for content-scan candidates using the hash cache
@@ -178,7 +160,7 @@ class Scanner:
             return
 
         new_rows: list = []
-        workers = self._hash_worker_count()
+        workers = self._worker_count()
         miss_total = len(cache_misses)
         half = total // 2
 
@@ -512,6 +494,7 @@ class Scanner:
                 match_scaled=self.match_scaled,
                 match_rotated=self.match_rotated,
                 cache_path=self.cache_path,
+                workers=self.workers,
             )
             matches = combined_scan.merge_matches(matches, picture_matches)
             logging.info("Found %d matches after picture matching" % len(matches))
@@ -587,8 +570,9 @@ class Scanner:
     size_threshold = 0
     large_size_threshold = 0
     big_file_size_threshold = 0
-    #: Processes hashing file contents in parallel. 0 picks automatically (cores minus one).
-    hash_workers = 0
+    #: Worker processes for the parallel stages (hashing contents, decoding pictures).
+    #: 0 picks automatically (cores minus one).
+    workers = 0
     full_verify = False
     #: Also look for visually similar images during a standard scan. Off by default: picture
     #: matching decodes every image and compares near-quadratically, measured at 15.9s against

@@ -110,26 +110,6 @@ class PreferencesDialog(PreferencesDialogBase):
             )
         )
         self.verticalLayout_4.addWidget(self.fullVerifyBox)
-        self.horizontalLayout_2c = QHBoxLayout()
-        self.hashWorkersLabel = QLabel(self.widget)
-        self.hashWorkersLabel.setText(tr("Hashing processes (0 = automatic)"))
-        self.horizontalLayout_2c.addWidget(self.hashWorkersLabel)
-        self.hashWorkersSpinBox = QSpinBox(self.widget)
-        self.hashWorkersSpinBox.setSizePolicy(size_policy)
-        self.hashWorkersSpinBox.setMaximumSize(QSize(300, 16777215))
-        self.hashWorkersSpinBox.setRange(0, 256)
-        tooltip = tr(
-            "How many processes read and hash file contents at once. Automatic uses one fewer "
-            "than the number of cores. Hashing mostly waits on the disk, so on spinning or "
-            "shared storage the best value follows the storage rather than the CPU: raise it "
-            "if the disks are idle, lower it to leave them to other programs."
-        )
-        self.hashWorkersLabel.setToolTip(tooltip)
-        self.hashWorkersSpinBox.setToolTip(tooltip)
-        self.horizontalLayout_2c.addWidget(self.hashWorkersSpinBox)
-        spacer_item4 = QSpacerItem(40, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
-        self.horizontalLayout_2c.addItem(spacer_item4)
-        self.verticalLayout_4.addLayout(self.horizontalLayout_2c)
         self._setupAddCheckbox(
             "cacheFileListBox",
             tr("Remember scan results between scans"),
@@ -177,7 +157,6 @@ class PreferencesDialog(PreferencesDialogBase):
         setchecked(self.bigFilePartialHashesBox, prefs.big_file_partial_hashes)
         self.bigSizeThresholdSpinBox.setValue(prefs.big_file_size_threshold)
         setchecked(self.fullVerifyBox, prefs.full_verify)
-        self.hashWorkersSpinBox.setValue(prefs.hash_workers)
         setchecked(self.cacheFileListBox, prefs.cache_file_list)
 
         # Update UI state based on selected scan type
@@ -198,5 +177,4 @@ class PreferencesDialog(PreferencesDialogBase):
         prefs.big_file_partial_hashes = ischecked(self.bigFilePartialHashesBox)
         prefs.big_file_size_threshold = self.bigSizeThresholdSpinBox.value()
         prefs.full_verify = ischecked(self.fullVerifyBox)
-        prefs.hash_workers = self.hashWorkersSpinBox.value()
         prefs.cache_file_list = ischecked(self.cacheFileListBox)

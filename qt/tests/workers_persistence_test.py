@@ -18,7 +18,7 @@ pytest.importorskip("qtpy.QtWidgets", reason="no Qt bindings installed")
 
 from qt.preferences import Preferences  # noqa: E402
 
-KEY = "HashWorkers"
+KEY = "Workers"
 
 
 @pytest.fixture
@@ -37,26 +37,26 @@ def stored():
 
 
 def test_the_default_is_automatic(stored):
-    assert Preferences().hash_workers == 0
+    assert Preferences().workers == 0
 
 
 def test_a_saved_count_is_read_back_by_a_fresh_instance(stored):
     # load() first, as the application does: save() writes attributes only load() creates.
     stored.load()
-    stored.hash_workers = 7
+    stored.workers = 7
     stored.save()
     reloaded = Preferences()
     reloaded.load()
-    assert reloaded.hash_workers == 7
+    assert reloaded.workers == 7
 
 
 def test_with_nothing_stored_loading_keeps_automatic(stored):
     fresh = Preferences()
     fresh.load()
-    assert fresh.hash_workers == 0
+    assert fresh.workers == 0
 
 
 def test_reset_puts_it_back_to_automatic(stored):
-    stored.hash_workers = 7
+    stored.workers = 7
     stored.reset()
-    assert stored.hash_workers == 0
+    assert stored.workers == 0

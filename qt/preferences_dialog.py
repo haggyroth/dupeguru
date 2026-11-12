@@ -247,6 +247,27 @@ most users should not have to modify these."
         self.advanced_vlayout.addWidget(self.verify_before_delete_box)
         self._setupAddCheckbox("rehash_ignore_mtime_box", tr("Ignore difference in mtime when loading cached digests"))
         self.advanced_vlayout.addWidget(self.rehash_ignore_mtime_box)
+        # Shared by every mode: contents scans hash with this many processes and picture scans
+        # decode with it, so the setting is the same in all three dialogs (and on the command
+        # line as --workers).
+        self.workersLayout = QHBoxLayout()
+        self.workersLabel = QLabel(tr("Worker processes (0 = automatic)"))
+        self.workersSpinBox = QSpinBox()
+        self.workersSpinBox.setRange(0, 256)
+        tooltip = tr(
+            "How many processes read files at once: hashing contents in a contents scan, "
+            "decoding pictures in a picture scan. Automatic uses one fewer than the number of "
+            "cores. Reading mostly waits on the disk, so on spinning or shared storage the best "
+            "value follows the storage rather than the CPU: raise it if the disks are idle, "
+            "lower it to leave them to other programs. It changes how long a scan takes, never "
+            "what it finds."
+        )
+        self.workersLabel.setToolTip(tooltip)
+        self.workersSpinBox.setToolTip(tooltip)
+        self.workersLayout.addWidget(self.workersLabel)
+        self.workersLayout.addWidget(self.workersSpinBox)
+        self.workersLayout.addStretch(1)
+        self.advanced_vlayout.addLayout(self.workersLayout)
 
     def _setupDebugPage(self):
         self._setupAddCheckbox("debugModeBox", tr("Debug mode (restart required)"))
@@ -369,6 +390,7 @@ most users should not have to modify these."
             setchecked(self.rehash_ignore_mtime_box, prefs.rehash_ignore_mtime)
             setchecked(self.include_exists_check_box, prefs.include_exists_check)
             setchecked(self.verify_before_delete_box, prefs.verify_before_delete)
+            self.workersSpinBox.setValue(prefs.workers)
         if section & Sections.DEBUG:
             setchecked(self.debugModeBox, prefs.debug_mode)
             setchecked(self.profile_scan_box, prefs.profile_scan)
@@ -388,6 +410,7 @@ most users should not have to modify these."
         prefs.rehash_ignore_mtime = ischecked(self.rehash_ignore_mtime_box)
         prefs.include_exists_check = ischecked(self.include_exists_check_box)
         prefs.verify_before_delete = ischecked(self.verify_before_delete_box)
+        prefs.workers = self.workersSpinBox.value()
         prefs.debug_mode = ischecked(self.debugModeBox)
         prefs.profile_scan = ischecked(self.profile_scan_box)
         prefs.reference_bold_font = ischecked(self.reference_bold_font)

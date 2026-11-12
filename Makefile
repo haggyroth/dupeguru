@@ -32,8 +32,10 @@ endif
 # Worker processes for the local test run (`make check`). The suite is about ten minutes serial
 # on Windows and well under a minute on six workers. It is deliberately not `-n auto`: that
 # would take every core of a big machine for what is a background chore. `--dist loadfile`
-# keeps each test file on one worker; the default split a Qt test file across workers and
-# tripped over state another file leaves behind on `DetailsDialog`. CI still runs serially.
+# keeps each test file on one worker, which suits the Qt fixtures that are module-scoped. (It
+# was first added to hide an order dependency -- the preferences round-trip tests left the
+# shared app in picture mode and preview_pane_test then found the wrong details dialog -- which
+# is fixed at its source; loadfile is a precaution now, not the fix.) CI still runs serially.
 PYTEST_WORKERS ?= 6
 
 # If you're installing into a path that is not going to be the final path prefix (such as a
