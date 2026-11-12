@@ -8,6 +8,7 @@ import itertools
 import logging
 import os
 import re
+import sys
 import os.path as op
 from collections import namedtuple, defaultdict
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -20,6 +21,8 @@ from core import combined_scan, engine
 from core.hash_cache import hashcachedb, hash_file_worker
 
 _BATCH_SIZE = 500  # rows written to hashcachedb per transaction
+_HASH_WINDOW = 10_000  # files submitted to the pool at once; bounds the parent's bookkeeping
+_MAX_WINDOWS_WORKERS = 61  # ProcessPoolExecutor's hard limit on Windows
 
 # It's quite ugly to have scan types from all editions all put in the same class, but because there's
 # there will be some nasty bugs popping up (ScanType is used in core when in should exclusively be
@@ -92,6 +95,25 @@ def _apply_digest(f, digest, size, bigsize):
         f.digest_samples = digest
 
 
+def _cache_key(f):
+    """``(size, mtime_ns)`` for the hash cache, or None when the file can't be read.
+
+    Uses what the directory walk already collected. The old code stat()ed every candidate again
+    here, which is a real syscall per file on Windows (the walk's stat comes free with the
+    listing) and a round trip per file on a network share. A file that carries no nanosecond
+    timestamp -- one built from the file-list cache -- still gets stat()ed, because a cached
+    float cannot be turned back into the integer the cache was keyed on.
+    """
+    try:
+        mtime_ns = getattr(f, "mtime_ns", None)
+        if mtime_ns:
+            return f.size, mtime_ns
+        st = f.path.stat()
+    except OSError:
+        return None
+    return st.st_size, st.st_mtime_ns
+
+
 class Scanner:
     def __init__(self):
         self.discarded_file_count = 0
@@ -120,11 +142,10 @@ class Scanner:
         for i, f in enumerate(candidates):
             if i % _BATCH_SIZE == 0:
                 j.set_progress(i, tr("Checking hash cache %d/%d") % (i, total))
-            try:
-                stat = f.path.stat()
-                size, mtime_ns = stat.st_size, stat.st_mtime_ns
-            except OSError:
+            key = _cache_key(f)
+            if key is None:
                 continue
+            size, mtime_ns = key
             cached = hashcachedb.get(f.path, size, mtime_ns)
             if cached is not None:
                 _apply_digest(f, cached, size, bigsize)
@@ -137,44 +158,57 @@ class Scanner:
 
         new_rows: list = []
         workers = max(1, (os.cpu_count() or 1) - 1) if self.parallel_scan else 1
+        if sys.platform == "win32":
+            # ProcessPoolExecutor raises ValueError above this on Windows. That used to land in
+            # the catch-all below and quietly turn a 64-thread machine into a sequential one.
+            workers = min(workers, _MAX_WINDOWS_WORKERS)
         miss_total = len(cache_misses)
         half = total // 2
 
-        # Paths that the parallel pool successfully hashed; used to skip them in fallback.
-        completed_paths: set[str] = set()
-        # Entries that the pool couldn't hash (per-worker exception); retried sequentially.
+        # Entries that the pool couldn't hash (per-worker exception, or the pool itself died);
+        # retried sequentially afterwards.
         failed_entries: list = []
         parallel_done = 0
 
+        window_start = 0
+        finished: set = set()  # ids of the current window's files whose futures came back
         try:
             with ProcessPoolExecutor(max_workers=workers) as pool:
-                future_to_meta = {pool.submit(hash_file_worker, str(f.path)): (f, sz, mt) for f, sz, mt in cache_misses}
-                for future in as_completed(future_to_meta):
-                    f, sz, mt = future_to_meta[future]
-                    try:
-                        result = future.result()
-                    except Exception as exc:
-                        logging.warning("Worker failed for %s (%s), will retry", f.path, exc)
-                        failed_entries.append((f, sz, mt))
+                # Submit a window at a time rather than every miss at once. A Future plus its
+                # work item and result slot costs ~2.3 KB in the parent, so one per file meant
+                # ~1.8 GB of bookkeeping for 800,000 files before a byte had been hashed.
+                for window_start in range(0, miss_total, _HASH_WINDOW):
+                    finished = set()
+                    window = cache_misses[window_start : window_start + _HASH_WINDOW]
+                    future_to_meta = {pool.submit(hash_file_worker, str(f.path)): (f, sz, mt) for f, sz, mt in window}
+                    for future in as_completed(future_to_meta):
+                        f, sz, mt = future_to_meta[future]
+                        finished.add(id(f))
+                        try:
+                            result = future.result()
+                        except Exception as exc:
+                            logging.warning("Worker failed for %s (%s), will retry", f.path, exc)
+                            failed_entries.append((f, sz, mt))
+                            parallel_done += 1
+                            continue
+                        if result is not None:
+                            _, digest = result
+                            _apply_digest(f, digest, sz, bigsize)
+                            new_rows.append((f.path, sz, mt, digest))
                         parallel_done += 1
-                        continue
-                    if result is not None:
-                        _, digest = result
-                        _apply_digest(f, digest, sz, bigsize)
-                        new_rows.append((f.path, sz, mt, digest))
-                        completed_paths.add(str(f.path))
-                    parallel_done += 1
-                    if parallel_done % _BATCH_SIZE == 0:
-                        hashcachedb.set_batch(new_rows)
-                        new_rows = []
-                        j.set_progress(
-                            half + parallel_done * half // miss_total,
-                            tr("Hashing files %d/%d") % (parallel_done, miss_total),
-                        )
+                        if parallel_done % _BATCH_SIZE == 0:
+                            hashcachedb.set_batch(new_rows)
+                            new_rows = []
+                            j.set_progress(
+                                half + parallel_done * half // miss_total,
+                                tr("Hashing files %d/%d") % (parallel_done, miss_total),
+                            )
         except Exception as exc:
             logging.warning("Parallel hashing pool failed (%s), falling back to sequential", exc)
-            # Pool-level failure: queue every cache miss not already finished.
-            failed_entries = [(f, sz, mt) for f, sz, mt in cache_misses if str(f.path) not in completed_paths]
+            # Pool-level failure: everything from the current window on that has not come back.
+            # Ids from earlier windows are not in `finished`, but those windows are before
+            # window_start and so are not in this slice.
+            failed_entries += [m for m in cache_misses[window_start:] if id(m[0]) not in finished]
 
         if failed_entries:
             for seq_done, (f, sz, mt) in enumerate(failed_entries, 1):

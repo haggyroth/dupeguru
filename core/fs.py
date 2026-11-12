@@ -393,7 +393,14 @@ class CachedDirEntry:
 class File:
     """Represents a file and holds metadata to be used for scanning."""
 
-    INITIAL_INFO = {"size": 0, "mtime": 0, "digest": b"", "digest_partial": b"", "digest_samples": b""}
+    INITIAL_INFO = {
+        "size": 0,
+        "mtime": 0,
+        "mtime_ns": 0,
+        "digest": b"",
+        "digest_partial": b"",
+        "digest_samples": b"",
+    }
     # Slots for File make us save quite a bit of memory. In a memory test I've made with a lot of
     # files, I saved 35% memory usage with "unread" files (no _read_info() call) and gains become
     # even greater when we take into account read attributes (70%!). Yeah, it's worth it.
@@ -404,8 +411,15 @@ class File:
             setattr(self, attrname, NOT_SET)
         if isinstance(path, (os.DirEntry, CachedDirEntry)):
             self.path = Path(path.path)
-            self.size = nonone(path.stat().st_size, 0)
-            self.mtime = nonone(path.stat().st_mtime, 0)
+            st = path.stat()
+            self.size = nonone(st.st_size, 0)
+            self.mtime = nonone(st.st_mtime, 0)
+            # A real DirEntry carries the nanosecond timestamp the hash cache is keyed on, and on
+            # Windows it arrives with the directory listing for free. A CachedDirEntry only has a
+            # float, which cannot be turned back into the same integer, so it is left unset and
+            # read from disk if anything asks (see _read_info).
+            if isinstance(path, os.DirEntry):
+                self.mtime_ns = nonone(st.st_mtime_ns, 0)
         else:
             self.path = path
         if self.path:
@@ -469,10 +483,11 @@ class File:
 
     def _read_info(self, field):
         # print(f"_read_info({field}) for {self}")
-        if field in ("size", "mtime"):
+        if field in ("size", "mtime", "mtime_ns"):
             stats = self.path.stat()
             self.size = nonone(stats.st_size, 0)
             self.mtime = nonone(stats.st_mtime, 0)
+            self.mtime_ns = nonone(stats.st_mtime_ns, 0)
         elif field == "digest_partial":
             self.digest_partial = filesdb.get(self.path, "digest_partial")
             if self.digest_partial is None:
