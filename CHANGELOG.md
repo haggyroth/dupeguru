@@ -9,6 +9,15 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **`--hash-workers N`, and a "Hashing processes" preference, set how many processes hash file
+  contents.** It was fixed at one fewer than the cores with no way to change it, which is
+  23 reader processes on a 24-core machine pointed at a few spinning disks. `0`, the default,
+  keeps that behaviour; an explicit count is honoured even above the core count, because the
+  workers mostly wait on the disk, and is still capped at 61 on Windows. The setting changes how
+  long a scan takes, never what it finds.
+
 ## [4.21.0] - 2026-08-11
 
 ### Fixed
