@@ -20,6 +20,7 @@ from core.pe.bktree import BKTree
 from core.pe.cache import colors_to_bytes
 from core.pe.cache_sqlite import SqliteCache
 from core.pe import match_cache as match_cache_module
+from core.workers import worker_count
 
 MIN_ITERATIONS = 3
 BLOCK_COUNT_PER_SIDE = 15
@@ -45,7 +46,7 @@ def _parallel_enabled(count):
     return (os.cpu_count() or 1) > 1 and count >= PARALLEL_THRESHOLD
 
 
-def _prepare_parallel(pictures, cache, with_dimensions, match_rotated, prepared, j):
+def _prepare_parallel(pictures, cache, with_dimensions, match_rotated, prepared, j, workers=0):
     """Prepare *pictures* through a process pool. Returns those the pool did not finish.
 
     Anything the pool could not handle -- a failed worker, or a pool that could not start at
@@ -57,7 +58,7 @@ def _prepare_parallel(pictures, cache, with_dimensions, match_rotated, prepared,
     module_name, class_name = photo_class.__module__, photo_class.__name__
     args = [(p.unicode_path, module_name, class_name, with_dimensions, match_rotated) for p in pictures]
     by_path = {p.unicode_path: p for p in pictures}
-    workers = max(1, (os.cpu_count() or 1) - 1)
+    workers = worker_count(workers)
     done_paths = set()
     pending = []
 
@@ -130,7 +131,7 @@ def prepare_picture_worker(args):
         return (path_str, None, None, f"{type(e).__name__}: {e}")
 
 
-def prepare_pictures(pictures, cache_path, with_dimensions, match_rotated, j=job.nulljob, report=None):
+def prepare_pictures(pictures, cache_path, with_dimensions, match_rotated, j=job.nulljob, report=None, workers=0):
     # The MemoryError handlers in there use logging without first caring about whether or not
     # there is enough memory left to carry on the operation because it is assumed that the
     # MemoryError happens when trying to read an image file, which is freed from memory by the
@@ -165,7 +166,7 @@ def prepare_pictures(pictures, cache_path, with_dimensions, match_rotated, j=job
             prepared.append(picture)
 
     if _parallel_enabled(len(todo)):
-        remaining = _prepare_parallel(todo, cache, with_dimensions, match_rotated, prepared, j)
+        remaining = _prepare_parallel(todo, cache, with_dimensions, match_rotated, prepared, j, workers)
     else:
         remaining = todo
 
@@ -237,6 +238,7 @@ def getmatches(
     j=job.nulljob,
     match_cache=None,
     report=None,
+    workers=0,
 ):
     """Return a list of Match objects for pictures whose block signatures are
     similar enough to meet *threshold* (0–100).
@@ -264,7 +266,9 @@ def getmatches(
             j.set_progress(100, tr("Reusing previous match results"))
             return cached
     j = j.start_subjob([3, 7])
-    pictures = prepare_pictures(pictures, cache_path, not match_scaled, match_rotated, j=j, report=report)
+    pictures = prepare_pictures(
+        pictures, cache_path, not match_scaled, match_rotated, j=j, report=report, workers=workers
+    )
 
     j = j.start_subjob([2, 8], tr("Loading picture blocks"))
 

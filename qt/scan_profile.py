@@ -43,7 +43,7 @@ SCAN_PREFERENCES = [
     "big_file_partial_hashes",
     "big_file_size_threshold",
     "full_verify",
-    "hash_workers",
+    "workers",
     "cache_file_list",
     "combine_picture_matching",
     "scan_tag_track",

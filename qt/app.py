@@ -212,7 +212,7 @@ class DupeGuru(QObject):
         # Only meaningful alongside partial hashing: with no partial matches there is
         # nothing to verify, and the scanner's verification pass is a no-op.
         self.model.options["full_verify"] = self.prefs.full_verify and self.prefs.big_file_partial_hashes
-        self.model.options["hash_workers"] = self.prefs.hash_workers
+        self.model.options["workers"] = self.prefs.workers
         self._apply_file_list_cache()
         scanned_tags = set()
         if self.prefs.scan_tag_track:

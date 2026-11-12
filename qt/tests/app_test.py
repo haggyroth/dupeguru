@@ -336,15 +336,15 @@ class TestStyleSwitching:
         assert QApplication.style().objectName().lower() == others[0].lower()
 
 
-class TestHashWorkersReachTheScanner:
-    """The GUI half of --hash-workers: the preference must land in ``model.options``."""
+class TestWorkersReachTheScanner:
+    """The GUI half of --workers: the preference must land in ``model.options``."""
 
     def test_the_default_is_automatic(self, dgapp, restore_prefs):
-        restore_prefs.hash_workers = 0
+        restore_prefs.workers = 0
         dgapp._update_options()
-        assert dgapp.model.options["hash_workers"] == 0
+        assert dgapp.model.options["workers"] == 0
 
     def test_a_chosen_count_reaches_options(self, dgapp, restore_prefs):
-        restore_prefs.hash_workers = 6
+        restore_prefs.workers = 6
         dgapp._update_options()
-        assert dgapp.model.options["hash_workers"] == 6
+        assert dgapp.model.options["workers"] == 6
