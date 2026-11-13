@@ -9,6 +9,17 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Every scan in the window failed once "Remember scan results between scans" was ticked.** The
+  window opens the listing cache on its main thread and the scan runs on a worker thread, and
+  SQLite refuses that by default: ``ProgrammingError: SQLite objects created in a thread can only
+  be used in that same thread``. Picture mode's match cache had the same flaw. The other two
+  caches already allowed it. The command line is single-threaded and so were the cache tests, which
+  is why nothing caught it before a person did it in the window. Both caches now allow it, and the
+  tests drive them from a second thread and read the result back (a write from the wrong thread
+  would otherwise be logged and dropped, because the caches swallow ``sqlite3.Error``).
+
 ### Changed
 
 - **Picture mode matches byte-identical pictures once, as a class, instead of pairwise.**
