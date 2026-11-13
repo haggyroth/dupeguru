@@ -80,7 +80,11 @@ class MatchCache:
         self.con = None
 
     def connect(self, dbname: Union[str, os.PathLike]) -> None:
-        self.con = sqlite3.connect(str(dbname), isolation_level=None)
+        # The GUI connects on its main thread and the scan job then uses the cache from a worker
+        # thread, which SQLite refuses by default ("objects created in a thread can only be used
+        # in that same thread"). The two older caches (fs.filesdb, hashcachedb) already allow it.
+        # Safe here because a scan is the only user while it runs: the window is modal over it.
+        self.con = sqlite3.connect(str(dbname), isolation_level=None, check_same_thread=False)
         self.con.execute("PRAGMA journal_mode=WAL")
         self.con.execute("PRAGMA synchronous=NORMAL")
         self._create_tables()
