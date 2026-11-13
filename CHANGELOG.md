@@ -22,6 +22,22 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **On Windows, files are sent to the Recycle Bin in batches instead of one shell call each.**
+  Marking 184,000 files and sending them to the Recycle Bin was painfully slow: every file was its
+  own shell operation, 25 ms each on a local disk and a fixed cost that a pooled volume pays again
+  per file. Files now go in chunks of 200, measured at 6.5-7.4 ms each on the same disk (about 3.5
+  times faster), with each file's Recycle Bin location still recorded for restoring.
+
+  A file counts as recycled only when the shell says so, or when it is gone from disk afterwards.
+  One the shell refuses -- locked, say -- fails alone and stays marked and on disk; the shell stops
+  a batch at the first failure, so the rest are retried without it and one bad file cannot stall
+  the others. Anything the batch cannot settle is retried through the old one-file route, so the
+  worst case is the previous behaviour. Nothing is ever permanently deleted when it cannot be
+  recycled: send2trash's progress sink refuses that. The log of what was deleted is still written
+  before anything is removed. Cancelling now stops at the next chunk and leaves the files it did
+  not reach marked, where before each remaining file was recorded as a problem. Other platforms,
+  and permanent deletion, are unchanged.
+
 - **Picture mode matches byte-identical pictures once, as a class, instead of pairwise.**
   A folder holding the same image thousands of times turned into a ``Match`` for every pair:
   measured on a real corpus, one folder with about 2% of all pictures being copies of one image

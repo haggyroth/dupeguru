@@ -398,6 +398,56 @@ class Results(Markable):
             for dupe, _ in self.problems:
                 self.mark(dupe)
 
+    def perform_on_marked_batched(self, batch_func, remove_from_results, batch_size, on_chunk=None):
+        """Like :meth:`perform_on_marked`, for work that is cheaper done on many dupes at once.
+
+        ``batch_func(dupes)`` takes a chunk of marked dupes and returns one entry per dupe, in
+        order: ``None`` for success or the exception that file hit. Failures are recorded and
+        removed exactly as :meth:`perform_on_marked` does, so the two are interchangeable to the
+        caller. ``on_chunk(dupes)`` is called before each chunk (for progress); if it raises
+        ``JobCancelled`` the remaining chunks are not started and their dupes stay marked, which is
+        what stopping should mean, rather than recording each of them as a problem.
+        """
+        from hscommon.jobprogress.job import JobCancelled
+
+        self.problems = []
+        to_remove = []
+        unreached = []
+        marked = [dupe for dupe in self.dupes if self.is_marked(dupe)]
+        for start in range(0, len(marked), batch_size):
+            chunk = marked[start : start + batch_size]
+            if on_chunk is not None:
+                try:
+                    on_chunk(chunk)
+                except JobCancelled:
+                    unreached = marked[start:]
+                    break
+            try:
+                errors = batch_func(chunk)
+            except Exception as error:
+                # A bug rather than one file's failure. Some of the chunk may already be gone from
+                # disk, so reporting every one as a problem is the cautious reading: a second run
+                # finds the removed ones already gone and treats them as done.
+                logging.exception("Unexpected error while processing a batch of %d", len(chunk))
+                errors = [error] * len(chunk)
+            for dupe, error in zip(chunk, errors):
+                if error is None:
+                    to_remove.append(dupe)
+                elif isinstance(error, (OSError, UnicodeEncodeError)):
+                    self.problems.append((dupe, str(error)))
+                else:
+                    logging.error("Unexpected error while processing %r", dupe, exc_info=error)
+                    self.problems.append((dupe, str(error)))
+        if remove_from_results:
+            self.remove_duplicates(to_remove)
+            self.mark_none()
+            for dupe, _ in self.problems:
+                self.mark(dupe)
+            # Marks are cleared after a run, so files a cancel never reached would otherwise lose
+            # theirs and look as though they had been dealt with.
+            for dupe in unreached:
+                self.mark(dupe)
+
     def has_marked_partial_matches(self) -> bool:
         """Return True if any marked duplicate was matched only by a partial (sampled) hash."""
         for dupe in self.dupes:
