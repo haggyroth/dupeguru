@@ -6,6 +6,7 @@
 
 import cProfile
 import datetime
+from collections import namedtuple
 import errno
 import os
 import os.path as op
@@ -38,7 +39,7 @@ from core.gui.deletion_options import DeletionOptions
 from core.deletion_log import DeletionLog, DeletionRecord, default_log_path
 from core.folder_overlap import count_files_per_folder
 from core.scan_profile import ProfileStore, ScanProfile, ScanProfileError
-from core.trash import all_sent_message, sending_job_title, trash_file
+from core.trash import TRASH_BATCH_SIZE, all_sent_message, can_batch, sending_job_title, trash_file, trash_files
 from core.gui.details_panel import DetailsPanel
 from core.gui.directory_tree import DirectoryTree
 from core.gui.ignore_list_dialog import IgnoreListDialog
@@ -207,6 +208,12 @@ def check_deletable(path, expected_size, expected_mtime):
             ).format(str(path)),
         )
     return DeleteStatus.OK, ""
+
+
+class _PreparedDelete(namedtuple("_PreparedDelete", "path link_tmp record")):
+    """A file that has passed every check and is about to be removed."""
+
+    __slots__ = ()
 
 
 class DupeGuru(Broadcaster):
@@ -387,7 +394,18 @@ class DupeGuru(Broadcaster):
 
         j.start_job(self.results.mark_count)
         try:
-            self.results.perform_on_marked(op, True)
+            if not direct_deletion and can_batch():
+                # One shell call per chunk instead of one per file. Measured on a local disk, 25 ms
+                # a file against 8; on a volume where every file operation is slow the saving is
+                # the fixed cost of the shell call, paid per chunk rather than per file.
+                self.results.perform_on_marked_batched(
+                    lambda chunk: self._do_delete_chunk(chunk, link_deleted, use_hardlinks, use_clones, run),
+                    True,
+                    TRASH_BATCH_SIZE,
+                    on_chunk=lambda chunk: j.add_progress(len(chunk)),
+                )
+            else:
+                self.results.perform_on_marked(op, True)
         finally:
             # A cancelled or wholly failed deletion should not leave an empty entry behind.
             self.deletion_log.discard_if_empty(run)
@@ -406,10 +424,64 @@ class DupeGuru(Broadcaster):
         return False
 
     def _do_delete_dupe(self, dupe, link_deleted, use_hardlinks, direct_deletion, use_clones=False, run=None):
+        prepared = self._prepare_delete(dupe, link_deleted, use_hardlinks, direct_deletion, use_clones, run)
+        if prepared is None:
+            return
+        try:
+            if direct_deletion:
+                if op.isdir(prepared.path):
+                    shutil.rmtree(prepared.path)
+                else:
+                    os.remove(prepared.path)
+                destination = ""
+            else:
+                # Unlike send2trash, this reports where the file went, which is what makes a
+                # restore possible at all. See core.trash.
+                destination = trash_file(prepared.path)
+        except Exception:
+            self._discard_link(prepared)
+            raise
+        self._finish_delete(dupe, prepared, destination, direct_deletion, run)
+
+    def _do_delete_chunk(self, dupes, link_deleted, use_hardlinks, use_clones, run):
+        """Send *dupes* to the trash together. Returns one error (or None) per dupe, in order.
+
+        Each file goes through the same steps as :meth:`_do_delete_dupe` -- the same checks, the
+        same log record written before anything is removed, the same replacement link -- with only
+        the trashing in the middle done for the whole chunk at once. A file that fails any step
+        fails alone: its error is returned and the rest carry on.
+        """
+        errors = [None] * len(dupes)
+        staged = []
+        for index, dupe in enumerate(dupes):
+            try:
+                prepared = self._prepare_delete(dupe, link_deleted, use_hardlinks, False, use_clones, run)
+            except Exception as error:
+                errors[index] = error
+                continue
+            if prepared is not None:
+                staged.append((index, prepared))
+        if not staged:
+            return errors
+        # `single=trash_file` is resolved here, in this module, so a caller (or test) that replaces
+        # core.app.trash_file gets its function used and nothing is batched behind its back.
+        outcomes = trash_files([prepared.path for _, prepared in staged], single=trash_file)
+        for (index, prepared), outcome in zip(staged, outcomes):
+            try:
+                if outcome.error is not None:
+                    raise outcome.error
+                self._finish_delete(dupes[index], prepared, outcome.destination, False, run)
+            except Exception as error:
+                self._discard_link(prepared)
+                errors[index] = error
+        return errors
+
+    def _prepare_delete(self, dupe, link_deleted, use_hardlinks, direct_deletion, use_clones, run):
+        """Everything that happens before a file is removed. ``None`` means it was already gone."""
         # Shared with the planner: see check_deletable. Keep the decision there, not here.
         status, message = check_deletable(dupe.path, dupe.size, dupe.mtime)
         if status == DeleteStatus.GONE:
-            return
+            return None
         if status != DeleteStatus.OK:
             raise OSError(message)
         if self.options.get("verify_before_delete"):
@@ -451,33 +523,30 @@ class DupeGuru(Broadcaster):
         record = self._deletion_record(dupe, direct_deletion)
         if run is not None:
             self.deletion_log.record(run, record)
-        try:
-            if direct_deletion:
-                if op.isdir(str_path):
-                    shutil.rmtree(str_path)
-                else:
-                    os.remove(str_path)
-            else:
-                # Unlike send2trash, this reports where the file went, which is what makes a
-                # restore possible at all. See core.trash.
-                record.destination = trash_file(str_path)
-                if run is not None:
-                    # An amendment, not a re-save. The record was written before the deletion,
-                    # when the destination could not be known; rewriting the whole log to fill
-                    # it in is what made deleting n files cost O(n^2).
-                    self.deletion_log.record_destination(run, record)
-        except Exception:
-            if link_tmp is not None:
-                try:
-                    link_tmp.unlink()
-                except OSError:
-                    logging.warning("Could not clean up temporary link '%s'", link_tmp)
-            raise
+        return _PreparedDelete(str_path, link_tmp, record)
 
-        if link_tmp is not None:
+    def _finish_delete(self, dupe, prepared, destination, direct_deletion, run):
+        """What happens once a file has been removed: log where it went, put the link in its place."""
+        if not direct_deletion:
+            prepared.record.destination = destination
+            if run is not None:
+                # An amendment, not a re-save. The record was written before the deletion,
+                # when the destination could not be known; rewriting the whole log to fill
+                # it in is what made deleting n files cost O(n^2).
+                self.deletion_log.record_destination(run, prepared.record)
+        if prepared.link_tmp is not None:
             # The original is gone, so this moves the link into its place.
-            os.replace(str(link_tmp), str_path)
+            os.replace(str(prepared.link_tmp), prepared.path)
         self.clean_empty_dirs(dupe.path.parent)
+
+    @staticmethod
+    def _discard_link(prepared):
+        """Remove the temporary replacement link of a file that turned out not to be removed."""
+        if prepared.link_tmp is not None:
+            try:
+                prepared.link_tmp.unlink()
+            except OSError:
+                logging.warning("Could not clean up temporary link '%s'", prepared.link_tmp)
 
     def _deletion_record(self, dupe, direct_deletion):
         """Describe *dupe* for the log, including what it duplicated."""

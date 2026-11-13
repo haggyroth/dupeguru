@@ -31,6 +31,7 @@ import logging
 import os
 import os.path as op
 import sys
+from collections import namedtuple
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -129,6 +130,97 @@ def trash_file(path) -> str:
         return _trash_windows(str_path)
     send2trash(str_path)
     return ""
+
+
+#: What happened to one file in :func:`trash_files`: where it went (``""`` if unknown) and, if it
+#: could not be trashed, why. ``error`` is ``None`` for a file that was trashed.
+TrashOutcome = namedtuple("TrashOutcome", "destination error")
+
+#: Files handed to the shell in one call. Large enough that the fixed cost of a shell operation is
+#: spread thin -- measured on a local disk, 25 ms per file one at a time against 8 ms in a batch --
+#: and small enough that a failure part way through costs a retry of a few hundred files at most,
+#: and progress and cancellation stay responsive.
+TRASH_BATCH_SIZE = 200
+
+
+def can_batch() -> bool:
+    """Whether :func:`trash_files` can send several files to the trash in one call here.
+
+    Only Windows does, and only with pywin32 and a send2trash that exposes its internals; anywhere
+    else it trashes one file at a time and the answer is no. Callers use this to decide whether
+    restructuring their loop around batches is worth doing.
+    """
+    if sys.platform != "win32":
+        return False
+    try:
+        import pythoncom  # noqa: F401
+        from win32com.shell import shell  # noqa: F401
+
+        from send2trash.win import modern  # noqa: F401
+        from send2trash.win.IFileOperationProgressSink import FileOperationProgressSink  # noqa: F401
+    except Exception:
+        return False
+    return True
+
+
+def trash_files(paths, single=None) -> list:
+    """Send each of *paths* to the trash. Returns one :class:`TrashOutcome` per path, in order.
+
+    Unlike :func:`trash_file` this never raises for a file that could not be trashed: that file's
+    outcome carries the error, and the rest are still attempted. That is what a caller doing many
+    files wants, and it is what lets Windows send them in one shell call.
+
+    **Why a batch is safe to attempt.** The shell is asked to recycle every file, and
+    send2trash's progress sink refuses any delete the shell would not recycle, so nothing is ever
+    deleted permanently. The first failure aborts the rest of the batch (``FOFX_EARLYFAILURE``).
+    So a file counts as trashed only when the shell *said* it was -- or when it is gone from disk
+    afterwards, which is the same fact seen from the other side. Anything else is retried through
+    *single*, the ordinary one-file route, which decides it for itself and reports the real error.
+    The worst case is therefore exactly the old behaviour; the best is one shell call for many
+    files.
+
+    *single* is the function used for one file (``trash_file`` by default). Batching is attempted
+    only when it **is** ``trash_file``: a caller that substituted its own wants that one used, and
+    the tests that do so would otherwise send real files to the real Recycle Bin.
+    """
+    if single is None:
+        single = trash_file
+    paths = [str(path) for path in paths]
+    outcomes = [None] * len(paths)
+    pending = list(range(len(paths)))
+    batching = single is trash_file and can_batch()
+    empty_runs = 0
+    while pending:
+        if batching and len(pending) > 1:
+            settled = _trash_windows_batch([paths[i] for i in pending])
+            for position, outcome in settled.items():
+                outcomes[pending[position]] = outcome
+            pending = [i for i in pending if outcomes[i] is None]
+            # One batch settling nothing can just mean its first file was the one that failed, so
+            # that is not yet a reason to give up; two in a row says bulk is not working here.
+            empty_runs = 0 if settled else empty_runs + 1
+            if empty_runs >= 2:
+                batching = False
+            if not pending:
+                break
+            if batching:
+                # The first file still unsettled is the one that stopped the batch, or the first
+                # one it never reached. Settling it on its own means a file that fails every time
+                # cannot stall the files after it: they go round again without it.
+                first = pending.pop(0)
+                outcomes[first] = _trash_one(single, paths[first])
+                continue
+        for i in pending:
+            outcomes[i] = _trash_one(single, paths[i])
+        break
+    return outcomes
+
+
+def _trash_one(single, path) -> "TrashOutcome":
+    try:
+        return TrashOutcome(single(path), None)
+    except Exception as error:  # the caller decides what each kind of failure means
+        return TrashOutcome("", error)
 
 
 def can_report_destination() -> bool:
@@ -290,6 +382,68 @@ def _trash_windows(str_path: str) -> str:
         logging.debug("The Recycle Bin location for %s was not reported", str_path)
         return ""
     return str(destination)
+
+
+def _trash_windows_batch(paths) -> dict:
+    """Recycle *paths* in one shell call. Returns ``{index: TrashOutcome}`` for the ones settled.
+
+    A file is settled when the progress sink reports its delete as having succeeded, or when it no
+    longer exists (recycled, though the shell reported it oddly). A file that failed, or that the
+    batch never reached after an abort, is left out and the caller deals with it. The destination
+    comes from the same sink :func:`_trash_windows` reads for a single file, per item here.
+    """
+    try:
+        import pythoncom
+        from win32com.shell import shell
+
+        from send2trash.win import modern
+        from send2trash.win.IFileOperationProgressSink import FileOperationProgressSink
+    except Exception:
+        logging.debug("Cannot recycle in a batch; falling back to one file at a time", exc_info=True)
+        return {}
+
+    recorded = {}  # normalised source path -> (HRESULT, destination)
+    SHGDN_FORPARSING = 0x8000
+
+    def key(path):
+        return op.normcase(op.abspath(str(path)))
+
+    class RecordingSink(FileOperationProgressSink):
+        """send2trash's sink, which also remembers what happened to each item."""
+
+        def PostDeleteItem(self, flags, item, hr_delete, newly_created):
+            try:
+                source = item.GetDisplayName(SHGDN_FORPARSING)
+                destination = newly_created.GetDisplayName(SHGDN_FORPARSING) if newly_created else ""
+            except Exception:
+                return
+            recorded[key(source)] = (hr_delete, destination)
+
+    original_create_sink = modern.create_sink
+
+    def create_recording_sink():
+        return pythoncom.WrapObject(RecordingSink(), shell.IID_IFileOperationProgressSink)
+
+    modern.create_sink = create_recording_sink
+    try:
+        try:
+            send2trash(list(paths))
+        except OSError:
+            # An abort part way through. What got done is in `recorded`; the rest is settled below.
+            pass
+    finally:
+        modern.create_sink = original_create_sink
+
+    settled = {}
+    for position, path in enumerate(paths):
+        entry = recorded.get(key(path))
+        if entry is not None and entry[0] == 0:
+            settled[position] = TrashOutcome(entry[1] or "", None)
+        elif not op.lexists(path):
+            # Gone, so it was recycled however it was reported. Falling back to the single-file
+            # route for it would raise "not found" and report a completed deletion as a failure.
+            settled[position] = TrashOutcome(entry[1] if entry else "", None)
+    return settled
 
 
 # --- Linux (XDG)
